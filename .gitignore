@@ -1,0 +1,19 @@
+# ===== 敏感信息：绝不提交 =====
+.env
+.claude/
+webui/quota.json
+
+# ===== 个人数据：报告与上传的简历 =====
+output/
+output_test/
+webui/uploads/
+webui/runs/
+
+# ===== 环境与缓存 =====
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ===== 商单内部文档（如需公开可自行移出此列表） =====
+简历优化Agent_项目企划.md

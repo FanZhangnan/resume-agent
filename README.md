@@ -1,0 +1,189 @@
+# 简历优化Agent
+
+一个命令行运行的**真正的AI Agent**（不是单次LLM调用的脚本）：
+
+- **自主规划**：接到任务后自己决定分析步骤和顺序（ReAct循环），不是硬编码流程
+- **工具调用**：自主决定何时调用8个工具（解析简历 / 提取信息 / 岗位推荐 / 分析JD / 计算匹配度 / 生成建议 / 自我验证 / 向用户追问）
+- **岗位推荐模式**：不知道投什么？只给简历不给JD，Agent自动推荐与你当前情况最匹配的大厂岗位（实习/工作，按匹配度排序），并针对第一名完成完整分析
+- **推理链可观察**：运行时打印每一步的 🧠思考 → 🔧行动 → 📋观察
+- **自我验证 + 自动修正**：交付前自动审查过度美化、编造、逻辑矛盾；验证不通过会**自动带着问题清单重新生成建议并复检**，全程记录修正日志
+- **诚实第一**：不把"参与"改成"主导"，不编造数据；报告中明确区分"安全优化"和"需要你确认属实"的内容
+
+## 快速开始
+
+### 1. 安装依赖（只需一次）
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. 设置API密钥
+
+```bash
+export ZENMUX_API_KEY=你的密钥
+```
+
+没有密钥也可以先体验完整流程（离线演示模式，不联网）：
+
+```bash
+AGENT_MOCK=1 python agent.py --demo
+```
+
+### 3. 运行
+
+```bash
+python agent.py                        # 交互式（推荐）：按提示给简历和JD
+python agent.py --demo                 # 用samples/中的示例简历和JD跑一遍
+python agent.py resume.pdf             # 岗位推荐模式：只给简历，自动推荐最匹配的大厂岗位
+python agent.py resume.pdf --prefer "在中国求职大厂实习"   # 推荐时指定偏好（地点/方向/公司）
+python agent.py resume.pdf jd.txt      # 简历文件 + JD文件
+python agent.py resume.docx "JD文本"   # 简历文件 + 直接贴JD文本
+```
+
+支持的简历格式：PDF、Word（.docx）、txt、Markdown。
+
+### 4.（可选）Web UI
+
+不想用命令行？**macOS直接双击项目里的 `启动WebUI.command`**（自动装依赖、启动服务并打开浏览器；
+首次双击如被系统拦截：右键 → 打开）。或手动启动：
+
+```bash
+pip install -r requirements.txt        # 首次需安装fastapi/uvicorn
+python webui/server.py                 # 打开 http://127.0.0.1:7860
+```
+
+密钥配置：项目根目录的 `.env` 会被自动加载（已存在的环境变量优先）。该文件包含API密钥，请勿外传。
+
+## 公网部署（放到你的网站上给大家用）
+
+本地默认是"个人模式"。设置 `AGENT_PUBLIC=1` 即切换为**公网多人模式**，专为"站长API资源有限"设计：
+
+```bash
+export AGENT_PUBLIC=1
+export AGENT_UI_HOST=127.0.0.1     # 建议只监听本机，由nginx反代对外
+export AGENT_TRUST_PROXY=1         # 经nginx反代时开启，正确识别访客IP
+python webui/server.py
+```
+
+公网模式做了什么：
+
+- **自带Key（BYOK）**：访客可在「高级设置」填自己的 API Key / Base URL / 模型（任意OpenAI兼容网关），
+  Key只在该次请求的子进程中使用，服务器不存储不记录，且**不占**你的额度
+- **免费额度**：不带Key的访客用你 `.env` 里的Key，每IP每天默认2次（`AGENT_FREE_PER_DAY`），
+  用完会提示填自己的Key——你的成本上限因此是固定的
+- **限流**：每IP每小时最多6次启动（`AGENT_RUNS_PER_HOUR`）、Mock演示20次（`AGENT_MOCK_PER_HOUR`）、
+  全局并发3个任务（`AGENT_MAX_CONCURRENT`）、每IP同时只能跑1个
+- **会话隔离**：基于Cookie，访客只能看到/操作自己的任务和报告，历史报告互不可见
+- **用后即焚**：上传的简历/JD与生成的报告文件在运行结束后立即从磁盘删除；
+  报告只保留在该访客会话的内存里（最多5份、24小时过期），请访客及时下载
+
+nginx 反代示例（SSE需要关闭缓冲）：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your.domain.com;
+    # ssl_certificate ...; ssl_certificate_key ...;
+    client_max_body_size 6m;
+    location / {
+        proxy_pass http://127.0.0.1:7860;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;            # SSE实时推流必需
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+systemd 常驻示例（`/etc/systemd/system/resume-agent.service`）：
+
+```ini
+[Unit]
+Description=Resume Agent Web UI
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/resume-agent
+Environment=AGENT_PUBLIC=1 AGENT_TRUST_PROXY=1
+ExecStart=/opt/resume-agent/venv/bin/python webui/server.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+注意事项：
+
+- 公网必须走 **HTTPS**（BYOK的Key经明文HTTP会被窃听）
+- 简历属于敏感个人信息：页面已内置"不留存、用完即删"的隐私说明，请勿自行改成留存模式后继续对外宣传"不留存"
+- `.env` 与 `webui/quota.json` 不要提交到仓库
+- 本项目以 MIT 协议开源（见 LICENSE），欢迎大家自行部署
+
+Web UI 支持：上传/粘贴简历、粘贴JD（留空自动进入岗位推荐模式）、Mock离线演示、
+实时查看 🧠思考→🔧行动→📋观察 推理流和分析流水线、Agent中途追问在线回答、
+报告在线渲染与下载、历史报告浏览。
+
+分析完成后，完整报告（Markdown）会保存到 `output/` 目录，包含：
+**简历解析 /（岗位推荐）/ 匹配度分析 / 优化建议 / 自我验证（含修正日志）/ 诚实评估 / 优化版简历**。
+
+**岗位推荐模式说明**：不提供JD时，Agent根据你的教育阶段（在读→实习/校招）、地理位置和技能证据，
+推荐5个大厂岗位并按预估匹配度排序，然后针对排名第一的岗位做完整的匹配分析和简历优化。
+注意：推荐岗位是基于各公司公开招聘要求整理的"典型岗位画像"，投递前请以官方最新JD为准。
+
+## 配置（都是可选的，用环境变量覆盖即可，不用改代码）
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `ZENMUX_API_KEY` / `OPENAI_API_KEY` | 无 | API密钥（必填其一，除非用Mock模式）。同时设置时`ZENMUX_API_KEY`优先 |
+| `AGENT_BASE_URL` | `https://api.zenmux.ai/v1` | API地址（OpenAI兼容格式，可换成任何兼容网关） |
+| `AGENT_MODEL` | `claude-fable-5-free` | 模型名 |
+| `AGENT_MOCK` | 关 | `=1` 开启离线演示模式 |
+| `AGENT_MAX_STEPS` | `20` | ReAct循环最大步数（防止无限循环） |
+| `AGENT_MAX_REVISIONS` | `1` | 自我验证不通过时的自动修正轮数 |
+| `AGENT_MAX_TOKENS` | `4096` | 单次LLM调用输出上限 |
+| `AGENT_REPORT_MAX_TOKENS` | `8192` | 最终报告生成输出上限 |
+
+例如换成其他OpenAI兼容网关和模型：
+
+```bash
+export AGENT_BASE_URL=https://api.wangdefou.studio/v1
+export AGENT_MODEL=gpt-5.5
+export OPENAI_API_KEY=该网关的密钥
+```
+
+## 项目结构
+
+```
+agent.py            Agent核心：ReAct推理循环 + 自我修正闭环 + 报告生成 + 命令行入口
+llm_client.py       LLM客户端封装（重试 / 超时 / Mock离线模式）
+prompts.py          Agent系统提示词、报告格式化提示词
+config.py           全部配置（支持环境变量覆盖）
+utils.py            JSON容错解析、文本截断等工具函数
+mock_data.py        离线演示数据（含"验证失败→自动修正"的完整剧本）
+tools/
+  __init__.py       工具注册表 + 统一执行入口
+  common.py         带自动重试的LLM-JSON问答助手
+  file_parser.py    PDF/Word/txt简历解析
+  resume_tools.py   简历信息提取、JD分析
+  recommendation.py 大厂岗位推荐（无JD时自动匹配）
+  analysis.py       匹配度计算、优化建议生成（支持修正指令）
+  verification.py   自我验证（批判性审查）
+  interaction.py    向用户追问
+samples/            示例简历和JD（--demo模式使用）
+```
+
+## 测试
+
+```bash
+AGENT_MOCK=1 python test_tools.py    # 阶段2：7个工具逐个验证
+AGENT_MOCK=1 python test_agent.py    # 阶段3：Agent完整工作流（离线）
+python test_llm.py                   # 阶段1：API连通性（需要密钥）
+```
+
+## 常见问题
+
+- **报错"未检测到API密钥"**：先 `export ZENMUX_API_KEY=你的密钥`，或用 `AGENT_MOCK=1` 体验演示模式。
+- **交互模式怎么结束粘贴？** 粘贴完成后另起一行输入 `END` 再回车。
+- **Agent中途提问怎么办？** 直接回答即可；直接回车表示跳过，Agent会基于现有信息继续并在报告中标注信息缺失。
+- **验证不通过会怎样？** Agent自动把问题清单交回给建议生成工具重写一版并复检（默认1轮）；如果仍不通过，报告里会如实标注，不会假装没问题。
