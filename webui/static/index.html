@@ -264,6 +264,81 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
 .md th{font-weight:500;background:var(--paper)}
 .md hr{border:0;border-top:1px solid var(--hair);margin:22px 0}
 
+/* ===== 右侧运行栏 ===== */
+.stream-cols{display:flex;gap:20px;align-items:flex-start}
+#stream-body{flex:1;min-width:0}
+#run-rail{width:264px;flex:none;position:sticky;top:0}
+.rail-card{border:1px solid var(--hair);border-radius:8px;background:var(--card);padding:14px 16px;margin-bottom:14px}
+.rail-h{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;color:var(--faint);
+  margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;text-transform:uppercase}
+.rail-h a{color:var(--faint);cursor:pointer}
+.rail-h a:hover{color:var(--signal)}
+.ov-time{font-size:30px;font-weight:300;font-family:var(--mono);color:var(--ink);line-height:1.1}
+.ov-time-l{font-size:9.5px;color:var(--faint);font-family:var(--mono);letter-spacing:.12em;margin-top:3px}
+.ov-rows{display:flex;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--hair)}
+.ov-rows div{flex:1;min-width:0}
+.ov-rows b{display:block;font-family:var(--mono);font-size:12.5px;font-weight:500;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-rows span{font-size:9px;color:var(--faint);font-family:var(--mono);letter-spacing:.06em}
+.tl{list-style:none;max-height:230px;overflow-y:auto}
+.tl li{display:flex;gap:7px;align-items:baseline;padding:4px 0 4px 14px;font-family:var(--mono);
+  font-size:10.5px;color:var(--sub);cursor:pointer;position:relative}
+.tl li::before{content:"";position:absolute;left:2px;top:9px;width:5px;height:5px;border-radius:50%;background:var(--hair2)}
+.tl li.on::before{background:var(--signal);animation:pulse 1.1s infinite}
+.tl li.done-row::before{background:var(--ok)}
+.tl li.fin{color:var(--ok)}
+.tl li:hover{color:var(--ink)}
+.tl .t{color:var(--faint);flex:none}
+.tl .lbl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl .d{color:var(--faint);flex:none}
+.log{max-height:190px;overflow-y:auto;font-family:var(--mono);font-size:10px;color:var(--sub);line-height:2}
+.log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log .t{color:var(--faint);margin-right:6px}
+.log .err{color:var(--bad)}
+.log .warn{color:var(--warn)}
+@media (max-width:1180px){#run-rail{display:none!important}}
+/* Swarm图例 / 节点编号 / 步骤耗时 */
+.sw-legend{display:flex;gap:20px;padding:8px 16px;border-top:1px solid var(--hair);
+  font-family:var(--mono);font-size:9.5px;color:var(--faint);letter-spacing:.06em}
+.sw-legend i{font-style:normal;margin-right:5px}
+.sw-legend .l-run{color:var(--signal)}
+.sw-legend .l-done{color:var(--ok)}
+.step-h .meta{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint);white-space:nowrap}
+.step-h .meta .okd{color:var(--ok)}
+.step-h .step-title{font-size:12.5px;color:var(--ink);font-weight:500}
+.step.flash{animation:flashbg 1.4s ease}
+@keyframes flashbg{0%{background:rgba(43,92,230,.07)}100%{background:transparent}}
+.pipe li{cursor:pointer}
+.pipe li:hover .pt b{color:var(--signal)}
+.pipe .stepno{font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;color:var(--faint);width:50px;flex:none}
+
+/* ===== 简历排版 ===== */
+.lay-grid{display:flex;gap:24px;align-items:flex-start}
+.lay-ctrl{width:250px;flex:none}
+.lay-h{font-family:var(--mono);font-size:10px;font-weight:400;letter-spacing:.18em;
+  color:var(--faint);margin:22px 0 10px;text-transform:uppercase}
+.lay-h:first-child{margin-top:0}
+.tpl-cards{display:flex;flex-direction:column;gap:8px}
+.tpl-card{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--hair2);
+  border-radius:8px;background:var(--card);cursor:pointer;font-size:12.5px;color:var(--sub);
+  font-family:var(--sans);transition:.15s;text-align:left}
+.tpl-card:hover{border-color:var(--ink)}
+.tpl-card.on{border-color:var(--ink);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.sw{width:34px;height:44px;border:1px solid var(--hair2);border-radius:3px;flex:none;
+  display:flex;padding:5px;gap:3px;background:#fff}
+.sw-classic{flex-direction:column;align-items:center}
+.sw-classic i{display:block;height:3px;background:#c9c9c2;width:80%}
+.sw-classic i:first-child{width:55%;height:4px;background:#3a3a35}
+.sw-modern b{width:10px;background:#dbe5f6;border-radius:1px}
+.sw-modern>span{flex:1;display:flex;flex-direction:column;gap:3px;padding-top:2px}
+.sw-modern i{display:block;height:3px;background:#c9c9c2}
+.sw-minimal{flex-direction:column}
+.sw-minimal i{display:block;height:2px;background:#d9d9d3;width:100%}
+.sw-minimal i:first-child{width:45%;height:3px;background:#3a3a35;margin-bottom:4px}
+.lay-prev{flex:1;min-width:0;max-width:620px}
+#resume-frame{width:100%;aspect-ratio:210/297;border:1px solid var(--hair2);border-radius:6px;
+  background:#fff;display:block}
+
 /* 历史 */
 .hist{display:flex;flex-direction:column;max-width:760px}
 .hist button{display:flex;align-items:center;gap:12px;padding:13px 4px;cursor:pointer;
@@ -368,6 +443,12 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
         <h3>02 / 分析流水线</h3>
         <ul class="pipe" id="pipe"></ul>
       </div>
+
+      <div class="card" id="card-info" style="display:none">
+        <h3>03 / 任务信息</h3>
+        <div class="meta-rows" id="task-info"></div>
+        <button class="btn btn-ghost" onclick="setTab('history')">查看历史任务</button>
+      </div>
     </aside>
 
     <!-- ============ 右栏 ============ -->
@@ -375,6 +456,7 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
       <div class="tabs">
         <button id="tab-stream" class="on" onclick="setTab('stream')">推理过程 <span class="cnt" id="cnt-steps" style="display:none">0</span></button>
         <button id="tab-report" onclick="setTab('report')">分析报告</button>
+        <button id="tab-layout" onclick="setTab('layout')">简历排版</button>
         <button id="tab-history" onclick="setTab('history')">历史报告</button>
       </div>
 
@@ -386,13 +468,20 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
           调度核心将把任务分派给一组专家智能体，<br>
           思考 → 行动 → 观察 全程可视，交付前自动完成自我验证与修正。</p>
         </div>
-        <div id="stream-body" class="view-inner" style="display:none">
+        <div class="stream-cols" id="stream-cols" style="display:none">
+        <div id="stream-body" class="view-inner">
           <div class="swarm-panel">
             <div class="swarm-head">
-              <span class="micro">Swarm orchestration / 智能体协作</span>
+              <span class="micro">Swarm orchestration / 智能体协作图谱</span>
               <span id="swarm-status">standby</span>
             </div>
             <svg id="swarm" viewBox="0 0 720 252" xmlns="http://www.w3.org/2000/svg" aria-label="智能体协作视图"></svg>
+            <div class="sw-legend">
+              <span><i>○</i>待执行</span>
+              <span class="l-run"><i>→</i>进行中</span>
+              <span class="l-done"><i>●</i>已完成</span>
+              <span style="margin-left:auto"><i>↻</i>修正中</span>
+            </div>
           </div>
           <div class="banner" id="banner"></div>
           <div id="steps"></div>
@@ -407,6 +496,31 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
               <button class="btn skip" onclick="sendAnswer(true)">跳过</button>
             </div>
           </div>
+        </div>
+        <aside id="run-rail">
+          <div class="rail-card">
+            <div class="rail-h">运行概览</div>
+            <div class="ov-time" id="ov-time">00:00</div>
+            <div class="ov-time-l">总耗时 · TOTAL</div>
+            <div class="ov-rows">
+              <div><b id="ov-calls">0</b><span>工具调用</span></div>
+              <div><b id="ov-steps">0/0</b><span>阶段完成</span></div>
+              <div><b id="ov-model">—</b><span>模型</span></div>
+            </div>
+            <div class="ov-rows" id="ov-token-row" style="display:none">
+              <div><b id="ov-tokens">0</b><span>总 TOKEN（网关真实用量）</span></div>
+            </div>
+          </div>
+          <div class="rail-card">
+            <div class="rail-h">执行时间线</div>
+            <ul class="tl" id="tl"></ul>
+          </div>
+          <div class="rail-card">
+            <div class="rail-h">运行日志 <a onclick="logToTop()">查看全部</a></div>
+            <div class="log" id="run-log"></div>
+          </div>
+          <button class="btn btn-primary" id="btn-dl-report" style="width:100%;margin-top:2px" onclick="downloadReport()" disabled>下载最终报告</button>
+        </aside>
         </div>
       </div>
 
@@ -423,6 +537,51 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
             <span class="path" id="report-path"></span>
           </div>
           <div class="md" id="report-md"></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-layout">
+        <div class="empty" id="layout-empty">
+          <div class="empty-mark"><span></span><span></span><span></span></div>
+          <h2>暂无可排版的简历</h2>
+          <p>完成一次分析后，优化版简历可在这里选择模板排版：<br>
+          经典单栏 / 现代双栏 / 极简留白，可选择放或不放照片，<br>支持打印存 PDF 与下载 HTML。</p>
+        </div>
+        <div id="layout-body" class="view-inner" style="display:none">
+          <div class="lay-grid">
+            <div class="lay-ctrl">
+              <h3 class="lay-h">01 / 选择模板</h3>
+              <div class="tpl-cards">
+                <button class="tpl-card on" data-tpl="classic" onclick="setTpl('classic')">
+                  <span class="sw sw-classic"><i></i><i></i><i></i></span>经典单栏
+                </button>
+                <button class="tpl-card" data-tpl="modern" onclick="setTpl('modern')">
+                  <span class="sw sw-modern"><b></b><span><i></i><i></i></span></span>现代双栏
+                </button>
+                <button class="tpl-card" data-tpl="minimal" onclick="setTpl('minimal')">
+                  <span class="sw sw-minimal"><i></i><i></i><i></i></span>极简留白
+                </button>
+              </div>
+              <h3 class="lay-h">02 / 照片</h3>
+              <label class="switch-row" style="margin-top:4px">
+                <span class="switch"><input type="checkbox" id="photo-on" onchange="renderResume()"><span class="slider"></span></span>
+                <span>在简历中显示照片</span>
+              </label>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+                <button class="btn btn-ghost" style="margin:0;width:auto;padding:8px 14px" onclick="document.getElementById('photo-file').click()">选择照片</button>
+                <img id="photo-thumb" alt="" style="display:none;width:44px;height:56px;object-fit:cover;border:1px solid var(--hair2);border-radius:4px">
+                <button id="photo-clear" onclick="clearPhoto()" style="display:none;background:none;border:0;color:var(--faint);cursor:pointer">✕</button>
+              </div>
+              <input type="file" id="photo-file" accept="image/*" style="display:none">
+              <div class="note">照片只在你的浏览器本地处理，<b style="color:var(--ok)">不会上传到服务器</b>。</div>
+              <h3 class="lay-h">03 / 导出</h3>
+              <button class="btn btn-primary" style="margin-top:4px" onclick="printResume()">打印 / 存为 PDF</button>
+              <button class="btn btn-ghost" onclick="downloadResumeHTML()">下载 HTML 文件</button>
+              <div class="note">打印对话框中选择"另存为 PDF"即可得到 PDF 文件。</div>
+              <div class="note" id="layout-fallback-note" style="display:none;color:var(--warn)">本报告缺少结构化排版数据（旧版本生成），已按纯文本排入模板。</div>
+            </div>
+            <div class="lay-prev"><iframe id="resume-frame" title="简历预览"></iframe></div>
+          </div>
         </div>
       </div>
 
@@ -470,6 +629,42 @@ const STAGE_DEF = [
 ];
 let stages = {};
 let lastTool = null;
+/* 运行栏状态 */
+let stepMeta = {}, lastStepNo = 0, toolCallCount = 0, tokenSum = 0, stageFirst = {};
+const SW_NUM = {parse_resume_file:"01", extract_resume_info:"02", recommend_jobs:"03",
+  analyze_jd:"04", calculate_match:"05", generate_suggestions:"06", verify_output:"07", ask_user:"08"};
+function nowHMS(){ return new Date().toTimeString().slice(0,8); }
+function logAdd(text, cls){
+  const log = $("run-log"); if(!log) return;
+  const div = document.createElement("div");
+  if(cls) div.className = cls;
+  div.innerHTML = `<span class="t">${nowHMS()}</span>` + escapeHtml(text);
+  log.appendChild(div);
+  while(log.children.length > 60) log.removeChild(log.firstChild);
+  log.scrollTop = 1e6;
+}
+function logToTop(){ $("view-stream").scrollTop = 0; }
+function flashTo(el){
+  if(!el) return;
+  el.scrollIntoView({behavior:"smooth", block:"center"});
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
+function updateOvSteps(){
+  const total = $("pipe").children.length;
+  const done = document.querySelectorAll("#pipe li.done").length;
+  $("ov-steps").textContent = `${done}/${total}`;
+}
+function closeStep(n, endTs){
+  const m = stepMeta[n]; if(!m || m.closed) return;
+  m.closed = true;
+  const dur = (endTs - m.t0) / 1000;
+  const durTxt = dur >= 0.05 ? dur.toFixed(1) + "s" : "";
+  if(m.metaEl) m.metaEl.innerHTML = `<span class="okd">●</span> 已完成${durTxt ? " · " + durTxt : ""}`;
+  if(m.tlEl){
+    m.tlEl.classList.remove("on"); m.tlEl.classList.add("done-row");
+    const d = m.tlEl.querySelector(".d"); if(d) d.textContent = durTxt;
+  }
+}
 
 /* ================= Swarm 协作视图 ================= */
 const SW_NS = "http://www.w3.org/2000/svg";
@@ -502,6 +697,14 @@ function buildSwarm(){
   const svg = $("swarm");
   svg.innerHTML = "";
   swNodes = {}; swEdges = {}; swCalls = {}; swLoops = {};
+  /* 连线箭头（灰=常态，蓝=派发中） */
+  const defs = swEl("defs", {});
+  defs.innerHTML =
+    '<marker id="swar-i" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">' +
+    '<path d="M1,1 L7,4 L1,7" fill="none" stroke="#d8d8d2" stroke-width="1.2"/></marker>' +
+    '<marker id="swar-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">' +
+    '<path d="M1,1 L7,4 L1,7" fill="none" stroke="#2b5ce6" stroke-width="1.2"/></marker>';
+  svg.appendChild(defs);
   const edges = swEl("g", {}), nodes = swEl("g", {});
   for(const tool in SW_POS){
     const [x, y] = SW_POS[tool];
@@ -510,7 +713,7 @@ function buildSwarm(){
     const ux = dx/len, uy = dy/len;
     const x1 = SW_CX + ux*24, y1 = SW_CY + uy*24;
     const x2 = x - ux*19, y2 = y - uy*19;
-    const edge = swEl("line", {x1, y1, x2, y2}, "sw-edge");
+    const edge = swEl("line", {x1, y1, x2, y2, "marker-end": "url(#swar-i)"}, "sw-edge");
     edges.appendChild(edge);
     swEdges[tool] = {el: edge, from:[x1,y1], to:[x2,y2]};
     /* 节点 */
@@ -527,7 +730,8 @@ function buildSwarm(){
     if(side === "L"){ zx = x; zy = top ? y-29 : y+31; }
     if(side === "R"){ zx = x; zy = top ? y-29 : y+31; }
     const zh = swEl("text", {x:zx, y:zy, "text-anchor":anchor}, "zh"); zh.textContent = info.label;
-    const en = swEl("text", {x:zx, y: top ? zy-13 : zy+13, "text-anchor":anchor}, "en"); en.textContent = info.en;
+    const en = swEl("text", {x:zx, y: top ? zy-13 : zy+13, "text-anchor":anchor}, "en");
+    en.textContent = (SW_NUM[tool] ? SW_NUM[tool] + " " : "") + info.en;
     const tick = swEl("text", {x:x+16, y:y-12, "text-anchor":"start"}, "tick"); tick.textContent = "";
     g.appendChild(top ? en : zh); g.appendChild(top ? zh : en); g.appendChild(tick);
     nodes.appendChild(g);
@@ -601,6 +805,7 @@ function swarmCall(tool){
   }
   const edge = swEdges[tool].el;
   edge.classList.remove("used"); edge.classList.add("active");
+  edge.setAttribute("marker-end", "url(#swar-a)");
   swarmLoop(tool);
   const info = TOOL_INFO[tool] || {label:tool, en:""};
   swarmStatus(`<span class="sig">→ ${escapeHtml(tool)}</span> · ${escapeHtml(info.label)}`);
@@ -611,6 +816,7 @@ function swarmObserve(tool, ok){
   g.classList.add(ok ? "done" : "fail");
   const edge = swEdges[tool].el;
   edge.classList.remove("active"); edge.classList.add("used");
+  edge.setAttribute("marker-end", "url(#swar-i)");
   swarmLoopStop(tool);
   swarmReturn(tool, ok ? "var(--ok)" : "var(--bad)");
 }
@@ -620,6 +826,7 @@ function swarmRevise(tool){
   g.classList.add("revise");
   const edge = swEdges[tool].el;
   edge.classList.remove("active"); edge.classList.add("used");
+  edge.setAttribute("marker-end", "url(#swar-i)");
   swarmLoopStop(tool);
 }
 /* 运行结束的收尾清扫：停掉所有流动包、复位连线、冻结节点动画 */
@@ -752,13 +959,36 @@ async function stopRun(){
 }
 function beginRunUI(mode, data){
   running = true; sawStep = false; stepCount = 0; stepEl = null; lastBlk = null; lastTool = null;
-  reportText = ""; reportPath = "";
+  reportText = ""; reportPath = ""; reportStruct = null;
   $("card-form").style.display = "none";
   $("card-run").style.display = "";
   $("card-pipe").style.display = "";
+  $("card-info").style.display = "";
   $("btn-stop").style.display = ""; $("btn-new").style.display = "none";
   $("stream-empty").style.display = "none";
+  $("stream-cols").style.display = "flex";
   $("stream-body").style.display = "";
+  /* 运行栏重置 */
+  stepMeta = {}; lastStepNo = 0; toolCallCount = 0; tokenSum = 0; stageFirst = {};
+  $("tl").innerHTML = ""; $("run-log").innerHTML = "";
+  $("ov-calls").textContent = "0";
+  $("ov-tokens").textContent = "0"; $("ov-token-row").style.display = "none";
+  $("ov-time").textContent = "00:00";
+  $("ov-model").textContent = data.mock ? "MOCK" : (data.model || "—");
+  $("btn-dl-report").disabled = true;
+  /* 任务信息卡 */
+  const srcDesc = mode === "demo" ? "示例简历"
+    : (srcMode === "file" && pickedFile ? pickedFile.name
+       : `粘贴文本 · ${$("resume-text").value.trim().length}字`);
+  const sizeDesc = (mode === "custom" && srcMode === "file" && pickedFile)
+    ? (pickedFile.size >= 1048576 ? (pickedFile.size/1048576).toFixed(2) + " MB"
+                                  : (pickedFile.size/1024).toFixed(0) + " KB") : "";
+  $("task-info").innerHTML =
+    `<div><dt>简历来源</dt><dd title="${escapeHtml(srcDesc)}">${escapeHtml(srcDesc)}</dd></div>` +
+    (sizeDesc ? `<div><dt>文件大小</dt><dd>${sizeDesc}</dd></div>` : "") +
+    `<div><dt>开始时间</dt><dd>${new Date().toLocaleString("zh-CN", {hour12:false})}</dd></div>` +
+    `<div><dt>任务 ID</dt><dd title="${escapeHtml(data.job_id || "")}">${escapeHtml(data.job_id || "")}</dd></div>`;
+  logAdd("任务开始执行");
   $("banner").innerHTML = ""; $("steps").innerHTML = "";
   $("livecursor").style.display = "flex";
   $("ask").style.display = "none";
@@ -778,7 +1008,9 @@ function beginRunUI(mode, data){
   t0 = Date.now();
   timerIv = setInterval(()=> {
     const s = Math.floor((Date.now()-t0)/1000);
-    $("timer").textContent = String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+    const txt = String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+    $("timer").textContent = txt;
+    $("ov-time").textContent = txt;
   }, 500);
   setTab("stream");
 }
@@ -793,6 +1025,15 @@ function finishRun(code){
   $("swarm").classList.remove("running");
   swarmSettle();
   swarmCore("idle");
+  /* 运行栏收尾 */
+  if(lastStepNo) closeStep(lastStepNo, Date.now());
+  const fli = document.createElement("li");
+  fli.className = "done-row fin";
+  fli.innerHTML = `<span class="t">${nowHMS()}</span><span class="lbl">${code === 0 ? "全部完成" : "已结束"}</span><span class="d"></span>`;
+  $("tl").appendChild(fli);
+  $("ov-time").textContent = $("timer").textContent;
+  if(reportText) $("btn-dl-report").disabled = false;
+  logAdd(code === 0 ? "任务执行完成" : "任务异常结束", code === 0 ? "" : "err");
   if(reportText){ setStatus("ok","已完成"); stageDone("report"); swarmCore("complete"); swarmStatus("report delivered"); }
   else if(code === 0){ setStatus("ok","已结束"); swarmStatus("finished"); }
   else{ setStatus("err","异常结束"); swarmStatus("terminated"); }
@@ -801,6 +1042,7 @@ function resetUI(){
   $("card-form").style.display = "";
   $("card-run").style.display = "none";
   $("card-pipe").style.display = "none";
+  $("card-info").style.display = "none";
   $("pill-steps").style.display = "none";
   setStatus("","待命");
 }
@@ -817,13 +1059,22 @@ function buildPipeline(jobSearch){
     if(key === "recommend" && !jobSearch) return;
     ul.appendChild(makeStage(key,label,fn));
   });
+  renumberPipe();
 }
 function makeStage(key,label,fn){
   const li = document.createElement("li");
-  li.innerHTML = `<span class="node">·</span><div class="pt"><b>${label}</b><i>${fn}</i></div>`;
+  li.innerHTML = `<span class="node">·</span><span class="stepno"></span><div class="pt"><b>${label}</b><i>${fn}</i></div>`;
   li.dataset.key = key;
+  li.onclick = () => flashTo(stageFirst[key]);
   stages[key] = li;
   return li;
+}
+function renumberPipe(){
+  Array.from($("pipe").children).forEach((li, i) => {
+    const el = li.querySelector(".stepno");
+    if(el) el.textContent = "STEP " + String(i + 1).padStart(2, "0");
+  });
+  updateOvSteps();
 }
 function ensureStage(key){
   if(stages[key]) return stages[key];
@@ -834,6 +1085,7 @@ function ensureStage(key){
   const after = order.slice(0, order.indexOf(key)).reverse().find(k => stages[k] && stages[k].parentNode);
   const ref = after ? stages[after].nextSibling : $("pipe").firstChild;
   $("pipe").insertBefore(li, ref);
+  renumberPipe();
   return li;
 }
 function stageActive(key){
@@ -844,6 +1096,7 @@ function stageDone(key, ok=true){
   const li = ensureStage(key); if(!li) return;
   li.className = "done";
   li.querySelector(".node").textContent = ok ? "✓" : "!";
+  updateOvSteps();
 }
 function stageRevise(key){
   const li = ensureStage(key); if(!li) return;
@@ -873,6 +1126,16 @@ function parseLine(raw){
   if(stepM){ newStep(+stepM[1], +stepM[2]); return; }
 
   const t = text.trim();
+  /* 网关返回的真实token用量 → 运行概览（拿不到则该行不显示，不做估算） */
+  if(t.startsWith("🧮 tokens：")){
+    const tm = t.match(/=\s*(\d+)/);
+    if(tm){
+      tokenSum += +tm[1];
+      $("ov-tokens").textContent = tokenSum.toLocaleString();
+      $("ov-token-row").style.display = "";
+    }
+    return;
+  }
   const after = (s) => s.slice(s.indexOf("：") + 1);
   if(t.startsWith("🧠 思考：")){ addBlk("think","THINKING / 思考", after(t)); swarmCore("think"); return; }
   if(t.startsWith("🔧 调用工具：")){ onToolCall(after(t).trim()); return; }
@@ -881,7 +1144,7 @@ function parseLine(raw){
   if(!sawStep){
     if(/^(🚀|🤖|🧪|📄|🎯|💡|🔧|🎬)/.test(t)){ $("banner").innerHTML += escapeHtml(stripLead(t)) + "<br>"; return; }
   }
-  if(/报告已保存/.test(t)){ addSys(stripLead(t), "ok"); return; }
+  if(/报告已保存/.test(t)){ addSys(stripLead(t), "ok"); logAdd("报告生成完成"); return; }
   if(t.startsWith("📝")){ addSys(stripLead(t)); stageActive("report"); swarmCore("think"); swarmStatus('<span class="sig">core</span> composing report…'); return; }
   if(t.startsWith("🔁") || /自动修正/.test(t)){
     addSys(stripLead(t), "warn");
@@ -889,6 +1152,7 @@ function parseLine(raw){
     stageRevise("suggest"); stageRevise("verify");
     swarmRevise("generate_suggestions"); swarmRevise("verify_output");
     swarmStatus('<span class="sig">revision</span> · 自我修正中');
+    logAdd("↻ 触发自我修正", "warn");
     return;
   }
   if(t.startsWith("✅")){ addSys(stripLead(t), "ok"); return; }
@@ -902,10 +1166,22 @@ function newStep(n, total){
   sawStep = true; stepCount = n;
   $("cnt-steps").textContent = n;
   $("step-txt").textContent = `STEP ${n}/${total}`;
+  const now = Date.now();
+  if(lastStepNo) closeStep(lastStepNo, now);
+  lastStepNo = n;
   stepEl = document.createElement("div");
   stepEl.className = "step";
-  stepEl.innerHTML = `<div class="step-h"><span class="no">STEP ${String(n).padStart(2,"0")}</span><span class="tools"></span></div><div class="step-b"></div>`;
+  stepEl.innerHTML = `<div class="step-h"><span class="no">STEP ${String(n).padStart(2,"0")}</span><span class="step-title"></span><span class="tools"></span><span class="meta">进行中</span></div><div class="step-b"></div>`;
   $("steps").appendChild(stepEl);
+  /* 执行时间线条目（点击跳转到对应步骤卡） */
+  const tli = document.createElement("li");
+  tli.className = "on";
+  tli.innerHTML = `<span class="t">${nowHMS()}</span><span class="lbl">STEP ${String(n).padStart(2,"0")}</span><span class="d"></span>`;
+  const target = stepEl;
+  tli.onclick = () => flashTo(target);
+  $("tl").appendChild(tli);
+  $("tl").scrollTop = 1e6;
+  stepMeta[n] = {t0: now, el: stepEl, metaEl: stepEl.querySelector(".meta"), tlEl: tli, titleSet: false, closed: false};
   lastBlk = null;
 }
 function ensureStep(){ if(!stepEl) newStep(stepCount || 1, 20); }
@@ -921,6 +1197,17 @@ function onToolCall(fn){
   ensureStep();
   lastTool = fn;
   const info = TOOL_INFO[fn] || {label:fn, stage:null};
+  toolCallCount++;
+  $("ov-calls").textContent = toolCallCount;
+  const m = stepMeta[stepCount];
+  if(m && !m.titleSet){
+    m.titleSet = true;
+    const tEl = stepEl.querySelector(".step-title");
+    if(tEl) tEl.textContent = info.label;
+    const lbl = m.tlEl && m.tlEl.querySelector(".lbl");
+    if(lbl) lbl.textContent = `STEP ${String(stepCount).padStart(2,"0")} ${info.label}`;
+  }
+  if(info.stage && !stageFirst[info.stage]) stageFirst[info.stage] = stepEl;
   const chip = document.createElement("span");
   chip.className = "chip"; chip.textContent = fn;
   stepEl.querySelector(".tools").appendChild(chip);
@@ -944,6 +1231,7 @@ function onObservation(content){
     if(lastTool === "verify_output" && /未通过|❌/.test(content)) swarmRevise("verify_output");
     else swarmObserve(lastTool, ok);
   }
+  logAdd((ok ? "✓ " : "✗ ") + ((TOOL_INFO[lastTool] || {}).label || lastTool || "工具") + " 完成", ok ? "" : "err");
   const m = content.match(/匹配度\s*(\d+)\s*\/\s*100/);
   if(m) setScore(m[1]);
 }
@@ -987,6 +1275,7 @@ let reportName = "";
 function onReport(ev){
   const content = ev.content;
   reportText = content; reportPath = ev.path || ""; reportName = ev.name || "resume_report.md";
+  reportStruct = ev.struct || null;
   $("report-empty").style.display = "none";
   $("report-body").style.display = "";
   $("report-path").textContent = ev.ephemeral
@@ -1030,6 +1319,7 @@ async function loadHistory(){
     b.onclick = async () => {
       const d = await (await fetch("/api/reports/" + encodeURIComponent(item.key || item.name))).json();
       reportText = d.content; reportName = d.name;
+      reportStruct = d.struct || null;
       reportPath = PUB ? "" : "output/" + d.name;
       onReportView(d.content, PUB ? d.name + "（仅本会话可见）" : "output/" + d.name);
     };
@@ -1046,13 +1336,191 @@ function onReportView(content, path){
   setTab("report");
 }
 
+/* ================= 简历排版 ================= */
+let reportStruct = null, layoutTpl = "classic", photoData = null;
+
+function setTpl(tpl){
+  layoutTpl = tpl;
+  document.querySelectorAll(".tpl-card").forEach(c => c.classList.toggle("on", c.dataset.tpl === tpl));
+  renderResume();
+}
+$("photo-file").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if(!f) return;
+  if(f.size > 5*1024*1024){ alert("照片太大（上限5MB）"); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    photoData = reader.result;
+    $("photo-thumb").src = photoData;
+    $("photo-thumb").style.display = ""; $("photo-clear").style.display = "";
+    $("photo-on").checked = true;
+    renderResume();
+  };
+  reader.readAsDataURL(f);
+});
+function clearPhoto(){
+  photoData = null; $("photo-file").value = "";
+  $("photo-thumb").style.display = "none"; $("photo-clear").style.display = "none";
+  $("photo-on").checked = false;
+  renderResume();
+}
+function resumeFallbackText(){
+  if(!reportText || !reportText.includes("【优化版简历】")) return "";
+  return reportText.split("【优化版简历】").pop().replace(/^[】\s]*/, "").trim();
+}
+function refreshLayout(){
+  const has = !!(reportStruct || resumeFallbackText());
+  $("layout-empty").style.display = has ? "none" : "";
+  $("layout-body").style.display = has ? "" : "none";
+  $("layout-fallback-note").style.display = (!reportStruct && has) ? "" : "none";
+  if(has) renderResume();
+}
+const esc = s => escapeHtml(String(s == null ? "" : s));
+function _period(it){ const p = [it.start, it.end].filter(Boolean).join(" – "); return p; }
+function _entriesHTML(items, headKeys){
+  return (items || []).map(it => {
+    if(typeof it !== "object" || it === null) return `<div class="ent"><ul><li>${esc(it)}</li></ul></div>`;
+    const head = headKeys.map(k => it[k]).filter(Boolean).map(esc).join('<span class="sep">｜</span>');
+    const period = _period(it);
+    const bullets = (it.bullets || it.highlights || []).map(b => `<li>${esc(b)}</li>`).join("");
+    return `<div class="ent"><div class="ent-h"><span class="ent-t">${head}</span>${period ? `<span class="ent-d">${esc(period)}</span>` : ""}</div>${bullets ? `<ul>${bullets}</ul>` : ""}</div>`;
+  }).join("");
+}
+function _skillsHTML(skills){
+  return (skills || []).map(s => {
+    if(typeof s === "object" && s !== null){
+      const items = (s.items || []).map(esc).join("、");
+      return `<div class="skill-row"><b>${esc(s.group || "技能")}</b>${items}</div>`;
+    }
+    return `<div class="skill-row">${esc(s)}</div>`;
+  }).join("");
+}
+function buildResumeHTML(struct, tpl, photo){
+  const base = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#fff}
+  body{font-family:-apple-system,"SF Pro SC","PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+    color:#1c1e22;font-size:12.5px;line-height:1.7;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .sheet{width:100%;min-height:100vh;padding:15mm 16mm;position:relative}
+  ul{margin:4px 0 0 18px}
+  li{margin:2.5px 0}
+  .sep{color:#b9bcc2;margin:0 6px}
+  .ent{margin-bottom:11px}
+  .ent-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .ent-t{font-weight:600}
+  .ent-d{color:#7a7f88;font-size:11px;white-space:nowrap}
+  .skill-row{margin:3px 0}
+  .skill-row b{font-weight:600;margin-right:8px}
+  .photo{object-fit:cover;border:1px solid #d8d8d2}
+  @page{size:A4;margin:0}
+  @media print{.sheet{min-height:auto}}`;
+  const TPL = {
+    classic: `
+      .name{font-size:24px;font-weight:700;text-align:center;letter-spacing:.12em}
+      .contact{text-align:center;color:#5c616b;font-size:11.5px;margin-top:6px}
+      .target{text-align:center;font-size:12px;margin-top:3px;color:#3a3f48}
+      .rule{border:0;border-top:1.5px solid #1c1e22;margin:14px 0 0}
+      h2{font-size:13.5px;font-weight:700;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #d8d8d2;letter-spacing:.06em}
+      .photo{position:absolute;top:15mm;right:16mm;width:26mm;height:34mm}
+      .with-photo .head{padding-right:32mm}`,
+    modern: `
+      body{font-size:12px}
+      .sheet{display:flex;padding:0;min-height:100vh}
+      .side{width:33%;background:#eef3fb;padding:14mm 8mm 14mm 10mm}
+      .main{flex:1;padding:14mm 12mm 14mm 9mm}
+      .name{font-size:22px;font-weight:700;color:#153e78;line-height:1.3}
+      .target{color:#2b5ce6;font-size:12px;margin-top:4px;font-weight:600}
+      .side h2{font-size:11.5px;color:#153e78;letter-spacing:.14em;margin:18px 0 8px;border-bottom:2px solid #c6d6f2;padding-bottom:4px}
+      .main h2{font-size:13.5px;color:#153e78;margin:0 0 10px;padding-left:9px;border-left:3.5px solid #2b5ce6}
+      .main section{margin-bottom:16px}
+      .contact div{margin:4px 0;font-size:11px;color:#39414e;word-break:break-all}
+      .photo{width:30mm;height:38mm;border-radius:4px;margin-bottom:8mm;border:2px solid #fff;box-shadow:0 1px 6px rgba(21,62,120,.18)}
+      .ent-t{color:#1c2634}
+      .side ul{margin-left:15px}`,
+    minimal: `
+      body{color:#26282c}
+      .sheet{padding:18mm 18mm}
+      .name{font-size:26px;font-weight:300;letter-spacing:.06em}
+      .contact{font-family:"SF Mono",Menlo,monospace;font-size:10px;color:#8b8f97;margin-top:8px;letter-spacing:.04em}
+      .target{font-size:11.5px;color:#4a4e55;margin-top:4px}
+      h2{font-family:"SF Mono",Menlo,monospace;font-size:9.5px;font-weight:400;letter-spacing:.24em;
+         color:#9a9ea6;margin:20px 0 9px;text-transform:uppercase;display:flex;align-items:center;gap:10px}
+      h2::after{content:"";flex:1;border-top:1px solid #e7e7e2}
+      .ent-t{font-weight:500}
+      .photo{position:absolute;top:18mm;right:18mm;width:24mm;height:31mm;filter:grayscale(1);border-radius:2px}
+      .with-photo .head{padding-right:30mm}`,
+  };
+  let head = "", side = "", main = "";
+  if(struct){
+    const b = struct.basic_info || {};
+    const contactBits = [b.phone, b.email, b.location].filter(Boolean).map(esc);
+    const eduHTML = _entriesHTML(struct.education, ["school","degree","major"]);
+    const expHTML = _entriesHTML(struct.experience, ["company","title"]);
+    const projHTML = _entriesHTML(struct.projects, ["name","role"]);
+    const skillsHTML = _skillsHTML(struct.skills);
+    const extrasHTML = (struct.extras || []).length ? `<ul>${struct.extras.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>` : "";
+    const sec = (title, html) => html ? `<section><h2>${title}</h2>${html}</section>` : "";
+    if(tpl === "modern"){
+      side = `${photo ? `<img class="photo" src="${photo}" alt="照片">` : ""}
+        <div class="name">${esc(b.name || "")}</div>
+        ${b.target_role ? `<div class="target">${esc(b.target_role)}</div>` : ""}
+        <h2>联系方式</h2><div class="contact">${contactBits.map(c=>`<div>${c}</div>`).join("")}</div>
+        ${skillsHTML ? `<h2>核心技能</h2>${skillsHTML}` : ""}
+        ${eduHTML ? `<h2>教育背景</h2>${eduHTML}` : ""}
+        ${extrasHTML ? `<h2>其他</h2>${extrasHTML}` : ""}`;
+      main = `${struct.summary ? sec("个人简介", `<p>${esc(struct.summary)}</p>`) : ""}
+        ${sec("工作经历", expHTML)}${sec("项目经验", projHTML)}`;
+    }else{
+      head = `<div class="head">
+        <div class="name">${esc(b.name || "")}</div>
+        ${contactBits.length ? `<div class="contact">${contactBits.join('<span class="sep">｜</span>')}</div>` : ""}
+        ${b.target_role ? `<div class="target">求职意向：${esc(b.target_role)}</div>` : ""}
+        ${tpl === "classic" ? '<hr class="rule">' : ""}</div>
+        ${struct.summary ? `<h2>个人简介</h2><p>${esc(struct.summary)}</p>` : ""}
+        ${eduHTML ? `<h2>教育背景</h2>${eduHTML}` : ""}
+        ${expHTML ? `<h2>工作经历</h2>${expHTML}` : ""}
+        ${projHTML ? `<h2>项目经验</h2>${projHTML}` : ""}
+        ${skillsHTML ? `<h2>核心技能</h2>${skillsHTML}` : ""}
+        ${extrasHTML ? `<h2>其他</h2>${extrasHTML}` : ""}`;
+    }
+  }else{
+    head = `<pre style="white-space:pre-wrap;font-family:inherit">${esc(resumeFallbackText())}</pre>`;
+  }
+  const body = tpl === "modern" && struct
+    ? `<div class="sheet"><aside class="side">${side}</aside><div class="main">${main}</div></div>`
+    : `<div class="sheet ${photo ? "with-photo" : ""}">${photo && tpl !== "modern" ? `<img class="photo" src="${photo}" alt="照片">` : ""}${head}</div>`;
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>简历</title><style>${base}${TPL[tpl] || TPL.classic}</style></head><body>${body}</body></html>`;
+}
+function renderResume(){
+  if($("layout-body").style.display === "none") return;
+  const photo = $("photo-on").checked ? photoData : null;
+  $("resume-frame").srcdoc = buildResumeHTML(reportStruct, layoutTpl, photo);
+}
+function printResume(){
+  const frame = $("resume-frame");
+  try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
+  catch(e){ alert("请使用浏览器菜单打印预览"); }
+}
+function downloadResumeHTML(){
+  const photo = $("photo-on").checked ? photoData : null;
+  const html = buildResumeHTML(reportStruct, layoutTpl, photo);
+  const name = ((reportStruct||{}).basic_info||{}).name || "resume";
+  const blob = new Blob([html], {type:"text/html;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${name}_${layoutTpl}_简历.html`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /* ================= 工具函数 ================= */
 function setTab(name){
-  ["stream","report","history"].forEach(t=>{
+  ["stream","report","layout","history"].forEach(t=>{
     $("tab-"+t).classList.toggle("on", t===name);
     $("view-"+t).classList.toggle("on", t===name);
   });
   if(name === "history") loadHistory();
+  if(name === "layout") refreshLayout();
 }
 function stickScroll(){
   const v = $("view-stream");

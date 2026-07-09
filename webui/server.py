@@ -164,6 +164,7 @@ class Job:
         self.id = uuid.uuid4().hex[:12]
         self.proc = proc
         self.meta = meta
+        self.created = time.time()
         self.sid = meta.get("sid", "")
         self.ip = meta.get("ip", "")
         self.ephemeral = meta.get("ephemeral", False)
@@ -175,6 +176,7 @@ class Job:
         self.exit_code = None
         self.report_path = None
         self.report_text = None
+        self.report_struct = None
         self.waiting_answer = False
 
     def emit(self, event):
@@ -237,22 +239,29 @@ def _reader_thread(job):
     job.proc.wait()
     job.exit_code = job.proc.returncode
 
-    # 读取报告文件（限制在项目目录内，防路径穿越）
+    # 读取报告文件（限制在项目目录内，防路径穿越）；结构化简历在同名.json
     if job.report_path:
         try:
             path = (PROJECT_DIR / job.report_path).resolve() \
                 if not os.path.isabs(job.report_path) else Path(job.report_path).resolve()
             if str(path).startswith(str(PROJECT_DIR.resolve())) and path.is_file():
                 job.report_text = path.read_text(encoding="utf-8")
+                struct_path = path.with_suffix(".json")
+                if struct_path.is_file():
+                    try:
+                        job.report_struct = json.loads(struct_path.read_text(encoding="utf-8"))
+                    except ValueError:
+                        job.report_struct = None
         except Exception as error:  # noqa: BLE001
             job.emit({"type": "line", "text": f"⚠️ 读取报告文件失败：{error}"})
 
     if job.report_text:
         name = Path(job.report_path).name if job.report_path else f"resume_report_{job.id}.md"
         job.emit({"type": "report", "path": "" if job.ephemeral else (job.report_path or ""),
-                  "name": name, "ephemeral": job.ephemeral, "content": job.report_text})
+                  "name": name, "ephemeral": job.ephemeral, "content": job.report_text,
+                  "struct": job.report_struct})
         if job.ephemeral:
-            _session_store_report(job.sid, job.id, name, job.report_text)
+            _session_store_report(job.sid, job.id, name, job.report_text, job.report_struct)
 
     # 用后即焚：删除临时输出目录与上传文件
     if job.ephemeral:
@@ -275,14 +284,14 @@ def _burn(job):
             pass
 
 
-def _session_store_report(sid, key, name, content):
+def _session_store_report(sid, key, name, content, struct=None):
     with SESSIONS_LOCK:
         sess = SESSIONS.get(sid)
         if not sess:
             return
         sess["reports"].insert(0, {
             "key": key, "name": name, "size": len(content.encode("utf-8")),
-            "mtime": time.strftime("%Y-%m-%d %H:%M"), "content": content,
+            "mtime": time.strftime("%Y-%m-%d %H:%M"), "content": content, "struct": struct,
         })
         del sess["reports"][SESSION_REPORT_CAP:]
 
@@ -292,6 +301,14 @@ def _sweeper():
     while True:
         time.sleep(1800)
         now = time.time()
+        # 超时任务清扫：运行超过30分钟的子进程强制终止（如追问后用户离开的挂起任务）
+        with JOBS_LOCK:
+            for job in list(JOBS.values()):
+                try:
+                    if job.proc.poll() is None and now - job.created > 1800:
+                        job.proc.terminate()
+                except OSError:
+                    pass
         with SESSIONS_LOCK:
             for sid in [s for s, v in SESSIONS.items() if now - v["last"] > SESSION_TTL]:
                 SESSIONS.pop(sid, None)
@@ -427,6 +444,7 @@ def run(request: Request,
     env["PYTHONIOENCODING"] = "utf-8"
     if is_mock:
         env["AGENT_MOCK"] = "1"
+        env["AGENT_MOCK_ASK"] = "1"   # Web演示时展示"用户追问"环节（追问卡片可回答/跳过）
     else:
         env.pop("AGENT_MOCK", None)
         if byok:
@@ -545,14 +563,23 @@ def report_content(key: str, request: Request):
         sid, sess = _get_session(request)
         for r in sess["reports"]:
             if r["key"] == key:
-                return JSONResponse({"name": r["name"], "content": r["content"]})
+                return JSONResponse({"name": r["name"], "content": r["content"],
+                                     "struct": r.get("struct")})
         raise HTTPException(404, "报告不存在或已过期（公网模式仅保留本会话最近的报告）")
     if not REPORT_NAME_RE.match(key):
         raise HTTPException(400, "非法的报告文件名")
     path = OUTPUT_DIR / key
     if not path.is_file():
         raise HTTPException(404, "报告不存在")
-    return JSONResponse({"name": key, "content": path.read_text(encoding="utf-8")})
+    struct = None
+    struct_path = path.with_suffix(".json")
+    if struct_path.is_file():
+        try:
+            struct = json.loads(struct_path.read_text(encoding="utf-8"))
+        except ValueError:
+            struct = None
+    return JSONResponse({"name": key, "content": path.read_text(encoding="utf-8"),
+                         "struct": struct})
 
 
 if __name__ == "__main__":

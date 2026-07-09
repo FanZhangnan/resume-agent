@@ -4,6 +4,7 @@ Mock离线模式数据：没有API密钥时也能完整演示Agent全流程
 - 第一次自我验证会故意"发现问题"，用于演示Agent的自动修正闭环
 """
 import json
+import os
 import re
 from types import SimpleNamespace
 
@@ -176,6 +177,35 @@ MOCK_SUGGESTIONS_ROUND2 = {
         "- 输出周度数据看板，持续跟踪复购率变化。\n\n"
         "技能\nExcel（数据透视表）、SQL基础、活动运营、用户运营、飞书多维表格"
     ),
+    "optimized_resume_struct": {
+        "basic_info": {"name": "李明", "phone": "13800000000", "email": "liming@example.com",
+                       "location": "", "target_role": "电商运营专员"},
+        "summary": "电商运营方向，具备日常活动配置与大促复盘经验，参与过用户分层触达项目，习惯以转化率、复购率等指标驱动运营动作。",
+        "education": [
+            {"school": "江南大学", "degree": "本科", "major": "市场营销",
+             "start": "2018.09", "end": "2022.06", "highlights": []},
+        ],
+        "experience": [
+            {"company": "星河电商", "title": "运营助理", "start": "2022.07", "end": "2025.06",
+             "bullets": [
+                 "执行店铺日常活动的配置与上线、商品上下架，并搭建了基础数据整理流程",
+                 "参与618/双11大促复盘，完成转化率、客单价、投放ROI等核心指标的汇总与对比分析，结论支撑后续活动的选品与投放调整",
+                 "协助优化商品标题和详情页，部分核心商品点击率提升约12%",
+             ]},
+        ],
+        "projects": [
+            {"name": "会员复购提升项目", "role": "项目成员",
+             "bullets": [
+                 "参与用户分层标签整理：梳理分层维度并维护标签表，支撑社群和短信的分层触达",
+                 "输出周度数据看板，持续跟踪复购率变化",
+             ]},
+        ],
+        "skills": [
+            {"group": "数据与工具", "items": ["Excel（数据透视表）", "SQL基础", "飞书多维表格"]},
+            {"group": "运营能力", "items": ["活动运营", "用户运营", "活动复盘"]},
+        ],
+        "extras": [],
+    },
 }
 
 
@@ -274,8 +304,15 @@ def mock_agent_step(step_index, messages):
     if "未提供目标JD" in first_user:
         steps.append(
             ("用户没有目标JD，先根据简历画像推荐匹配度最高的大厂岗位。", "recommend_jobs", {"resume_info": {}}))
+    steps.append(("接下来分析目标岗位JD的硬性要求、加分项和隐含要求。", "analyze_jd", {"jd_text": ""}))
+    # Web演示模式下展示"用户追问"环节（CLI测试不开启，避免阻塞自动化）
+    if os.environ.get("AGENT_MOCK_ASK") == "1":
+        steps.append((
+            "JD强调数据驱动运营，但简历中核心项目缺少可量化成果，先向用户确认真实数据再继续。",
+            "ask_user",
+            {"question": "你在会员复购提升项目中负责的具体环节是什么？有没有真实的量化结果（如复购率变化、覆盖用户数）？",
+             "context": "补充真实数据能让优化建议更精准；没有数据或不方便提供时直接跳过即可，Agent不会编造。"}))
     steps.extend([
-        ("接下来分析目标岗位JD的硬性要求、加分项和隐含要求。", "analyze_jd", {"jd_text": ""}),
         ("简历和JD都已结构化，现在逐项对比计算匹配度。", "calculate_match", {}),
         ("匹配分析完成，基于差距生成具体优化建议和优化版简历。", "generate_suggestions", {}),
         ("建议已生成，交付前必须自我验证：检查过度美化、编造和逻辑矛盾。", "verify_output", {}),

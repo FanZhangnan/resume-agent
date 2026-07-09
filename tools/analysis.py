@@ -21,6 +21,7 @@ _SUGGESTION_SCHEMA = {
     "keyword_injection": [],
     "honesty_boundaries": [],
     "optimized_resume": "",
+    "optimized_resume_struct": {},
 }
 
 
@@ -66,7 +67,16 @@ rewrite_suggestions: 数组，逐段建议，每项包含 section, problem, sugg
 star_rewrites: 数组，用STAR法则改写经历，每项包含 original, situation, task, action, result, rewritten
 keyword_injection: 数组，可自然补充的关键词及放置位置，每项包含 keyword, placement
 honesty_boundaries: 数组，明确哪些内容不能夸大或编造
-optimized_resume: 完整的优化版中文简历文本，必须覆盖原简历的全部经历段落，可直接使用，不得省略
+optimized_resume_struct: 结构化的完整优化版简历（主要输出，供排版渲染），字段：
+  basic_info: {{name, phone, email, location, target_role}}
+  summary: 个人简介字符串（100字以内）
+  education: 数组 [{{school, degree, major, start, end, highlights: [要点数组]}}]
+  experience: 数组 [{{company, title, start, end, bullets: [职责与成果要点数组]}}]
+  projects: 数组 [{{name, role, bullets: [要点数组]}}]
+  skills: 数组 [{{group: 分组名, items: [技能数组]}}]
+  extras: 数组（证书/奖项/语言等字符串，可为空数组）
+  内容必须覆盖原简历全部经历段落并体现本次优化建议，不得新增编造
+optimized_resume: 留空字符串即可——系统会从optimized_resume_struct自动生成文本版；仅当无法输出结构化时才在此给完整文本
 {fix_block}
 简历信息：
 {compact_text(to_pretty_json(resume_info))}

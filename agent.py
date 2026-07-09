@@ -14,7 +14,7 @@ import config
 from llm_client import LLMClient
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
 from tools import execute_tool, get_tool_definitions
-from utils import clip_text, compact_text, to_pretty_json
+from utils import clip_text, compact_text, render_resume_text, to_pretty_json
 
 
 REQUIRED_SECTIONS = [
@@ -332,17 +332,37 @@ class ResumeAgent:
                 if state[key] is not None:
                     arguments[key] = state[key]
                 arguments.setdefault(key, {})
+            self._merge_clarifications(arguments)
         elif tool_name == "generate_suggestions":
             for key in ("resume_info", "jd_analysis", "match_result"):
                 if state[key] is not None:
                     arguments[key] = state[key]
                 arguments.setdefault(key, {})
+            self._merge_clarifications(arguments)
         elif tool_name == "verify_output":
             for key in ("resume_info", "jd_analysis", "match_result", "suggestions"):
                 if state[key] is not None:
                     arguments[key] = state[key]
                 arguments.setdefault(key, {})
+            self._merge_clarifications(arguments)
         return arguments
+
+    def _merge_clarifications(self, arguments):
+        """把用户追问得到的补充信息合并进resume_info，让下游工具用得上
+        （标注来源为用户本人，属于可信事实，但同样不得被夸大加工）
+        """
+        if not self.user_clarifications:
+            return
+        info = arguments.get("resume_info")
+        if not isinstance(info, dict):
+            return
+        merged = dict(info)
+        merged["user_clarifications"] = [
+            {"question": c["question"], "answer": c["answer"],
+             "note": "来自用户本人的补充说明，视为可信事实；引用时保持原意，不得夸大"}
+            for c in self.user_clarifications
+        ]
+        arguments["resume_info"] = merged
 
     def _top_recommended_jd(self):
         """岗位推荐模式：取排名第一的推荐岗位，拼出可供analyze_jd分析的JD文本"""
@@ -395,9 +415,12 @@ class ResumeAgent:
                     f"部分匹配{len(match.get('partial_matches') or [])}项、缺失{len(match.get('missing_requirements') or [])}项")
         if tool_name == "generate_suggestions":
             suggestions = result.get("suggestions") or {}
+            resume_text = render_resume_text(suggestions.get("optimized_resume_struct")) \
+                or (suggestions.get("optimized_resume") or "")
+            struct_note = "（含结构化排版数据）" if suggestions.get("optimized_resume_struct") else ""
             return (f"✅ 生成建议{len(suggestions.get('rewrite_suggestions') or [])}条、"
                     f"STAR改写{len(suggestions.get('star_rewrites') or [])}条，"
-                    f"优化版简历{len(suggestions.get('optimized_resume') or '')}字")
+                    f"优化版简历{len(resume_text)}字{struct_note}")
         if tool_name == "verify_output":
             verification = result.get("verification") or {}
             if verification.get("passed") or verification.get("safe_to_deliver"):
@@ -514,9 +537,7 @@ class ResumeAgent:
             # 网络已经不稳定，不再发起LLM调用，直接用本地模板渲染已有数据
             return self._compose_report(self._format_report_locally())
 
-        data = self._get_report_data()
-        prompt = FINAL_REPORT_FORMAT_PROMPT.format(
-            data=compact_text(to_pretty_json(data), max_chars=16000))
+        prompt = FINAL_REPORT_FORMAT_PROMPT.format(data=self._serialize_report_data_for_llm())
         try:
             print("\n📝 正在生成最终报告...")
             formatted = self.client.simple_ask(
@@ -528,15 +549,53 @@ class ResumeAgent:
             print(f"⚠️ LLM格式化报告失败，改用本地模板：{error}")
         return self._compose_report(self._format_report_locally())
 
+    def _serialize_report_data_for_llm(self):
+        """报告数据按字段分别限额压缩，避免整体截断把末尾字段（尤其优化版简历）砍掉。
+        optimized_resume不进LLM上下文：由系统在报告末尾确定性注入完整原文。
+        """
+        data = self._get_report_data()
+        suggestions = dict(data["suggestions"] or {})
+        if suggestions.get("optimized_resume") or suggestions.get("optimized_resume_struct"):
+            suggestions["optimized_resume"] = (
+                "[系统托管] 完整优化版简历原文将由系统自动注入最终报告，"
+                "你在【优化版简历】章节只需原样输出占位行：[[OPTIMIZED_RESUME]]")
+            suggestions.pop("optimized_resume_struct", None)
+        budgets = [
+            ("resume_info", data["resume_info"], 3500),
+            ("job_recommendations", data["job_recommendations"], 2500),
+            ("jd_analysis", data["jd_analysis"], 2500),
+            ("match_result", data["match_result"], 3000),
+            ("suggestions", suggestions, 4500),
+            ("verification", data["verification"], 2200),
+            ("correction_log", data["correction_log"], 1500),
+            ("user_clarifications", data["user_clarifications"], 1200),
+        ]
+        parts = []
+        for key, value, budget in budgets:
+            if not value:
+                continue
+            parts.append(f"### {key}\n{compact_text(to_pretty_json(value), max_chars=budget)}")
+        return "\n\n".join(parts)
+
+    def _optimized_resume_text(self):
+        """优化版简历文本：优先由结构化数据渲染（与Web排版同源），否则用文本字段"""
+        suggestions = self.state["suggestions"] or {}
+        return (render_resume_text(suggestions.get("optimized_resume_struct"))
+                or (suggestions.get("optimized_resume") or "")).strip()
+
     def _ensure_full_resume(self, formatted):
-        """LLM格式化时偶尔会把优化版简历概括掉——检测到疑似缺失时补上工具生成的原文"""
-        optimized = ((self.state["suggestions"] or {}).get("optimized_resume") or "").strip()
+        """确定性保证：报告的【优化版简历】章节永远是工具生成的完整原文，绝不截断"""
+        optimized = self._optimized_resume_text()
         if not optimized:
             return formatted
-        tail = formatted.split("【优化版简历】")[-1].strip()
-        if len(tail) < min(200, max(50, len(optimized) // 2)):
-            formatted += "\n\n（以下为工具生成的完整优化版简历原文）\n\n" + optimized
-        return formatted
+        if "[[OPTIMIZED_RESUME]]" in formatted:
+            return formatted.replace("[[OPTIMIZED_RESUME]]", optimized)
+        header = "【优化版简历】"
+        if header in formatted:
+            # 该章节按模板是报告最后一章：无论LLM写了什么（概括/截断说明），一律替换为完整原文
+            head, _, _tail = formatted.rpartition(header)
+            return head + header + "\n\n" + optimized + "\n"
+        return formatted + "\n\n## 【优化版简历】\n\n" + optimized + "\n"
 
     def _compose_report(self, body):
         """给报告加上元信息头"""
@@ -709,7 +768,7 @@ class ResumeAgent:
 
         # ---- 优化版简历 ----
         sections.append("\n## 【优化版简历】")
-        sections.append(suggestions.get("optimized_resume") or "（未生成）")
+        sections.append(self._optimized_resume_text() or "（未生成）")
 
         return "\n\n".join(part for part in sections if part)
 
@@ -746,7 +805,7 @@ class ResumeAgent:
         return "\n".join(lines)
 
     def _save_report(self, report_text):
-        """将最终报告保存为Markdown文件"""
+        """将最终报告保存为Markdown文件；结构化简历另存同名.json（供Web排版模板使用）"""
         if not report_text:
             return None
         try:
@@ -756,6 +815,11 @@ class ResumeAgent:
             filepath = os.path.join(self.output_dir, filename)
             with open(filepath, "w", encoding="utf-8") as file:
                 file.write(report_text)
+            struct = (self.state["suggestions"] or {}).get("optimized_resume_struct")
+            if isinstance(struct, dict) and struct:
+                struct_path = os.path.splitext(filepath)[0] + ".json"
+                with open(struct_path, "w", encoding="utf-8") as file:
+                    json.dump(struct, file, ensure_ascii=False, indent=2)
             return filepath
         except Exception as error:
             print(f"⚠️ 保存报告失败：{error}")

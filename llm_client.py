@@ -93,6 +93,7 @@ class LLMClient:
         self.last_finish_reason = getattr(choice, "finish_reason", None)
         if self.last_finish_reason == "length":
             print("   ⚠️ 注意：本次LLM输出达到token上限被截断")
+        _print_usage(getattr(response, "usage", None))
         return choice.message
 
     def _chat_streaming(self, kwargs):
@@ -105,7 +106,11 @@ class LLMClient:
         content_parts = []
         tool_calls_acc = {}  # index -> {"id", "name", "arguments": [分片列表]}
         finish_reason = None
+        usage = None
         for chunk in stream:
+            # 部分网关会在尾块携带usage（无需stream_options），能拿到就记录
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
             if not getattr(chunk, "choices", None):
                 continue
             choice = chunk.choices[0]
@@ -130,6 +135,7 @@ class LLMClient:
         self.last_finish_reason = finish_reason
         if finish_reason == "length":
             print("   ⚠️ 注意：本次LLM输出达到token上限被截断")
+        _print_usage(usage)
 
         tool_calls = None
         if tool_calls_acc:
@@ -184,6 +190,18 @@ def _brief_error(error):
     if len(text) > 300:
         text = text[:300] + "...(已截断)"
     return text
+
+
+def _print_usage(usage):
+    """打印真实token用量（网关返回时才有；Web UI据此汇总展示，拿不到就不显示不估算）"""
+    if not usage:
+        return
+    total = getattr(usage, "total_tokens", None)
+    if not total:
+        return
+    prompt = getattr(usage, "prompt_tokens", None) or 0
+    completion = getattr(usage, "completion_tokens", None) or 0
+    print(f"   🧮 tokens：输入{prompt} + 输出{completion} = {total}")
 
 
 class _ToolCallFunction:
