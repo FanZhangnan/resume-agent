@@ -135,6 +135,9 @@ class ResumeAgent:
             print("🧪 模式：离线演示（Mock）")
         else:
             print(f"🤖 模型：{config.MODEL_NAME} @ {config.API_BASE_URL}")
+            if config.REASONING_EFFORT:
+                labels = {"none": "关闭推理", "low": "快速", "medium": "标准", "high": "深度", "xhigh": "极深"}
+                print(f"🧩 推理强度：{labels.get(config.REASONING_EFFORT, config.REASONING_EFFORT)}（{config.REASONING_EFFORT}）")
         print(f"📄 简历来源：{'文件（' + str(self.resume_input) + '）' if self.resume_is_file else '文本'}")
         if self.job_search_mode:
             print("🎯 任务：未提供JD → 岗位推荐模式（自动匹配最合适的大厂岗位）")
@@ -963,6 +966,16 @@ def main():
             print(_USAGE)
             return
         preferences = args[index + 1]
+        args = args[:index] + args[index + 2:]
+
+    # 提取 --reasoning 推理强度参数（需模型支持；用probe_reasoning.py可实测网关支持哪些）
+    if "--reasoning" in args:
+        index = args.index("--reasoning")
+        if index + 1 >= len(args) or args[index + 1] not in config.REASONING_LEVELS:
+            print(f"❌ --reasoning 后面需要跟强度等级：{' / '.join(config.REASONING_LEVELS)}\n")
+            print(_USAGE)
+            return
+        config.REASONING_EFFORT = args[index + 1]
         args = args[:index] + args[index + 2:]
 
     if not args:

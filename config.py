@@ -32,6 +32,13 @@ MODEL_NAME = os.environ.get("AGENT_MODEL", "claude-fable-5-free")
 # 密钥优先级：ZENMUX_API_KEY 优先，避免机器上残留的旧OPENAI_API_KEY静默覆盖
 API_KEY = os.environ.get("ZENMUX_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 
+# 推理强度：gpt-5.5实测支持 none / low / medium / high / xhigh（minimal会被拒），留空=网关默认
+# Web UI中用户可按次选择四档；none=关闭推理（仅CLI/环境变量可用）
+# 换网关/模型后可用 probe_reasoning.py 重新实测
+REASONING_LEVELS = ("none", "low", "medium", "high", "xhigh")
+_EFFORT = os.environ.get("AGENT_REASONING_EFFORT", "").strip().lower()
+REASONING_EFFORT = _EFFORT if _EFFORT in REASONING_LEVELS else ""
+
 # ===== Agent行为配置 =====
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "20"))  # ReAct循环最大步数，防止无限循环
 MAX_REVISION_ROUNDS = int(os.environ.get("AGENT_MAX_REVISIONS", "1"))  # 自我验证未通过时的自动修正轮数

@@ -33,6 +33,7 @@ class LLMClient:
                 "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo）"
             )
         self.streaming = config.STREAMING
+        self.reasoning_supported = True   # 网关拒绝reasoning_effort参数后置False，不再发送
         self.client = OpenAI(
             base_url=config.API_BASE_URL,
             api_key=config.API_KEY,
@@ -63,6 +64,8 @@ class LLMClient:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        if config.REASONING_EFFORT and self.reasoning_supported:
+            kwargs["reasoning_effort"] = config.REASONING_EFFORT
 
         last_error = None
         for attempt in range(1, config.MAX_RETRIES + 1):
@@ -76,6 +79,11 @@ class LLMClient:
                 if self.streaming and "stream" in str(e).lower():
                     print("⚠️  当前端点疑似不支持流式传输，自动切换为非流式模式")
                     self.streaming = False
+                    continue
+                # 端点不支持推理强度参数 → 去掉后立即重试，之后不再发送
+                if "reasoning" in str(e).lower() and kwargs.pop("reasoning_effort", None):
+                    print("⚠️  当前网关不支持推理强度参数，已自动去掉后重试")
+                    self.reasoning_supported = False
                     continue
                 print(f"⚠️  LLM调用失败（第{attempt}/{config.MAX_RETRIES}次尝试）：{_brief_error(e)}")
                 if attempt < config.MAX_RETRIES:

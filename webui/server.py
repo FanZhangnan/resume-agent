@@ -393,6 +393,7 @@ def run(request: Request,
         api_key: str = Form(""),
         base_url: str = Form(""),
         model: str = Form(""),
+        reasoning: str = Form(""),
         resume_file: Optional[UploadFile] = File(None)):
     sid, _ = _get_session(request)
     ip = _client_ip(request)
@@ -401,6 +402,9 @@ def run(request: Request,
     base_url = base_url.strip()[:300]
     model = model.strip()[:100]
     byok = bool(api_key)
+    reasoning = reasoning.strip().lower()
+    if reasoning and reasoning not in agent_config.REASONING_LEVELS:
+        raise HTTPException(400, f"推理强度取值仅限：{' / '.join(agent_config.REASONING_LEVELS)}")
     if len(resume_text) > 200_000 or len(jd_text) > 50_000:
         raise HTTPException(400, "文本过长，请精简后重试")
     if base_url and not BASE_URL_RE.match(base_url):
@@ -447,6 +451,10 @@ def run(request: Request,
         env["AGENT_MOCK_ASK"] = "1"   # Web演示时展示"用户追问"环节（追问卡片可回答/跳过）
     else:
         env.pop("AGENT_MOCK", None)
+        if reasoning:
+            env["AGENT_REASONING_EFFORT"] = reasoning
+        else:
+            env.pop("AGENT_REASONING_EFFORT", None)
         if byok:
             # BYOK：仅本次子进程使用，不落盘不记录
             env.pop("ZENMUX_API_KEY", None)     # ZENMUX优先级更高，必须清掉

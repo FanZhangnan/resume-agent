@@ -410,6 +410,14 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
           <input type="text" id="prefs" placeholder="例：在中国求职大厂实习 / 只考虑远程">
         </div>
 
+        <label class="field">推理强度 <em>（越深入分析越细，耗时与费用也越高）</em></label>
+        <div class="seg" id="effort-seg">
+          <button data-v="low" onclick="setEffort('low')">快速</button>
+          <button data-v="medium" class="on" onclick="setEffort('medium')">标准</button>
+          <button data-v="high" onclick="setEffort('high')">深度</button>
+          <button data-v="xhigh" onclick="setEffort('xhigh')">极深</button>
+        </div>
+
         <details id="adv">
           <summary>高级设置 · 自带 API Key（BYOK）</summary>
           <label class="field">API Key <em>（仅本次请求使用，服务器不存储）</em></label>
@@ -844,6 +852,14 @@ function swarmSettle(){
 
 /* ================= 初始化 ================= */
 let PUB = false;
+let effort = "medium";
+const EFFORT_ZH = {none:"关闭推理", low:"快速", medium:"标准", high:"深度", xhigh:"极深"};
+function setEffort(v){
+  if(!EFFORT_ZH[v]) return;
+  effort = v;
+  document.querySelectorAll("#effort-seg button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  try{ localStorage.setItem("agent_effort", v); }catch(e){}
+}
 function byok(){ return {
   key:   ($("byok-key").value || "").trim(),
   base:  ($("byok-base").value || "").trim(),
@@ -863,6 +879,8 @@ function updateQuotaNote(freeLeft, freePerDay){
   }
 }
 (async function init(){
+  /* 推理强度记忆 */
+  try{ setEffort(localStorage.getItem("agent_effort") || "medium"); }catch(e){}
   /* BYOK 记忆在本机浏览器 */
   try{
     ["byok-key","byok-base","byok-model"].forEach(id => {
@@ -921,6 +939,7 @@ async function startRun(mode){
   const fd = new FormData();
   fd.append("mode", mode);
   fd.append("mock", $("mock").checked ? "1" : "0");
+  fd.append("reasoning", effort);
   if(mode === "custom"){
     if(srcMode === "file"){
       if(!pickedFile){ alert("请先选择简历文件"); return; }
@@ -1003,7 +1022,8 @@ function beginRunUI(mode, data){
   swarmStatus("dispatching…");
   $("run-meta").innerHTML =
     `<div><dt>模式</dt><dd>${mode==="demo"?"示例演示":(jd?"简历 × JD 匹配":"岗位推荐")}</dd></div>` +
-    `<div><dt>引擎</dt><dd>${data.mock ? '<span class="badge mock">MOCK 离线</span>' : '<span class="badge">'+data.model+'</span>'}</dd></div>`;
+    `<div><dt>引擎</dt><dd>${data.mock ? '<span class="badge mock">MOCK 离线</span>' : '<span class="badge">'+escapeHtml(data.model||"")+'</span>'}</dd></div>` +
+    (data.mock ? "" : `<div><dt>推理强度</dt><dd>${EFFORT_ZH[effort] || "默认"}</dd></div>`);
   setStatus("run","分析中");
   t0 = Date.now();
   timerIv = setInterval(()=> {
@@ -1142,7 +1162,7 @@ function parseLine(raw){
   if(t.startsWith("📋 观察：")){ onObservation(after(t)); return; }
 
   if(!sawStep){
-    if(/^(🚀|🤖|🧪|📄|🎯|💡|🔧|🎬)/.test(t)){ $("banner").innerHTML += escapeHtml(stripLead(t)) + "<br>"; return; }
+    if(/^(🚀|🤖|🧪|🧩|📄|🎯|💡|🔧|🎬)/.test(t)){ $("banner").innerHTML += escapeHtml(t.replace(/^(🚀|🤖|🧪|🧩|📄|🎯|💡|🔧|🎬)\s*/, "")) + "<br>"; return; }
   }
   if(/报告已保存/.test(t)){ addSys(stripLead(t), "ok"); logAdd("报告生成完成"); return; }
   if(t.startsWith("📝")){ addSys(stripLead(t)); stageActive("report"); swarmCore("think"); swarmStatus('<span class="sig">core</span> composing report…'); return; }
