@@ -78,6 +78,96 @@ def clip_text(text, max_chars=12000):
     return text[:max_chars] + "\n...[内容过长已截断]"
 
 
+_SECTION_MAP = {
+    "个人简介": "summary", "自我评价": "summary", "简介": "summary",
+    "教育背景": "education", "教育经历": "education",
+    "工作经历": "experience", "工作经验": "experience", "实习经历": "experience",
+    "项目经验": "projects", "项目经历": "projects",
+    "核心技能": "skills", "技能": "skills", "专业技能": "skills",
+    "其他": "extras", "证书": "extras", "奖项": "extras", "语言": "extras",
+}
+
+_PERIOD_RE = re.compile(r"[（(]?\s*(\d{4}(?:\.\d{1,2})?)\s*[-–~至]+\s*(\d{4}(?:\.\d{1,2})?|至今|在读|现在)\s*[)）]?")
+
+
+def parse_resume_text_to_struct(text):
+    """确定性兜底：把纯文本简历尽力解析为结构化数据（识别【段落】标题、｜分隔头行、-要点）
+    解析不出有效结构时返回{}，调用方据此继续降级
+    """
+    text = str(text or "").strip()
+    if not text:
+        return {}
+    struct = {"basic_info": {}, "summary": "", "education": [],
+              "experience": [], "projects": [], "skills": [], "extras": []}
+    lines = [line.strip() for line in text.splitlines()]
+    section, head_done, entry = None, False, None
+
+    def _new_entry(line, keys):
+        period = _PERIOD_RE.search(line)
+        start, end = (period.group(1), period.group(2)) if period else ("", "")
+        clean = _PERIOD_RE.sub("", line).strip(" ｜|（()）")
+        parts = [p.strip() for p in re.split(r"[｜|]", clean) if p.strip()]
+        item = {k: (parts[i] if i < len(parts) else "") for i, k in enumerate(keys)}
+        if start:
+            item["start"], item["end"] = start, end
+        item["bullets"] = []
+        return item
+
+    for line in lines:
+        if not line:
+            continue
+        header = re.match(r"^【(.+?)】$", line) or (line in _SECTION_MAP and re.match(r"^(.+)$", line))
+        if header:
+            name = header.group(1)
+            if name in _SECTION_MAP:
+                section, entry = _SECTION_MAP[name], None
+                head_done = True
+                continue
+        if not head_done and section is None:
+            basic = struct["basic_info"]
+            if line.startswith("求职意向：") or line.startswith("目标岗位："):
+                basic["target_role"] = line.split("：", 1)[1].strip()
+            elif "@" in line or re.search(r"\d{7,}", line):
+                for part in re.split(r"[｜|]", line):
+                    part = part.strip()
+                    if "@" in part:
+                        basic["email"] = part
+                    elif re.search(r"\d{7,}", part):
+                        basic["phone"] = part
+                    elif part:
+                        basic["location"] = part
+            elif not basic.get("name") and len(line) <= 20:
+                basic["name"] = line
+            continue
+        if section == "summary":
+            struct["summary"] = (struct["summary"] + " " + line).strip()
+        elif section in ("education", "experience", "projects"):
+            if line.startswith(("-", "•", "·")):
+                if entry is not None:
+                    entry["bullets"].append(line.lstrip("-•· ").strip())
+            else:
+                keys = {"education": ("school", "degree", "major"),
+                        "experience": ("company", "title"),
+                        "projects": ("name", "role")}[section]
+                entry = _new_entry(line, keys)
+                struct[section].append(entry)
+        elif section == "skills":
+            body = line.lstrip("-•· ").strip()
+            if "：" in body:
+                group, _, items = body.partition("：")
+                struct["skills"].append({"group": group.strip(),
+                                         "items": [s.strip() for s in re.split(r"[、,，;；]", items) if s.strip()]})
+            elif body:
+                struct["skills"].append(body)
+        elif section == "extras":
+            struct["extras"].append(line.lstrip("-•· ").strip())
+
+    has_content = any(struct[k] for k in ("education", "experience", "projects"))
+    if not (struct["basic_info"].get("name") or has_content):
+        return {}
+    return struct
+
+
 def render_resume_text(struct):
     """把结构化优化简历渲染成可读的纯文本简历（报告与CLI使用；Web端另有排版模板）"""
     if not isinstance(struct, dict) or not struct:

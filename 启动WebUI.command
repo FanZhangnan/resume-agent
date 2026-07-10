@@ -22,6 +22,14 @@ if [ $? -ne 0 ]; then
   "$PY" -m pip install -r requirements.txt -q || { echo "✗ 依赖安装失败，请检查网络"; read -r -n1 -p "按任意键退出"; exit 1; }
 fi
 
-echo "→ 启动服务：http://127.0.0.1:7860 （关闭本窗口即停止）"
-( sleep 1.5; open "http://127.0.0.1:7860" ) &
+# 先停掉占用端口的旧服务进程（避免代码更新后旧进程一直存活导致新功能不生效）
+PORT="${AGENT_UI_PORT:-7860}"
+OLD=$(lsof -ti tcp:"$PORT" 2>/dev/null)
+if [ -n "$OLD" ]; then
+  echo "→ 检测到旧服务进程（PID $OLD），正在替换为最新代码..."
+  kill $OLD 2>/dev/null; sleep 1
+fi
+
+echo "→ 启动服务：http://127.0.0.1:$PORT （关闭本窗口即停止）"
+( sleep 1.5; open "http://127.0.0.1:$PORT" ) &
 exec "$PY" webui/server.py

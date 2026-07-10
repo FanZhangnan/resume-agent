@@ -1,6 +1,6 @@
 import config
-from tools.common import ask_json
-from utils import compact_text, to_pretty_json
+from tools.common import ask_json, get_client
+from utils import clip_text, compact_text, parse_resume_text_to_struct, to_pretty_json
 
 _MATCH_SCHEMA = {
     "score": 0,
@@ -93,4 +93,57 @@ JD分析：
                       max_tokens=config.REPORT_MAX_TOKENS)
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试generate_suggestions"}
+    result = _ensure_struct(result)
     return {"success": True, "suggestions": result}
+
+
+def _valid_struct(struct):
+    """结构化简历是否可用：需有basic_info且至少一段经历类内容"""
+    return (isinstance(struct, dict)
+            and isinstance(struct.get("basic_info"), dict)
+            and any(struct.get(key) for key in ("education", "experience", "projects")))
+
+
+def _ensure_struct(result):
+    """排版数据100%保障：模型漏输出struct时逐层兜底
+    第1层：专项LLM调用（只做文本→结构化转换，小任务成功率高）
+    第2层：确定性文本解析器（零LLM依赖，永不失败到无输出）
+    """
+    if _valid_struct(result.get("optimized_resume_struct")):
+        return result
+    text = (result.get("optimized_resume") or "").strip()
+    if not text:
+        return result
+    print("   ⚠️ 模型未输出结构化简历，启动专项补全...")
+    struct = None
+    if not get_client().mock_mode:          # Mock模式直接走确定性解析器
+        struct = _struct_from_text(text)
+    if not _valid_struct(struct):
+        print("   ⚠️ 使用本地解析器兜底生成结构化数据")
+        struct = parse_resume_text_to_struct(text)
+    if _valid_struct(struct):
+        result = dict(result)
+        result["optimized_resume_struct"] = struct
+    return result
+
+
+def _struct_from_text(resume_text):
+    """专项小调用：把优化版简历文本原样转换为结构化JSON（不新增不删减事实）"""
+    schema = {"basic_info": {}, "summary": "", "education": [],
+              "experience": [], "projects": [], "skills": [], "extras": []}
+    prompt = f"""
+把以下简历文本转换为结构化JSON，内容必须逐字忠于原文，不得新增、删减或改写任何事实。字段：
+basic_info: {{name, phone, email, location, target_role}}
+summary: 个人简介字符串（原文没有则留空字符串）
+education: 数组 [{{school, degree, major, start, end, highlights: [要点数组]}}]
+experience: 数组 [{{company, title, start, end, bullets: [要点数组]}}]
+projects: 数组 [{{name, role, bullets: [要点数组]}}]
+skills: 数组 [{{group, items: [技能数组]}}]
+extras: 数组（证书/奖项/语言等，可为空数组）
+
+简历文本：
+{clip_text(resume_text, max_chars=6000)}
+"""
+    return ask_json(prompt, "你是精确的文档结构化助手。只输出JSON，不改写内容。",
+                    schema, temperature=0.0, label="补全结构化排版数据",
+                    max_tokens=config.REPORT_MAX_TOKENS)

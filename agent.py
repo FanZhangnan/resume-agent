@@ -14,7 +14,8 @@ import config
 from llm_client import LLMClient
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
 from tools import execute_tool, get_tool_definitions
-from utils import clip_text, compact_text, render_resume_text, to_pretty_json
+from utils import (clip_text, compact_text, parse_resume_text_to_struct,
+                   render_resume_text, to_pretty_json)
 
 
 REQUIRED_SECTIONS = [
@@ -457,7 +458,16 @@ class ResumeAgent:
         elif tool_name == "calculate_match":
             self.state["match_result"] = result.get("match_result")
         elif tool_name == "generate_suggestions":
-            self.state["suggestions"] = result.get("suggestions")
+            suggestions = result.get("suggestions") or {}
+            # 最后一道保障：任何路径漏掉结构化数据，都用本地解析器从文本补出
+            struct = suggestions.get("optimized_resume_struct")
+            has_struct = isinstance(struct, dict) and any(
+                struct.get(k) for k in ("education", "experience", "projects"))
+            if suggestions and not has_struct:
+                parsed = parse_resume_text_to_struct(suggestions.get("optimized_resume") or "")
+                if parsed:
+                    suggestions = {**suggestions, "optimized_resume_struct": parsed}
+            self.state["suggestions"] = suggestions
         elif tool_name == "verify_output":
             self.state["verification"] = result.get("verification")
         elif tool_name == "ask_user":
