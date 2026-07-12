@@ -506,6 +506,7 @@ def status(request: Request):
         "mock_env": os.environ.get("AGENT_MOCK") == "1",
         "max_steps": agent_config.MAX_STEPS,
         "public": PUBLIC,
+        "deployment_mode": "local",
         "free_per_day": FREE_PER_DAY if PUBLIC else None,
         "free_left": _quota_left(ip) if PUBLIC else None,
     }

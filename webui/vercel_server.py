@@ -9,6 +9,7 @@ cleanup endpoints. The gateway key and base URL are never exposed to the browser
 
 import hmac
 import os
+import secrets
 import tempfile
 import time
 
@@ -163,13 +164,29 @@ async def _extract_resume(resume_file, resume_text):
 
 
 # ---------------------------------------------------------------------- routes
+def _content_security_policy(nonce):
+    return (
+        "default-src 'self'; "
+        "base-uri 'none'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "connect-src 'self'"
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     try:
-        with open(os.path.join(_STATIC_DIR, "index.html"), "r", encoding="utf-8") as handle:
-            return HTMLResponse(handle.read())
+        with open(os.path.join(_STATIC_DIR, "vercel_app.html"), "r", encoding="utf-8") as handle:
+            template = handle.read()
     except OSError:
         return HTMLResponse("<h1>Resume Agent</h1>", status_code=200)
+    nonce = secrets.token_urlsafe(16)
+    html = template.replace("__CSP_NONCE__", nonce)
+    return HTMLResponse(html, headers={"Content-Security-Policy": _content_security_policy(nonce)})
 
 
 @app.get("/api/config")

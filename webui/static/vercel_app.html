@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简历优化 Agent · 内测</title>
+<style>
+:root{
+  --paper:#fbfbf9; --card:#ffffff; --ink:#16181d; --sub:#5f6672; --faint:#a7adb8;
+  --hair:#e9e9e4; --hair2:#d8d8d2;
+  --signal:#2b5ce6; --ok:#178a50; --warn:#b7791f; --bad:#c2402f;
+  --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{--paper:#15161a; --card:#1c1e24; --ink:#e9eaec; --sub:#9aa1ad; --faint:#5f6672;
+        --hair:#2a2c33; --hair2:#363943; --signal:#5b82f0;}
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:28px 20px 64px}
+header{display:flex;align-items:center;gap:12px;padding-bottom:18px;border-bottom:1px solid var(--hair);margin-bottom:22px}
+.mark{width:10px;height:10px;background:var(--ink)}
+h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.02em}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
+.grid{display:grid;grid-template-columns:1fr;gap:20px}
+@media(min-width:760px){.grid{grid-template-columns:360px 1fr}}
+label{display:block;font-size:12px;color:var(--sub);margin:14px 0 6px}
+input[type=text],input[type=password],textarea,select{
+  width:100%;background:var(--card);color:var(--ink);border:1px solid var(--hair2);
+  border-radius:7px;padding:9px 10px;font-family:var(--sans);font-size:13.5px}
+textarea{min-height:150px;resize:vertical;line-height:1.5}
+input[type=file]{width:100%;font-size:12.5px;color:var(--sub)}
+.row2{display:flex;gap:10px}.row2>div{flex:1}
+button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 14px;cursor:pointer;border:1px solid var(--hair2);background:var(--card);color:var(--ink)}
+.btn-primary{width:100%;margin-top:18px;background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:600}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{width:100%;margin-top:8px;background:transparent;color:var(--sub)}
+.hidden{display:none}
+.note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.5}
+.stages{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:9px;overflow:hidden}
+.stage{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--hair);font-size:13px}
+.stage:last-child{border-bottom:none}
+.st-status{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.stage[data-state=running]{background:color-mix(in srgb,var(--signal) 8%,transparent)}
+.stage[data-state=running] .st-status{color:var(--signal)}
+.stage[data-state=completed] .st-status{color:var(--ok)}
+.stage[data-state=failed] .st-status,.stage[data-state=skipped] .st-status{color:var(--warn)}
+.status-line{font-family:var(--mono);font-size:11px;color:var(--sub);margin:14px 0}
+.report{margin-top:18px;background:var(--card);border:1px solid var(--hair);border-radius:9px;padding:18px 20px;line-height:1.6;font-size:13.5px}
+.report h1{font-size:17px;margin:.4em 0}.report h2{font-size:15px;margin:1em 0 .4em;color:var(--sub)}
+.report h3{font-size:13.5px;margin:.8em 0 .3em}
+.report ul{padding-left:20px;margin:.4em 0}.report blockquote{border-left:3px solid var(--hair2);margin:.6em 0;padding:.2em 0 .2em 12px;color:var(--sub)}
+.report hr{border:none;border-top:1px solid var(--hair);margin:1em 0}
+.report pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;background:transparent}
+.banner{padding:10px 12px;border-radius:7px;font-size:12.5px;margin-top:12px}
+.banner.warn{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
+.banner.bad{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mark"></span>
+    <div><h1>简历优化 Agent</h1><div class="tag">Invite-only preview</div></div>
+  </header>
+
+  <div class="grid">
+    <section id="formPane">
+      <label for="inviteCode">邀请码</label>
+      <input type="password" id="inviteCode" autocomplete="off" placeholder="内测邀请码">
+
+      <label for="resumeFile">简历文件（PDF / DOCX / TXT / MD，≤4MB）</label>
+      <input type="file" id="resumeFile" accept=".pdf,.docx,.txt,.md">
+
+      <label for="jdText">目标职位 JD（必填）</label>
+      <textarea id="jdText" placeholder="粘贴目标岗位的职位描述……"></textarea>
+
+      <div class="row2">
+        <div>
+          <label for="modelSelect">模型</label>
+          <select id="modelSelect"></select>
+        </div>
+        <div>
+          <label for="reasoningSelect">推理强度</label>
+          <select id="reasoningSelect"></select>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="startBtn">开始分析</button>
+      <button class="btn-ghost hidden" id="cancelBtn">取消本次运行</button>
+      <div class="note">简历文本会在一天内保留于 Vercel 工作流状态用于本次运行，结束后可删除。密钥仅在服务端，不会下发浏览器。当前预览仅支持粘贴 JD 的流程。</div>
+      <div class="banner bad hidden" id="errBanner"></div>
+    </section>
+
+    <section id="runPane">
+      <div class="status-line" id="statusLine">尚未开始</div>
+      <ol class="stages" id="stages">
+        <li class="stage" data-stage="1" data-state="pending"><span>简历解析</span><span class="st-status" id="st-1">待运行</span></li>
+        <li class="stage" data-stage="2" data-state="pending"><span>简历信息结构化</span><span class="st-status" id="st-2">待运行</span></li>
+        <li class="stage" data-stage="3" data-state="pending"><span>在招岗位发现</span><span class="st-status" id="st-3">待运行</span></li>
+        <li class="stage" data-stage="4" data-state="pending"><span>岗位要求分析</span><span class="st-status" id="st-4">待运行</span></li>
+        <li class="stage" data-stage="5" data-state="pending"><span>匹配度分析</span><span class="st-status" id="st-5">待运行</span></li>
+        <li class="stage" data-stage="6" data-state="pending"><span>简历优化</span><span class="st-status" id="st-6">待运行</span></li>
+        <li class="stage" data-stage="7" data-state="pending"><span>真实性审查</span><span class="st-status" id="st-7">待运行</span></li>
+        <li class="stage" data-stage="8" data-state="pending"><span>生成报告</span><span class="st-status" id="st-8">待运行</span></li>
+      </ol>
+      <div class="banner warn hidden" id="partialBanner"></div>
+      <div class="report hidden" id="report"></div>
+    </section>
+  </div>
+</div>
+
+<script nonce="__CSP_NONCE__">
+"use strict";
+(function(){
+  var POLL_MS = 2000;
+  var RUN_KEY = "resume_run";
+  var STATE_LABEL = {pending:"待运行", running:"进行中", completed:"完成",
+                     failed:"失败", skipped:"跳过", cancelled:"已取消"};
+  var pollTimer = null;
+
+  function $(id){ return document.getElementById(id); }
+
+  function escapeHtml(value){
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function(ch){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];
+    });
+  }
+
+  // Escape first, then apply a small markdown subset over safe text only.
+  function renderMarkdownSafe(md){
+    var lines = escapeHtml(md).split("\n");
+    var out = [], listOpen = false;
+    function closeList(){ if(listOpen){ out.push("</ul>"); listOpen = false; } }
+    for(var i=0;i<lines.length;i++){
+      var line = lines[i];
+      var inline = line
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+?)`/g, "<code>$1</code>");
+      if(/^\s*---\s*$/.test(line)){ closeList(); out.push("<hr>"); continue; }
+      var h = /^(#{1,3})\s+(.*)$/.exec(line);
+      if(h){ closeList(); var lvl = h[1].length; out.push("<h"+lvl+">"+h[2]+"</h"+lvl+">"); continue; }
+      var quote = /^&gt;\s?(.*)$/.exec(inline);
+      if(quote){ closeList(); out.push("<blockquote>"+quote[1]+"</blockquote>"); continue; }
+      var li = /^\s*[-*]\s+(.*)$/.exec(inline);
+      if(li){ if(!listOpen){ out.push("<ul>"); listOpen = true; } out.push("<li>"+li[1]+"</li>"); continue; }
+      if(line.trim() === ""){ closeList(); continue; }
+      out.push("<p>"+inline+"</p>");
+    }
+    closeList();
+    return out.join("");
+  }
+
+  function setError(msg){
+    var el = $("errBanner");
+    if(!msg){ el.classList.add("hidden"); return; }
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+
+  function setStage(stageId, state, detail){
+    var row = document.querySelector('.stage[data-stage="'+stageId+'"]');
+    if(!row) return;
+    row.setAttribute("data-state", state);
+    var label = STATE_LABEL[state] || state;
+    if(detail){ label += " · " + detail; }
+    $("st-"+stageId).textContent = label;
+  }
+
+  function currentRun(){
+    try{ return JSON.parse(sessionStorage.getItem(RUN_KEY) || "null"); }
+    catch(e){ return null; }
+  }
+
+  function saveRun(run){ sessionStorage.setItem(RUN_KEY, JSON.stringify(run)); }
+  function clearRun(){ sessionStorage.removeItem(RUN_KEY); }
+
+  async function loadConfig(){
+    var cfg = await (await fetch("/api/config")).json();
+    var modelSel = $("modelSelect");
+    modelSel.textContent = "";
+    (cfg.model_options || []).forEach(function(m){
+      var opt = document.createElement("option");
+      opt.value = m.id; opt.textContent = m.label || m.id;
+      opt.setAttribute("data-levels", (m.reasoning_levels || []).join(","));
+      opt.setAttribute("data-default", m.default_reasoning || "");
+      modelSel.appendChild(opt);
+    });
+    if(cfg.default_model){ modelSel.value = cfg.default_model; }
+    syncReasoning();
+  }
+
+  function syncReasoning(){
+    var opt = $("modelSelect").selectedOptions[0];
+    var sel = $("reasoningSelect");
+    sel.textContent = "";
+    var levels = (opt && opt.getAttribute("data-levels") || "").split(",").filter(Boolean);
+    var friendly = {high:"高", xhigh:"极高"};
+    levels.forEach(function(lv){
+      var o = document.createElement("option");
+      o.value = lv; o.textContent = friendly[lv] || lv;
+      sel.appendChild(o);
+    });
+    var def = opt && opt.getAttribute("data-default");
+    if(def){ sel.value = def; }
+  }
+
+  function terminal(status){
+    return ["completed","partial","failed","cancelled","deadline_exceeded"].indexOf(status) !== -1;
+  }
+
+  function applyStatus(data){
+    (data.stages || []).forEach(function(s){
+      var detail = s.duration_ms ? Math.round(s.duration_ms/1000)+"s" : "";
+      setStage(s.stage_id, s.status || "pending", detail);
+    });
+    var human = {running:"分析进行中……", completed:"分析完成", partial:"已完成（部分）",
+                 failed:"运行失败", cancelled:"已取消", deadline_exceeded:"运行超时"};
+    $("statusLine").textContent = human[data.status] || data.status || "";
+    if(terminal(data.status)){
+      stopPolling();
+      $("cancelBtn").classList.add("hidden");
+      $("startBtn").disabled = false;
+      renderTerminal(data);
+    }
+  }
+
+  function renderTerminal(data){
+    var banner = $("partialBanner");
+    if(data.status !== "completed"){
+      banner.classList.remove("hidden");
+      var fixes = (data.unresolved_fixes || []).map(escapeHtml).join("；");
+      banner.textContent = "本次结果不完整或未通过严格交付校验，请谨慎使用。" + (fixes ? " 未解决：" + fixes : "");
+    } else {
+      banner.classList.add("hidden");
+    }
+    if(data.report){
+      var rep = $("report");
+      rep.innerHTML = renderMarkdownSafe(data.report);
+      rep.classList.remove("hidden");
+    }
+  }
+
+  async function pollOnce(){
+    var run = currentRun();
+    if(!run){ stopPolling(); return; }
+    try{
+      var resp = await fetch("/api/runs/" + encodeURIComponent(run.run_id), {
+        headers: { "Authorization": "Bearer " + run.token }
+      });
+      if(resp.status === 401){ stopPolling(); clearRun(); setError("会话令牌已失效，请重新开始。"); return; }
+      var data = await resp.json();
+      applyStatus(data);
+    }catch(e){ /* transient network error; keep polling */ }
+  }
+
+  function startPolling(){
+    stopPolling();
+    $("cancelBtn").classList.remove("hidden");
+    pollOnce();
+    pollTimer = setInterval(pollOnce, POLL_MS);
+  }
+
+  function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+
+  async function onStart(){
+    setError("");
+    var invite = $("inviteCode").value.trim();
+    var jd = $("jdText").value.trim();
+    var file = $("resumeFile").files[0];
+    if(!invite){ setError("请输入邀请码"); return; }
+    if(!file){ setError("请上传简历文件"); return; }
+    if(!jd){ setError("请粘贴目标 JD"); return; }
+
+    var fd = new FormData();
+    fd.append("invite_code", invite);
+    fd.append("jd_text", jd);
+    fd.append("model", $("modelSelect").value);
+    fd.append("reasoning", $("reasoningSelect").value);
+    fd.append("resume_file", file);
+
+    $("startBtn").disabled = true;
+    $("report").classList.add("hidden");
+    $("partialBanner").classList.add("hidden");
+    for(var s=1;s<=8;s++){ setStage(s, "pending", ""); }
+
+    var resp = await fetch("/api/runs", { method:"POST", body: fd });
+    if(!resp.ok){
+      $("startBtn").disabled = false;
+      var msg = "提交失败";
+      try{ msg = (await resp.json()).error || msg; }catch(e){}
+      setError(msg);
+      return;
+    }
+    var body = await resp.json();
+    saveRun({ run_id: body.run_id, token: body.token });
+    applyStatus(body);
+    startPolling();
+  }
+
+  async function onCancel(){
+    var run = currentRun();
+    if(!run){ return; }
+    try{
+      await fetch("/api/runs/" + encodeURIComponent(run.run_id) + "/cancel", {
+        method:"POST", headers:{ "Authorization":"Bearer " + run.token }
+      });
+    }catch(e){}
+    $("statusLine").textContent = "正在取消……";
+  }
+
+  function boot(){
+    $("startBtn").addEventListener("click", onStart);
+    $("cancelBtn").addEventListener("click", onCancel);
+    $("modelSelect").addEventListener("change", syncReasoning);
+    loadConfig().catch(function(){ setError("无法加载配置"); });
+    if(currentRun()){ startPolling(); }   // resume an active run after reload
+  }
+
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", boot);
+  } else { boot(); }
+})();
+</script>
+</body>
+</html>
