@@ -1,3 +1,4 @@
+from contracts import VerificationResult
 from tools.common import ask_json
 from utils import compact_text, to_pretty_json
 
@@ -38,7 +39,14 @@ JD分析：
 优化建议和优化版简历：
 {compact_text(to_pretty_json(suggestions))}
 """
-    result = ask_json(prompt, system, _VERIFY_SCHEMA, temperature=0.1, label="自我验证：审查过度美化与逻辑矛盾")
+    result = ask_json(
+        prompt,
+        system,
+        _VERIFY_SCHEMA,
+        temperature=0.1,
+        label="自我验证：审查过度美化与逻辑矛盾",
+        validator=VerificationResult,
+    )
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试verify_output"}
     return {"success": True, "verification": result}

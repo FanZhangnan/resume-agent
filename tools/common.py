@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import config
 from llm_client import LLMClient
+from pydantic import ValidationError
 from runtime_context import current_settings, monotonic_deadline
 from trace_catalog import emit_trace
 from utils import parse_json_safely
@@ -29,6 +30,30 @@ _TRUNCATED_RETRY_SUFFIX = (
     "\n\n注意：你上一次的输出因超长被截断了。"
     "请压缩表述（数组各项更精炼、去掉冗余修饰），确保完整输出一个合法的JSON对象。"
 )
+
+_SCHEMA_RETRY_SUFFIX = (
+    "\n\n注意：你上一次输出的JSON字段或类型不符合要求。"
+    "请严格按照原始字段说明重新输出，只输出一个合法JSON对象，不要添加未知字段。"
+)
+
+
+def _validation_errors(error):
+    """Return privacy-safe error codes and field paths only."""
+    details = []
+    for item in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        path = list(item.get("loc") or ())
+        category = str(item.get("type") or "validation_error")
+        if category == "extra_forbidden" and path:
+            path[-1] = "<extra>"
+        details.append({
+            "category": category,
+            "path": ".".join(str(part) for part in path),
+        })
+    return details
 
 
 def get_client():
@@ -77,7 +102,8 @@ def use_run_deadline(deadline):
                 pass
 
 
-def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=None):
+def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=None,
+             validator=None):
     """调用LLM并解析JSON返回，失败自动重试一轮（区分截断和格式错误两种失败）
     成功时用default补齐缺失字段，保证下游字段访问安全
     """
@@ -91,6 +117,8 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
     current_prompt = prompt
     current_max = max_tokens
     operation = f"tool.{label or 'ask_json'}"
+    last_reason = "invalid_json"
+    last_validation_errors = []
     for attempt in (1, 2):
         content = client.simple_ask(
             prompt=current_prompt, system=system,
@@ -101,33 +129,62 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
         )
         data = parse_json_safely(content, default={})
         if isinstance(data, dict) and data:
-            for key, value in default.items():
-                data.setdefault(key, value)
-            return data
+            if validator is not None:
+                try:
+                    validated = validator.model_validate(data, strict=True)
+                except ValidationError as error:
+                    last_reason = "schema_validation"
+                    last_validation_errors = _validation_errors(error)
+                else:
+                    return validated.model_dump(mode="python")
+            else:
+                for key, value in default.items():
+                    data.setdefault(key, value)
+                return data
+        else:
+            last_reason = "invalid_json"
+            last_validation_errors = []
         if attempt == 1:
             if client.last_finish_reason == "length":
                 # 截断导致的失败：扩大输出上限 + 要求压缩表述
                 current_max = max(config.REPORT_MAX_TOKENS, (current_max or config.MAX_TOKENS) * 2)
                 current_prompt = prompt + _TRUNCATED_RETRY_SUFFIX
                 reason = "truncated"
+                validation_errors = []
                 print("   ⚠️ LLM输出超长被截断，扩大输出上限后自动重试...")
+            elif last_reason == "schema_validation":
+                current_prompt = prompt + _SCHEMA_RETRY_SUFFIX
+                reason = last_reason
+                validation_errors = last_validation_errors
+                print("   ⚠️ LLM返回JSON不符合字段契约，自动重试一轮...")
             else:
                 current_prompt = prompt + _JSON_RETRY_SUFFIX
                 reason = "invalid_json"
+                validation_errors = []
                 print("   ⚠️ LLM返回内容不是合法JSON，自动重试一轮...")
+            trace_data = {
+                "operation": operation,
+                "attempt": attempt,
+                "reason": reason,
+                "next_max_tokens": current_max or config.MAX_TOKENS,
+            }
+            if validation_errors:
+                trace_data["validation_errors"] = validation_errors
             emit_trace(
                 "llm.semantic_json.retry",
                 level="warning",
-                data={
-                    "operation": operation,
-                    "attempt": attempt,
-                    "reason": reason,
-                    "next_max_tokens": current_max or config.MAX_TOKENS,
-                },
+                data=trace_data,
             )
+    failure_data = {
+        "operation": operation,
+        "attempts": 2,
+        "reason": last_reason,
+    }
+    if last_validation_errors:
+        failure_data["validation_errors"] = last_validation_errors
     emit_trace(
         "llm.semantic_json.failure",
         level="error",
-        data={"operation": operation, "attempts": 2},
+        data=failure_data,
     )
     return None

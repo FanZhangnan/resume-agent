@@ -17,9 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime
 
 import config
+from contracts import verification_is_deliverable
 from llm_client import LLMClient
 from pipeline import DeterministicPipeline, PipelineStageError
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
+from report_renderer import render_report as render_local_report
 from runtime_context import (
     RunSettings,
     current_settings,
@@ -89,6 +91,7 @@ def _trace_shape(value):
 
 
 def _verification_issue_count(verification):
+    verification = verification if isinstance(verification, dict) else {}
     keys = (
         "required_fixes", "overstatement_issues", "fabrication_risks",
         "logic_issues", "match_authenticity_issues",
@@ -379,7 +382,11 @@ class ResumeAgent:
             emit_trace(
                 "run.completed", span="run",
                 data={
-                    "status": "partial" if self.interrupted_error else "completed",
+                    "status": (
+                        "completed"
+                        if self._report_terminal_status() == "completed"
+                        else "partial"
+                    ),
                     "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
                     "steps": self.step_count,
                     "revision_rounds": self.revision_rounds,
@@ -440,7 +447,7 @@ class ResumeAgent:
                 # 检查是否已经收集到足够信息，可以结束循环
                 if self._is_complete():
                     verification = self.state["verification"] or {}
-                    if verification.get("passed") or verification.get("safe_to_deliver"):
+                    if verification_is_deliverable(verification):
                         print("\n✅ 关键分析步骤已完成，自我验证通过")
                     else:
                         print("\n⚠️ 已达最大修正轮数，自我验证仍未完全通过——剩余问题会在报告中如实标注")
@@ -712,7 +719,7 @@ class ResumeAgent:
                     f"优化版简历{len(resume_text)}字{struct_note}")
         if tool_name == "verify_output":
             verification = result.get("verification") or {}
-            if verification.get("passed") or verification.get("safe_to_deliver"):
+            if verification_is_deliverable(verification):
                 return "✅ 自我验证通过，可以交付"
             issue_count = sum(len(verification.get(key) or []) for key in (
                 "overstatement_issues", "fabrication_risks", "logic_issues", "match_authenticity_issues"))
@@ -780,7 +787,8 @@ class ResumeAgent:
             # 本次verify是修正后的复检
             self.pending_revision = False
 
-        passed = bool(verification.get("passed") or verification.get("safe_to_deliver"))
+        verification = verification if isinstance(verification, dict) else {}
+        passed = verification_is_deliverable(verification)
         if was_pending_revision:
             emit_trace(
                 "revision.completed",
@@ -850,7 +858,7 @@ class ResumeAgent:
         if self.pending_revision:
             return False
         verification = self.state["verification"]
-        if verification.get("passed") or verification.get("safe_to_deliver"):
+        if verification_is_deliverable(verification):
             return True
         return self.revision_rounds >= config.MAX_REVISION_ROUNDS
 
@@ -862,6 +870,50 @@ class ResumeAgent:
         if self.state["job_recommendations"]:
             sections.insert(1, "【岗位推荐】")
         return sections
+
+    def _unresolved_verification_fixes(self):
+        verification = self.state.get("verification")
+        if verification_is_deliverable(verification):
+            return []
+        if not isinstance(verification, dict):
+            return ["验证结果未满足严格交付契约"]
+        fixes = verification.get("required_fixes")
+        if isinstance(fixes, list) and fixes:
+            return list(fixes)
+        return [verification.get("overall_assessment") or "验证结果未满足严格交付契约"]
+
+    def _report_terminal_status(self):
+        if self.interrupted_error:
+            if "总时限" in str(self.interrupted_error):
+                return "deadline"
+            return "partial"
+        verification = self.state.get("verification")
+        if not verification_is_deliverable(verification):
+            return "partial"
+        return "completed"
+
+    def _render_local_report(self):
+        terminal_status = self._report_terminal_status()
+        report_state = {
+            **self.state,
+            "correction_log": self.correction_log,
+            "user_clarifications": self.user_clarifications,
+            "generation_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "analysis_engine": (
+                "离线演示模式" if self.client.mock_mode else self.settings.model
+            ),
+            "interrupted_error": self.interrupted_error,
+        }
+        unresolved = (
+            self._unresolved_verification_fixes()
+            if not verification_is_deliverable(self.state.get("verification"))
+            else []
+        )
+        return render_local_report(
+            report_state,
+            terminal_status=terminal_status,
+            unresolved_fixes=unresolved,
+        )
 
     def _generate_final_report(self, force_local=False):
         """生成报告；确定性流水线强制使用本地Markdown渲染。"""
@@ -875,6 +927,7 @@ class ResumeAgent:
                     not force_local
                     and not self.client.mock_mode
                     and not self.interrupted_error
+                    and verification_is_deliverable(self.state.get("verification"))
                 )
             },
         )
@@ -893,15 +946,18 @@ class ResumeAgent:
             return report
 
         if force_local:
-            report = self._compose_report(self._format_report_locally())
+            report = self._render_local_report()
             return complete(report, "local", "deterministic_pipeline")
         if self.client.mock_mode:
-            report = self._compose_report(self._format_report_locally())
+            report = self._render_local_report()
             return complete(report, "local", "mock_mode")
         if self.interrupted_error:
             # 网络已经不稳定，不再发起LLM调用，直接用本地模板渲染已有数据
-            report = self._compose_report(self._format_report_locally())
+            report = self._render_local_report()
             return complete(report, "local", "analysis_interrupted")
+        if not verification_is_deliverable(self.state.get("verification")):
+            report = self._render_local_report()
+            return complete(report, "local", "verification_unresolved")
 
         prompt = FINAL_REPORT_FORMAT_PROMPT.format(data=self._serialize_report_data_for_llm())
         fallback_reason = "missing_sections"
@@ -925,7 +981,7 @@ class ResumeAgent:
                 raise
             fallback_reason = f"llm_{type(error).__name__}"
             print(f"⚠️ LLM格式化报告失败，改用本地模板：{error}")
-        report = self._compose_report(self._format_report_locally())
+        report = self._render_local_report()
         return complete(report, "local", fallback_reason)
 
     def _serialize_report_data_for_llm(self):
@@ -999,7 +1055,7 @@ class ResumeAgent:
             lines.append(f"- 自我修正：{len(self.correction_log)}轮")
         verification = self.state["verification"]
         if verification is not None:
-            verify_passed = verification.get("passed") or verification.get("safe_to_deliver")
+            verify_passed = verification_is_deliverable(verification)
             lines.append(
                 "- 自我验证：✅ 通过" if verify_passed
                 else "- 自我验证：⚠️ 未完全通过（剩余问题详见【自我验证】章节，采纳建议前请逐条核对）")
@@ -1117,7 +1173,7 @@ class ResumeAgent:
 
         # ---- 自我验证 ----
         sections.append("\n## 【自我验证】")
-        verify_passed = verification.get("passed") or verification.get("safe_to_deliver")
+        verify_passed = verification_is_deliverable(verification)
         sections.append(f"**验证结果**：{'✅ 通过' if verify_passed else '❌ 未通过'}")
         if verification.get("overall_assessment"):
             sections.append(f"**总体评价**：{verification['overall_assessment']}")
@@ -1175,7 +1231,7 @@ class ResumeAgent:
         if match_result.get("recommendation"):
             lines.append(f"行动建议：{match_result['recommendation']}")
 
-        if not (verification.get("passed") or verification.get("safe_to_deliver")):
+        if not verification_is_deliverable(verification):
             lines.append(
                 "⚠️ 注意：本报告的优化建议在自我验证中仍存在未完全解决的问题，"
                 "使用前请逐条核对'诚实边界'和'必须修复项'。")

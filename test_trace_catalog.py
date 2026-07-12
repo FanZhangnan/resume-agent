@@ -1036,11 +1036,19 @@ def test_agent_lifecycle_report_and_revision_events_are_summaries():
             output_dir=str(Path(temp_dir) / "reports"),
         )
         resume_agent._loop = lambda: None
-        resume_agent._handle_verification({
+        failed_verification = {
             "passed": False,
+            "safe_to_deliver": False,
             "required_fixes": ["private revision detail"],
-        })
-        resume_agent._handle_verification({"passed": True})
+        }
+        passed_verification = {
+            "passed": True,
+            "safe_to_deliver": True,
+            "required_fixes": [],
+        }
+        resume_agent._handle_verification(failed_verification)
+        resume_agent._handle_verification(passed_verification)
+        resume_agent.state["verification"] = passed_verification
 
         with patch.object(config, "ORCHESTRATOR", "react"):
             report = resume_agent.run()
@@ -1238,7 +1246,7 @@ def test_terminal_event_writes_atomic_private_summary():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         assert summary["schema"] == "resume-agent.trace.v1"
         assert summary["run_id"] == "summary-run"
-        assert summary["status"] == "completed"
+        assert summary["status"] == "partial"
         assert summary["terminal_event"] == "run.completed"
         assert summary["timing"]["duration_ms"] >= 0
         assert summary["counts"]["steps"] == 0

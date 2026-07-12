@@ -1,5 +1,13 @@
 import config
+from contracts import MatchResult
 from tools.common import ask_json, get_client
+from tools.scoring import (
+    gates_from_jd,
+    normalize_jd_requirements,
+    normalize_resume_evidence,
+    requirement_ledger_from_match_result,
+    score_requirements,
+)
 from utils import clip_text, compact_text, parse_resume_text_to_struct, to_pretty_json
 
 _MATCH_SCHEMA = {
@@ -11,6 +19,10 @@ _MATCH_SCHEMA = {
     "redundant_or_irrelevant": [],
     "risks": [],
     "recommendation": "",
+    "requirement_evidence": [],
+    "eligible": True,
+    "requirement_scores": [],
+    "gate_failures": [],
 }
 
 
@@ -27,16 +39,26 @@ _SUGGESTION_SCHEMA = {
 
 def calculate_match(resume_info, jd_analysis):
     system = "你是严谨的招聘匹配度评估专家。只输出JSON。必须诚实评估，不允许为了提高匹配度而强行关联。"
+    requirements = normalize_jd_requirements(jd_analysis)
+    evidence_catalog = normalize_resume_evidence(resume_info)
     prompt = f"""
 请逐项对比候选人简历结构化信息与JD分析，输出紧凑JSON，每个数组最多6项，字段必须包含：
 score: 0到100的整数匹配度
 score_reason: 100字以内评分依据
-high_matches: 数组，高度匹配项，每项包含 requirement, evidence, reason
-partial_matches: 数组，部分匹配项，每项包含 requirement, evidence, gap, improvement
-missing_requirements: 数组，缺失项，每项包含 requirement, impact, possible_action
+high_matches: 数组，高度匹配项，每项包含 requirement_id, requirement, evidence, reason
+partial_matches: 数组，部分匹配项，每项包含 requirement_id, requirement, evidence, gap, improvement
+missing_requirements: 数组，缺失项，每项包含 requirement_id, requirement, impact, possible_action
 redundant_or_irrelevant: 数组，简历中与目标岗位弱相关或冗余的内容
 risks: 数组，风险点，如年限不足、领域不匹配、证据薄弱
 recommendation: 100字以内建议
+requirement_evidence: 不限条数的数组，必须为标准化要求清单中的每个requirement_id输出且仅输出一行；每行包含requirement_id, status, evidence_ids。status只能是met、under_evidenced、missing；met/under_evidenced必须引用下方证据目录中的真实evidence_id，missing的evidence_ids必须为空数组。不得编造证据ID
+requirement_id必须从下方标准化要求清单中原样选取。score仅作解释草稿，系统会按逐项证据在本地重新计算最终分数。
+
+标准化要求清单：
+{compact_text(to_pretty_json(requirements))}
+
+简历证据目录：
+{compact_text(to_pretty_json(evidence_catalog))}
 
 简历信息：
 {compact_text(to_pretty_json(resume_info))}
@@ -44,10 +66,39 @@ recommendation: 100字以内建议
 JD分析：
 {compact_text(to_pretty_json(jd_analysis))}
 """
-    result = ask_json(prompt, system, _MATCH_SCHEMA, temperature=0.2, label="计算简历与JD的匹配度")
+    result = ask_json(
+        prompt,
+        system,
+        _MATCH_SCHEMA,
+        temperature=0.2,
+        label="计算简历与JD的匹配度",
+        validator=MatchResult,
+    )
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试calculate_match"}
-    return {"success": True, "match_result": result}
+    result = dict(result)
+    ledger = requirement_ledger_from_match_result(
+        result,
+        requirements,
+        evidence_catalog=evidence_catalog,
+    )
+    scoring = score_requirements(
+        requirements,
+        ledger,
+        gates_from_jd(jd_analysis),
+    )
+    result["score"] = scoring["score"]
+    result["eligible"] = scoring["eligible"]
+    result["requirement_evidence"] = ledger
+    result["requirement_scores"] = scoring["requirements"]
+    result["gate_failures"] = scoring["gate_failures"]
+    if not result.get("score_reason"):
+        result["score_reason"] = "按岗位要求类别权重与简历证据充分度进行本地确定性评分。"
+    if scoring["gate_failures"]:
+        gates = "、".join(scoring["gate_failures"])
+        result["score_reason"] = f"{result['score_reason']}；硬性门槛未满足：{gates}。"
+    validated = MatchResult.model_validate(result, strict=True)
+    return {"success": True, "match_result": validated.model_dump(mode="python")}
 
 
 def generate_suggestions(resume_info, jd_analysis, match_result, fix_instructions=None):
