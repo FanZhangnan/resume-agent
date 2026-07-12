@@ -65,6 +65,24 @@ def test_safe_report_rendering_escapes_first():
     assert "marked.parse" not in html or "DOMPurify" in html
 
 
+def test_trace_detail_drawer_present():
+    html = _html()
+    # One sanitized detail container per stage row, populated via textContent only.
+    assert len(re.findall(r'id="std-\d+"', html)) == 8
+    assert "function setStageDetail(" in html
+    assert "function toggleStageDetail(" in html
+    # The drawer must never inject trace strings as HTML.
+    assert "box.textContent" in html
+    assert "box.innerHTML" not in html
+
+
+def test_report_export_button_present():
+    html = _html()
+    assert 'id="downloadBtn"' in html
+    assert "function downloadReport(" in html
+    assert "resume-report.md" in html
+
+
 def test_csp_nonce_placeholder_present():
     html = _html()
     assert "__CSP_NONCE__" in html

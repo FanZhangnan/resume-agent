@@ -39,9 +39,11 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
 .hidden{display:none}
 .note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.5}
 .stages{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:9px;overflow:hidden}
-.stage{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--hair);font-size:13px}
+.stage{display:block;padding:11px 14px;border-bottom:1px solid var(--hair);font-size:13px;cursor:pointer}
 .stage:last-child{border-bottom:none}
+.st-main{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .st-status{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.st-detail{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:7px;line-height:1.6}
 .stage[data-state=running]{background:color-mix(in srgb,var(--signal) 8%,transparent)}
 .stage[data-state=running] .st-status{color:var(--signal)}
 .stage[data-state=completed] .st-status{color:var(--ok)}
@@ -96,16 +98,18 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     <section id="runPane">
       <div class="status-line" id="statusLine">尚未开始</div>
       <ol class="stages" id="stages">
-        <li class="stage" data-stage="1" data-state="pending"><span>简历解析</span><span class="st-status" id="st-1">待运行</span></li>
-        <li class="stage" data-stage="2" data-state="pending"><span>简历信息结构化</span><span class="st-status" id="st-2">待运行</span></li>
-        <li class="stage" data-stage="3" data-state="pending"><span>在招岗位发现</span><span class="st-status" id="st-3">待运行</span></li>
-        <li class="stage" data-stage="4" data-state="pending"><span>岗位要求分析</span><span class="st-status" id="st-4">待运行</span></li>
-        <li class="stage" data-stage="5" data-state="pending"><span>匹配度分析</span><span class="st-status" id="st-5">待运行</span></li>
-        <li class="stage" data-stage="6" data-state="pending"><span>简历优化</span><span class="st-status" id="st-6">待运行</span></li>
-        <li class="stage" data-stage="7" data-state="pending"><span>真实性审查</span><span class="st-status" id="st-7">待运行</span></li>
-        <li class="stage" data-stage="8" data-state="pending"><span>生成报告</span><span class="st-status" id="st-8">待运行</span></li>
+        <li class="stage" data-stage="1" data-state="pending"><div class="st-main"><span>简历解析</span><span class="st-status" id="st-1">待运行</span></div><div class="st-detail hidden" id="std-1"></div></li>
+        <li class="stage" data-stage="2" data-state="pending"><div class="st-main"><span>简历信息结构化</span><span class="st-status" id="st-2">待运行</span></div><div class="st-detail hidden" id="std-2"></div></li>
+        <li class="stage" data-stage="3" data-state="pending"><div class="st-main"><span>在招岗位发现</span><span class="st-status" id="st-3">待运行</span></div><div class="st-detail hidden" id="std-3"></div></li>
+        <li class="stage" data-stage="4" data-state="pending"><div class="st-main"><span>岗位要求分析</span><span class="st-status" id="st-4">待运行</span></div><div class="st-detail hidden" id="std-4"></div></li>
+        <li class="stage" data-stage="5" data-state="pending"><div class="st-main"><span>匹配度分析</span><span class="st-status" id="st-5">待运行</span></div><div class="st-detail hidden" id="std-5"></div></li>
+        <li class="stage" data-stage="6" data-state="pending"><div class="st-main"><span>简历优化</span><span class="st-status" id="st-6">待运行</span></div><div class="st-detail hidden" id="std-6"></div></li>
+        <li class="stage" data-stage="7" data-state="pending"><div class="st-main"><span>真实性审查</span><span class="st-status" id="st-7">待运行</span></div><div class="st-detail hidden" id="std-7"></div></li>
+        <li class="stage" data-stage="8" data-state="pending"><div class="st-main"><span>生成报告</span><span class="st-status" id="st-8">待运行</span></div><div class="st-detail hidden" id="std-8"></div></li>
       </ol>
+      <div class="note">点击任一阶段行可展开/收起脱敏运行明细（仅耗时、尝试次数、错误类别等状态字段）。</div>
       <div class="banner warn hidden" id="partialBanner"></div>
+      <button class="btn-ghost hidden" id="downloadBtn">导出报告（Markdown）</button>
       <div class="report hidden" id="report"></div>
     </section>
   </div>
@@ -168,6 +172,26 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     $("st-"+stageId).textContent = label;
   }
 
+  // Debug Trace 抽屉：只渲染脱敏状态字段，永不渲染任意字符串为 HTML。
+  function setStageDetail(s){
+    var box = $("std-" + s.stage_id);
+    if(!box) return;
+    var parts = [];
+    if(s.duration_ms != null){ parts.push("耗时 " + Math.round(s.duration_ms/1000) + "s"); }
+    if(s.attempt != null){ parts.push("尝试 " + s.attempt); }
+    if(s.revision_round != null){ parts.push("修正轮 " + s.revision_round); }
+    if(s.error_category){ parts.push("错误类别 " + s.error_category); }
+    if(s.reason){ parts.push("原因 " + s.reason); }
+    box.textContent = parts.length ? parts.join(" · ") : "暂无明细";
+  }
+
+  function toggleStageDetail(event){
+    var row = event.target.closest ? event.target.closest(".stage") : null;
+    if(!row) return;
+    var box = $("std-" + row.getAttribute("data-stage"));
+    if(box){ box.classList.toggle("hidden"); }
+  }
+
   function currentRun(){
     try{ return JSON.parse(sessionStorage.getItem(RUN_KEY) || "null"); }
     catch(e){ return null; }
@@ -214,6 +238,7 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     (data.stages || []).forEach(function(s){
       var detail = s.duration_ms ? Math.round(s.duration_ms/1000)+"s" : "";
       setStage(s.stage_id, s.status || "pending", detail);
+      setStageDetail(s);
     });
     var human = {running:"分析进行中……", completed:"分析完成", partial:"已完成（部分）",
                  failed:"运行失败", cancelled:"已取消", deadline_exceeded:"运行超时"};
@@ -226,6 +251,8 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     }
   }
 
+  var lastReportMarkdown = "";
+
   function renderTerminal(data){
     var banner = $("partialBanner");
     if(data.status !== "completed"){
@@ -236,10 +263,25 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
       banner.classList.add("hidden");
     }
     if(data.report){
+      lastReportMarkdown = String(data.report);
       var rep = $("report");
       rep.innerHTML = renderMarkdownSafe(data.report);
       rep.classList.remove("hidden");
+      $("downloadBtn").classList.remove("hidden");
     }
+  }
+
+  function downloadReport(){
+    if(!lastReportMarkdown) return;
+    var blob = new Blob([lastReportMarkdown], {type:"text/markdown;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "resume-report.md";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   async function pollOnce(){
@@ -283,7 +325,13 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     $("startBtn").disabled = true;
     $("report").classList.add("hidden");
     $("partialBanner").classList.add("hidden");
-    for(var s=1;s<=8;s++){ setStage(s, "pending", ""); }
+    $("downloadBtn").classList.add("hidden");
+    lastReportMarkdown = "";
+    for(var s=1;s<=8;s++){
+      setStage(s, "pending", "");
+      var box = $("std-"+s);
+      if(box){ box.textContent = ""; box.classList.add("hidden"); }
+    }
 
     var resp = await fetch("/api/runs", { method:"POST", body: fd });
     if(!resp.ok){
@@ -313,6 +361,8 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
   function boot(){
     $("startBtn").addEventListener("click", onStart);
     $("cancelBtn").addEventListener("click", onCancel);
+    $("downloadBtn").addEventListener("click", downloadReport);
+    $("stages").addEventListener("click", toggleStageDetail);
     $("modelSelect").addEventListener("change", syncReasoning);
     loadConfig().catch(function(){ setError("无法加载配置"); });
     if(currentRun()){ startPolling(); }   // resume an active run after reload
