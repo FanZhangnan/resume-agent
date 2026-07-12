@@ -173,4 +173,6 @@ def execute_tool(tool_name, arguments):
     try:
         return function(**arguments)
     except Exception as error:
+        if getattr(error, "is_run_deadline", False):
+            raise
         return {"success": False, "error": str(error), "tool_name": tool_name}

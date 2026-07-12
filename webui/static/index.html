@@ -51,6 +51,19 @@ aside{width:336px;flex:none;border-right:1px solid var(--hair);overflow-y:auto;
 .seg button{border:0;background:none;color:var(--faint);font-size:12.5px;cursor:pointer;
   font-family:var(--sans);padding:0 1px 8px;margin-bottom:-1px;border-bottom:1.5px solid transparent;transition:.15s}
 .seg button.on{color:var(--ink);border-bottom-color:var(--ink)}
+.model-seg{display:grid;grid-template-columns:minmax(0,1fr);gap:3px;padding:3px;
+  border:1px solid var(--hair2);border-radius:6px;background:var(--card)}
+.model-seg button{min-width:0;border:0;border-radius:4px;background:transparent;color:var(--sub);
+  padding:8px 6px;cursor:pointer;font-family:var(--sans);display:flex;align-items:center;
+  justify-content:space-between;gap:8px;transition:.15s}
+.model-seg button.on{background:var(--ink);color:var(--paper)}
+.model-seg .model-name{font-size:11.5px;white-space:nowrap}
+.model-seg .model-labels{display:flex;align-items:center;gap:5px;min-width:0}
+.model-seg .tier,.model-seg .status{font-family:var(--mono);font-size:9px;padding:2px 4px;border:1px solid currentColor;
+  border-radius:3px;line-height:1;white-space:nowrap;opacity:.72}
+.model-seg .status.stable{color:var(--ok)}
+.model-seg .status.experimental{color:var(--warn)}
+.model-seg button.on .status{color:inherit;opacity:.9}
 textarea,input[type=text],input[type=password]{width:100%;background:var(--card);border:1px solid var(--hair2);
   border-radius:6px;color:var(--ink);padding:9px 11px;font-size:12px;font-family:var(--mono);
   resize:vertical;outline:none;transition:border .15s;line-height:1.65}
@@ -109,6 +122,8 @@ label.field em{font-style:normal;color:var(--faint);font-size:11px}
 .pipe li.active .pt b{color:var(--ink)}
 .pipe li.done .node{color:var(--ok)}
 .pipe li.done .pt b{color:var(--ink)}
+.pipe li.fail .node{color:var(--bad)}
+.pipe li.fail .pt b{color:var(--bad)}
 .pipe li.revise .node{color:var(--warn);animation:pulse 1.1s infinite}
 .pipe li.revise .pt b{color:var(--ink)}
 .meta-rows{display:flex;flex-direction:column;font-size:12px}
@@ -410,13 +425,11 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
           <input type="text" id="prefs" placeholder="例：在中国求职大厂实习 / 只考虑远程">
         </div>
 
-        <label class="field">推理强度 <em>（越深入分析越细，耗时与费用也越高）</em></label>
-        <div class="seg" id="effort-seg">
-          <button data-v="low" onclick="setEffort('low')">快速</button>
-          <button data-v="medium" class="on" onclick="setEffort('medium')">标准</button>
-          <button data-v="high" onclick="setEffort('high')">深度</button>
-          <button data-v="xhigh" onclick="setEffort('xhigh')">极深</button>
-        </div>
+        <label class="field">模型引擎 <em>（稳定基线 / 实验引擎）</em></label>
+        <div class="model-seg" id="model-seg"></div>
+
+        <label class="field">推理强度 <em>（选项随模型变化）</em></label>
+        <div class="seg" id="effort-seg"></div>
 
         <details id="adv">
           <summary>高级设置 · 自带 API Key（BYOK）</summary>
@@ -424,8 +437,6 @@ section{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--p
           <input type="password" id="byok-key" placeholder="sk-…" autocomplete="off">
           <label class="field">Base URL <em>（可选，任意 OpenAI 兼容网关）</em></label>
           <input type="text" id="byok-base" placeholder="https://api.zenmux.ai/v1">
-          <label class="field">模型 <em>（可选）</em></label>
-          <input type="text" id="byok-model" placeholder="claude-fable-5-free">
         </details>
 
         <label class="switch-row">
@@ -637,8 +648,20 @@ const STAGE_DEF = [
 ];
 let stages = {};
 let lastTool = null;
+const TRACE_STAGE_KEY = {
+  parse_resume:"parse",
+  extract_resume:"extract",
+  discover_jobs:"recommend",
+  analyze_jd:"jd",
+  calculate_match:"match",
+  generate_suggestions:"suggest",
+  verify_output:"verify",
+  render_report:"report",
+};
 /* 运行栏状态 */
 let stepMeta = {}, lastStepNo = 0, toolCallCount = 0, tokenSum = 0, stageFirst = {};
+let traceToolEcho = {}, plainToolAwaitTrace = {}, toolByStep = {};
+let traceRunPartial = false;
 const SW_NUM = {parse_resume_file:"01", extract_resume_info:"02", recommend_jobs:"03",
   analyze_jd:"04", calculate_match:"05", generate_suggestions:"06", verify_output:"07", ask_user:"08"};
 function nowHMS(){ return new Date().toTimeString().slice(0,8); }
@@ -852,18 +875,85 @@ function swarmSettle(){
 
 /* ================= 初始化 ================= */
 let PUB = false;
-let effort = "medium";
-const EFFORT_ZH = {none:"关闭推理", low:"快速", medium:"标准", high:"深度", xhigh:"极深"};
+const FALLBACK_MODELS = [
+  {id:"gpt-5.5", label:"GPT-5.5", tier:"unassigned", tier_label:"未定价", status:"stable", status_label:"稳定", default_reasoning:"xhigh", reasoning_levels:["none","low","medium","high","xhigh"]},
+  {id:"gpt-5.6-terra", label:"GPT-5.6 Terra", tier:"free", tier_label:"免费", status:"experimental", status_label:"实验", default_reasoning:"xhigh", reasoning_levels:["xhigh","max"]},
+  {id:"gpt-5.6-sol", label:"GPT-5.6 Sol", tier:"premium", tier_label:"付费", status:"experimental", status_label:"实验", default_reasoning:"high", reasoning_levels:["high","xhigh","max"]},
+];
+let modelOptions = FALLBACK_MODELS;
+let selectedModel = "gpt-5.5";
+let effort = "xhigh";
+let maxConfirmedFor = "";
+const EFFORT_ZH = {none:"关闭", low:"轻度", medium:"中等", high:"深度", xhigh:"极深", max:"极限"};
+function currentModelOption(){
+  return modelOptions.find(item => item.id === selectedModel) || modelOptions[0];
+}
+function renderModelOptions(){
+  const seg = $("model-seg"); seg.innerHTML = "";
+  modelOptions.forEach(item => {
+    const button = document.createElement("button");
+    button.type = "button"; button.dataset.model = item.id;
+    button.classList.toggle("on", item.id === selectedModel);
+    const name = document.createElement("span"); name.className = "model-name"; name.textContent = item.label;
+    const labels = document.createElement("span"); labels.className = "model-labels";
+    const tier = document.createElement("span"); tier.className = "tier"; tier.textContent = item.tier_label;
+    const status = document.createElement("span"); status.className = `status ${item.status || "experimental"}`;
+    status.textContent = item.status_label || "实验";
+    labels.append(tier, status); button.append(name, labels); button.onclick = () => setModel(item.id);
+    seg.appendChild(button);
+  });
+}
+function renderEffortOptions(preferred){
+  const option = currentModelOption();
+  const allowed = option.reasoning_levels || [];
+  const fallback = allowed.includes(option.default_reasoning) ? option.default_reasoning : allowed[0];
+  /* max 不从本地记忆自动恢复，每次页面会话都必须由用户明确确认。 */
+  effort = allowed.includes(preferred) && preferred !== "max" ? preferred : fallback;
+  const seg = $("effort-seg"); seg.innerHTML = "";
+  allowed.forEach(value => {
+    const button = document.createElement("button");
+    button.type = "button"; button.dataset.v = value; button.textContent = EFFORT_ZH[value] || value;
+    button.classList.toggle("on", value === effort); button.onclick = () => setEffort(value);
+    seg.appendChild(button);
+  });
+  try{ localStorage.setItem(`agent_effort_${selectedModel}`, effort); }catch(e){}
+}
+function setModel(value){
+  if(!modelOptions.some(item => item.id === value)) return;
+  if(selectedModel !== value) maxConfirmedFor = "";
+  selectedModel = value;
+  renderModelOptions();
+  let saved = "";
+  try{ saved = localStorage.getItem(`agent_effort_${selectedModel}`) || ""; }catch(e){}
+  renderEffortOptions(saved);
+  if(!running) $("pill-model").textContent = currentModelOption().label;
+}
+function applyModelCatalog(items, defaultModel){
+  if(Array.isArray(items) && items.length) modelOptions = items;
+  const candidate = defaultModel;
+  setModel(modelOptions.some(item => item.id === candidate) ? candidate : modelOptions[0].id);
+}
 function setEffort(v){
-  if(!EFFORT_ZH[v]) return;
+  if(!(currentModelOption().reasoning_levels || []).includes(v)) return;
+  const previousEffort = effort;
+  if(v === "max" && maxConfirmedFor !== selectedModel){
+    const confirmed = window.confirm("极限 max 档可能显著增加耗时与调用成本，且实验模型的质量未经生产验证。确认本次使用 max？");
+    if(!confirmed){
+      effort = previousEffort;
+      document.querySelectorAll("#effort-seg button").forEach(b => b.classList.toggle("on", b.dataset.v === previousEffort));
+      return;
+    }
+    maxConfirmedFor = selectedModel;
+  }else if(v !== "max"){
+    maxConfirmedFor = "";
+  }
   effort = v;
   document.querySelectorAll("#effort-seg button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
-  try{ localStorage.setItem("agent_effort", v); }catch(e){}
+  try{ localStorage.setItem(`agent_effort_${selectedModel}`, v); }catch(e){}
 }
 function byok(){ return {
   key:   ($("byok-key").value || "").trim(),
   base:  ($("byok-base").value || "").trim(),
-  model: ($("byok-model").value || "").trim(),
 };}
 function updateQuotaNote(freeLeft, freePerDay){
   const el = $("quota-note");
@@ -879,11 +969,10 @@ function updateQuotaNote(freeLeft, freePerDay){
   }
 }
 (async function init(){
-  /* 推理强度记忆 */
-  try{ setEffort(localStorage.getItem("agent_effort") || "medium"); }catch(e){}
+  applyModelCatalog(FALLBACK_MODELS, "gpt-5.5");
   /* BYOK 记忆在本机浏览器 */
   try{
-    ["byok-key","byok-base","byok-model"].forEach(id => {
+    ["byok-key","byok-base"].forEach(id => {
       $(id).value = localStorage.getItem(id) || "";
       $(id).addEventListener("input", () => { localStorage.setItem(id, $(id).value.trim()); });
     });
@@ -893,8 +982,9 @@ function updateQuotaNote(freeLeft, freePerDay){
     const r = await fetch("/api/status");
     const s = await r.json();
     PUB = !!s.public;
+    applyModelCatalog(s.models, s.default_model);
     window.__fl = s.free_left; window.__fp = s.free_per_day;
-    $("pill-model").textContent = s.mock_env ? "MOCK 离线模式" : s.model;
+    $("pill-model").textContent = s.mock_env ? "MOCK 离线模式" : currentModelOption().label;
     if(PUB){
       $("privacy-note").style.display = "block";
       updateQuotaNote(s.free_left, s.free_per_day);
@@ -939,6 +1029,7 @@ async function startRun(mode){
   const fd = new FormData();
   fd.append("mode", mode);
   fd.append("mock", $("mock").checked ? "1" : "0");
+  fd.append("model", selectedModel);
   fd.append("reasoning", effort);
   if(mode === "custom"){
     if(srcMode === "file"){
@@ -955,7 +1046,6 @@ async function startRun(mode){
   if(b.key){
     fd.append("api_key", b.key);
     if(b.base) fd.append("base_url", b.base);
-    if(b.model) fd.append("model", b.model);
   }
   let resp;
   try{
@@ -989,11 +1079,14 @@ function beginRunUI(mode, data){
   $("stream-body").style.display = "";
   /* 运行栏重置 */
   stepMeta = {}; lastStepNo = 0; toolCallCount = 0; tokenSum = 0; stageFirst = {};
+  traceToolEcho = {}; plainToolAwaitTrace = {}; toolByStep = {};
+  traceRunPartial = false;
   $("tl").innerHTML = ""; $("run-log").innerHTML = "";
   $("ov-calls").textContent = "0";
   $("ov-tokens").textContent = "0"; $("ov-token-row").style.display = "none";
   $("ov-time").textContent = "00:00";
   $("ov-model").textContent = data.mock ? "MOCK" : (data.model || "—");
+  $("pill-model").textContent = data.mock ? "MOCK 离线模式" : (data.model || currentModelOption().label);
   $("btn-dl-report").disabled = true;
   /* 任务信息卡 */
   const srcDesc = mode === "demo" ? "示例简历"
@@ -1023,7 +1116,7 @@ function beginRunUI(mode, data){
   $("run-meta").innerHTML =
     `<div><dt>模式</dt><dd>${mode==="demo"?"示例演示":(jd?"简历 × JD 匹配":"岗位推荐")}</dd></div>` +
     `<div><dt>引擎</dt><dd>${data.mock ? '<span class="badge mock">MOCK 离线</span>' : '<span class="badge">'+escapeHtml(data.model||"")+'</span>'}</dd></div>` +
-    (data.mock ? "" : `<div><dt>推理强度</dt><dd>${EFFORT_ZH[effort] || "默认"}</dd></div>`);
+    (data.mock ? "" : `<div><dt>推理强度</dt><dd>${EFFORT_ZH[data.reasoning || effort] || "默认"}</dd></div>`);
   setStatus("run","分析中");
   t0 = Date.now();
   timerIv = setInterval(()=> {
@@ -1046,15 +1139,17 @@ function finishRun(code){
   swarmSettle();
   swarmCore("idle");
   /* 运行栏收尾 */
-  if(lastStepNo) closeStep(lastStepNo, Date.now());
+  Object.keys(stepMeta).forEach(n => closeStep(+n, Date.now()));
   const fli = document.createElement("li");
   fli.className = "done-row fin";
-  fli.innerHTML = `<span class="t">${nowHMS()}</span><span class="lbl">${code === 0 ? "全部完成" : "已结束"}</span><span class="d"></span>`;
+  const finishLabel = traceRunPartial && reportText ? "部分完成" : (code === 0 ? "全部完成" : "已结束");
+  fli.innerHTML = `<span class="t">${nowHMS()}</span><span class="lbl">${finishLabel}</span><span class="d"></span>`;
   $("tl").appendChild(fli);
   $("ov-time").textContent = $("timer").textContent;
   if(reportText) $("btn-dl-report").disabled = false;
-  logAdd(code === 0 ? "任务执行完成" : "任务异常结束", code === 0 ? "" : "err");
-  if(reportText){ setStatus("ok","已完成"); stageDone("report"); swarmCore("complete"); swarmStatus("report delivered"); }
+  logAdd(traceRunPartial && reportText ? "任务部分完成" : (code === 0 ? "任务执行完成" : "任务异常结束"), traceRunPartial && reportText ? "warn" : (code === 0 ? "" : "err"));
+  if(reportText && traceRunPartial){ setStatus("warn","部分完成"); stageDone("report"); swarmCore("idle"); swarmStatus("partial report delivered"); }
+  else if(reportText){ setStatus("ok","已完成"); stageDone("report"); swarmCore("complete"); swarmStatus("report delivered"); }
   else if(code === 0){ setStatus("ok","已结束"); swarmStatus("finished"); }
   else{ setStatus("err","异常结束"); swarmStatus("terminated"); }
 }
@@ -1076,7 +1171,6 @@ function buildPipeline(jobSearch){
   stages = {};
   const ul = $("pipe"); ul.innerHTML = "";
   STAGE_DEF.forEach(([key,label,fn])=>{
-    if(key === "recommend" && !jobSearch) return;
     ul.appendChild(makeStage(key,label,fn));
   });
   renumberPipe();
@@ -1118,6 +1212,18 @@ function stageDone(key, ok=true){
   li.querySelector(".node").textContent = ok ? "✓" : "!";
   updateOvSteps();
 }
+function stageFailed(key){
+  const li = ensureStage(key); if(!li) return;
+  li.className = "fail";
+  li.querySelector(".node").textContent = "!";
+  updateOvSteps();
+}
+function stageSkipped(key){
+  const li = ensureStage(key); if(!li) return;
+  li.className = "done";
+  li.querySelector(".node").textContent = "–";
+  updateOvSteps();
+}
 function stageRevise(key){
   const li = ensureStage(key); if(!li) return;
   li.className = "revise";
@@ -1126,12 +1232,83 @@ function stageRevise(key){
 
 /* ================= 事件流处理 ================= */
 function handleEvent(ev){
-  if(ev.type === "line")      parseLine(ev.text);
+  if(ev.type === "trace"){ handleTraceEvent(ev.event); }
+  else if(ev.type === "line")      parseLine(ev.text);
   else if(ev.type === "question"){ showAsk(ev.question, ev.context); }
   else if(ev.type === "answered"){ hideAsk(ev.answer); }
   else if(ev.type === "report"){ onReport(ev); }
   else if(ev.type === "exit"){ finishRun(ev.code); }
   stickScroll();
+}
+
+function handleTraceEvent(event){
+  if(!event || typeof event !== "object") return;
+  const data = event.data || {};
+  const stepId = Number(event.step || data.stage_id || 0);
+  const stageKey = TRACE_STAGE_KEY[data.stage];
+  if(event.event === "run.interrupted"){
+    traceRunPartial = true;
+    setStatus("warn", "正在生成部分报告");
+    logAdd("运行中断，正在整理已完成结果", "warn");
+    return;
+  }
+  if(event.event === "run.completed"){
+    if(data.status === "partial"){
+      traceRunPartial = true;
+      setStatus("warn", "部分完成");
+    }
+    return;
+  }
+  if(event.event === "stage.started"){
+    if(!stepId) return;
+    selectStep(stepId, data.total_stages || 8, true);
+    const m = stepMeta[stepId];
+    if(m){
+      const title = m.el.querySelector(".step-title");
+      if(title) title.textContent = data.name || `阶段 ${stepId}`;
+      m.titleSet = true;
+    }
+    if(stageKey){
+      if(!stageFirst[stageKey]) stageFirst[stageKey] = stepMeta[stepId].el;
+      stageActive(stageKey);
+    }
+    return;
+  }
+  if(event.event === "stage.completed"){
+    if(stepId) finishTraceStep(stepId, "completed", data.duration_ms);
+    if(stageKey) stageDone(stageKey, true);
+    return;
+  }
+  if(event.event === "stage.failed"){
+    if(stepId) finishTraceStep(stepId, "failed", data.duration_ms);
+    if(stageKey) stageFailed(stageKey);
+    return;
+  }
+  if(event.event === "stage.skipped"){
+    if(stepId) finishTraceStep(stepId, "skipped", data.duration_ms);
+    if(stageKey) stageSkipped(stageKey);
+    return;
+  }
+  if(event.event === "tool.started"){
+    const name = data.name;
+    if(!name || !stepId) return;
+    selectStep(stepId);
+    if((plainToolAwaitTrace[name] || 0) > 0){
+      plainToolAwaitTrace[name]--;
+    }else{
+      onToolCall(name, stepId, true);
+      traceToolEcho[name] = (traceToolEcho[name] || 0) + 1;
+    }
+    return;
+  }
+  if(event.event === "tool.completed"){
+    const name = data.name;
+    if(stepId) selectStep(stepId);
+    if(name){
+      lastTool = name;
+      if(stepId) toolByStep[stepId] = name;
+    }
+  }
 }
 
 const SKIP_RE = /^=+$|^-{10,}$|^💬|^背景：|^问题：|请输入回答|^={5,}/;
@@ -1158,7 +1335,13 @@ function parseLine(raw){
   }
   const after = (s) => s.slice(s.indexOf("：") + 1);
   if(t.startsWith("🧠 思考：")){ addBlk("think","THINKING / 思考", after(t)); swarmCore("think"); return; }
-  if(t.startsWith("🔧 调用工具：")){ onToolCall(after(t).trim()); return; }
+  if(t.startsWith("🔧 调用工具：")){
+    const name = after(t).trim();
+    if((traceToolEcho[name] || 0) > 0){ traceToolEcho[name]--; return; }
+    onToolCall(name);
+    plainToolAwaitTrace[name] = (plainToolAwaitTrace[name] || 0) + 1;
+    return;
+  }
   if(t.startsWith("📋 观察：")){ onObservation(after(t)); return; }
 
   if(!sawStep){
@@ -1182,12 +1365,49 @@ function parseLine(raw){
   if(lastBlk){ lastBlk.insertAdjacentHTML("beforeend", "<br>" + escapeHtml(t)); return; }
   addSys(t);
 }
-function newStep(n, total){
+function selectStep(n, total=null, reopen=false){
+  n = Number(n);
+  if(!n) return null;
+  if(!stepMeta[n]) return newStep(n, total || 20, true);
+  const m = stepMeta[n];
+  if(Number(total) > 0) m.total = Number(total);
+  const resolvedTotal = Number(m.total) || 20;
+  sawStep = true; stepCount = n; stepEl = m.el; lastStepNo = n;
+  $("cnt-steps").textContent = Object.keys(stepMeta).length;
+  $("step-txt").textContent = `STEP ${n}/${resolvedTotal}`;
+  if(reopen){
+    m.closed = false; m.t0 = Date.now();
+    if(m.metaEl) m.metaEl.textContent = "进行中";
+    if(m.tlEl){ m.tlEl.classList.remove("done-row"); m.tlEl.classList.add("on"); }
+  }
+  lastBlk = null;
+  return m.el;
+}
+function finishTraceStep(n, state, durationMs){
+  selectStep(n);
+  const m = stepMeta[n]; if(!m) return;
+  m.closed = true;
+  const seconds = Math.max(0, Number(durationMs || 0)) / 1000;
+  const duration = seconds >= 0.05 ? ` · ${seconds.toFixed(1)}s` : "";
+  const labels = {completed:"已完成", failed:"失败", skipped:"已跳过"};
+  const marks = {completed:"●", failed:"!", skipped:"–"};
+  if(m.metaEl){
+    m.metaEl.className = "meta " + (state === "failed" ? "err" : "");
+    m.metaEl.textContent = `${marks[state] || "●"} ${labels[state] || state}${duration}`;
+  }
+  if(m.tlEl){
+    m.tlEl.classList.remove("on"); m.tlEl.classList.add("done-row");
+    const d = m.tlEl.querySelector(".d"); if(d) d.textContent = duration.replace(" · ", "");
+  }
+}
+function newStep(n, total, fromTrace=false){
+  if(stepMeta[n]) return selectStep(n, total, fromTrace);
+  const resolvedTotal = Number(total) || 20;
   sawStep = true; stepCount = n;
-  $("cnt-steps").textContent = n;
-  $("step-txt").textContent = `STEP ${n}/${total}`;
+  $("cnt-steps").textContent = Object.keys(stepMeta).length + 1;
+  $("step-txt").textContent = `STEP ${n}/${resolvedTotal}`;
   const now = Date.now();
-  if(lastStepNo) closeStep(lastStepNo, now);
+  if(!fromTrace && lastStepNo && lastStepNo !== n) closeStep(lastStepNo, now);
   lastStepNo = n;
   stepEl = document.createElement("div");
   stepEl.className = "step";
@@ -1201,8 +1421,9 @@ function newStep(n, total){
   tli.onclick = () => flashTo(target);
   $("tl").appendChild(tli);
   $("tl").scrollTop = 1e6;
-  stepMeta[n] = {t0: now, el: stepEl, metaEl: stepEl.querySelector(".meta"), tlEl: tli, titleSet: false, closed: false};
+  stepMeta[n] = {t0: now, el: stepEl, metaEl: stepEl.querySelector(".meta"), tlEl: tli, titleSet: false, closed: false, total: resolvedTotal};
   lastBlk = null;
+  return stepEl;
 }
 function ensureStep(){ if(!stepEl) newStep(stepCount || 1, 20); }
 function addBlk(cls, tag, content){
@@ -1213,9 +1434,11 @@ function addBlk(cls, tag, content){
   stepEl.querySelector(".step-b").appendChild(div);
   lastBlk = div;
 }
-function onToolCall(fn){
+function onToolCall(fn, targetStep=null, fromTrace=false){
+  if(targetStep) selectStep(targetStep);
   ensureStep();
   lastTool = fn;
+  toolByStep[stepCount] = fn;
   const info = TOOL_INFO[fn] || {label:fn, stage:null};
   toolCallCount++;
   $("ov-calls").textContent = toolCallCount;

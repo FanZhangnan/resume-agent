@@ -2,7 +2,7 @@
 
 用法：
   ./venv/bin/python probe_reasoning.py            # 使用.env里的网关与AGENT_MODEL
-  ./venv/bin/python probe_reasoning.py gpt-5.5    # 指定模型
+  ./venv/bin/python probe_reasoning.py gpt-5.6-sol  # 指定模型
 
 原理：对每个候选值发送一条极小请求（"只回复数字1"），观察：
   - 是否被网关接受（HTTP 200 vs 4xx参数错误）
@@ -16,7 +16,7 @@ import urllib.request
 
 import config  # 自动加载.env
 
-CANDIDATES = [None, "none", "minimal", "low", "medium", "high", "xhigh"]
+CANDIDATES = [None, "none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 def probe(model, effort):
