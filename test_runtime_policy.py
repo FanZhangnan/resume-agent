@@ -11,7 +11,11 @@ os.environ.setdefault("AGENT_MOCK", "1")
 
 import config
 from agent import ResumeAgent
-from llm_client import LLMClient
+from llm_client import (
+    CallDeadlineExceeded,
+    ExternalRunDeadlineExceeded,
+    LLMClient,
+)
 from pipeline import DeterministicPipeline
 from runtime_context import (
     RunSettings,
@@ -273,6 +277,46 @@ def test_resume_agent_run_binds_and_restores_its_context():
     convert.assert_called_once_with(limit=config.RUN_TIMEOUT)
 
 
+def test_tool_call_deadline_is_not_misclassified_as_run_timeout():
+    original_client = common._client
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        common._client = LLMClient(model="gpt-5.5", reasoning="xhigh")
+    try:
+        with patch.object(
+            common,
+            "monotonic_deadline",
+            return_value=0.0,
+        ):
+            error = _assert_raises(
+                CallDeadlineExceeded,
+                lambda: common.ask_json("prompt", "system", {"value": 0}),
+            )
+    finally:
+        common._client = original_client
+
+    assert type(error) is CallDeadlineExceeded
+    assert getattr(error, "is_run_deadline", False) is False
+
+
+def test_shorter_bound_run_deadline_keeps_run_timeout_classification():
+    original_client = common._client
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        common._client = LLMClient(model="gpt-5.5", reasoning="xhigh")
+    try:
+        with (
+            common.use_run_deadline(0.0),
+            patch.object(common, "monotonic_deadline", return_value=999999999.0),
+        ):
+            error = _assert_raises(
+                ExternalRunDeadlineExceeded,
+                lambda: common.ask_json("prompt", "system", {"value": 0}),
+            )
+    finally:
+        common._client = original_client
+
+    assert getattr(error, "is_run_deadline", False) is True
+
+
 def test_semantic_retry_reuses_one_monotonic_deadline():
     class SemanticClient:
         last_finish_reason = "stop"
@@ -282,7 +326,10 @@ def test_semantic_retry_reuses_one_monotonic_deadline():
             self.deadlines = []
 
         def simple_ask(self, **kwargs):
-            self.deadlines.append(kwargs["external_deadline"])
+            self.deadlines.append((
+                kwargs.get("logical_deadline"),
+                kwargs.get("external_deadline"),
+            ))
             return next(self.responses)
 
     fake = SemanticClient()
@@ -299,7 +346,7 @@ def test_semantic_retry_reuses_one_monotonic_deadline():
         result = common.ask_json("prompt", "system", {"value": 0})
 
     assert result == {"value": 7}
-    assert fake.deadlines == [321.5, 321.5]
+    assert fake.deadlines == [(321.5, None), (321.5, None)]
     convert.assert_called_once_with(limit=config.CALL_DEADLINE)
 
 
@@ -316,6 +363,8 @@ def main():
         test_pipeline_worker_binds_agent_run_settings,
         test_resume_agent_owns_one_validated_run_context,
         test_resume_agent_run_binds_and_restores_its_context,
+        test_tool_call_deadline_is_not_misclassified_as_run_timeout,
+        test_shorter_bound_run_deadline_keeps_run_timeout_classification,
         test_semantic_retry_reuses_one_monotonic_deadline,
     )
     for test in tests:

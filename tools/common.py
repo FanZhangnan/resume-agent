@@ -82,8 +82,6 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
     """
     logical_deadline = monotonic_deadline(limit=config.CALL_DEADLINE)
     run_deadline = current_run_deadline()
-    if run_deadline is not None:
-        logical_deadline = min(logical_deadline, run_deadline)
     if label:
         print(f"   ⏳ {label}...")
     client = get_client()
@@ -95,7 +93,8 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
             prompt=current_prompt, system=system,
             temperature=temperature, max_tokens=current_max,
             operation=operation,
-            external_deadline=logical_deadline,
+            logical_deadline=logical_deadline,
+            external_deadline=run_deadline,
         )
         data = parse_json_safely(content, default={})
         if isinstance(data, dict) and data:

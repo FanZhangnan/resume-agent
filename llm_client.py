@@ -97,7 +97,7 @@ class LLMClient:
 
     def chat(self, messages, tools=None, temperature=0.3, max_tokens=None,
              operation="chat", parent_span=None, step=None,
-             external_deadline=None):
+             external_deadline=None, logical_deadline=None):
         """
         调用LLM进行一次对话（带指数退避重试）
         参数:
@@ -115,12 +115,22 @@ class LLMClient:
         self._external_deadline = (
             float(external_deadline) if external_deadline is not None else None
         )
+        self._logical_deadline = (
+            float(logical_deadline) if logical_deadline is not None else None
+        )
         self._call_deadline = call_started + config.CALL_DEADLINE
-        if self._external_deadline is not None:
-            self._call_deadline = min(
-                self._call_deadline,
-                self._external_deadline,
-            )
+        self._deadline_source = "call"
+        if (
+            self._logical_deadline is not None
+            and self._logical_deadline < self._call_deadline
+        ):
+            self._call_deadline = self._logical_deadline
+        if (
+            self._external_deadline is not None
+            and self._external_deadline < self._call_deadline
+        ):
+            self._call_deadline = self._external_deadline
+            self._deadline_source = "run"
         self._remaining_timeout()
         if self.mock_mode:
             started = call_started
@@ -387,17 +397,25 @@ class LLMClient:
 
     def simple_ask(self, prompt, system=None, temperature=0.3, max_tokens=None,
                    operation="simple_ask", parent_span=None, step=None,
-                   external_deadline=None):
+                   external_deadline=None, logical_deadline=None):
         """
         便捷方法：单轮提问，直接返回文本
         供各个"子LLM调用"工具使用（如提取简历信息、分析JD等）
         """
         if self.mock_mode:
-            if (
-                external_deadline is not None
-                and time.monotonic() >= float(external_deadline)
-            ):
-                raise ExternalRunDeadlineExceeded("Agent run deadline exceeded")
+            deadlines = []
+            if logical_deadline is not None:
+                deadlines.append((float(logical_deadline), "call"))
+            if external_deadline is not None:
+                deadlines.append((float(external_deadline), "run"))
+            if deadlines:
+                deadline, source = min(deadlines)
+                if time.monotonic() >= deadline:
+                    if source == "run":
+                        raise ExternalRunDeadlineExceeded(
+                            "Agent run deadline exceeded"
+                        )
+                    raise CallDeadlineExceeded("LLM call deadline exceeded")
             from mock_data import mock_simple_ask
             self.last_finish_reason = "stop"
             return mock_simple_ask(prompt, system)
@@ -410,6 +428,7 @@ class LLMClient:
             messages, temperature=temperature, max_tokens=max_tokens,
             operation=operation, parent_span=parent_span, step=step,
             external_deadline=external_deadline,
+            logical_deadline=logical_deadline,
         )
         return message.content or ""
 
@@ -417,10 +436,7 @@ class LLMClient:
         now = time.monotonic()
         remaining = self._call_deadline - now
         if remaining <= 0:
-            if (
-                self._external_deadline is not None
-                and now >= self._external_deadline
-            ):
+            if self._deadline_source == "run":
                 raise ExternalRunDeadlineExceeded("Agent run deadline exceeded")
             raise CallDeadlineExceeded("LLM call deadline exceeded")
         return remaining
