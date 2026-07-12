@@ -20,7 +20,14 @@ import config
 from llm_client import LLMClient
 from pipeline import DeterministicPipeline, PipelineStageError
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
+from runtime_context import (
+    RunSettings,
+    current_settings,
+    monotonic_deadline,
+    use_run_settings,
+)
 from tools import execute_tool, get_tool_definitions
+from tools.common import use_run_deadline
 from tools.interaction import get_substantive_answer
 from trace_catalog import emit_trace
 from utils import (clip_text, compact_text, parse_resume_text_to_struct,
@@ -129,7 +136,7 @@ class ResumeAgent:
     """简历优化Agent：默认确定性流水线，保留ReAct诊断模式。"""
 
     def __init__(self, resume_input, jd_text=None, resume_is_file=False, output_dir=None,
-                 preferences=None):
+                 preferences=None, model=None, reasoning=None, deadline_epoch=None):
         """
         参数:
             resume_input: 简历文本或文件路径
@@ -137,7 +144,19 @@ class ResumeAgent:
             resume_is_file: resume_input是否为文件路径
             output_dir: 报告输出目录，默认使用config.OUTPUT_DIR
             preferences: 岗位推荐模式下用户的求职偏好（如"在中国求职大厂实习"、"只考虑远程"）
+            model/reasoning: 本次运行的精确模型策略
+            deadline_epoch: 本次运行的绝对截止时间（Unix epoch）
         """
+        active = current_settings()
+        self.settings = RunSettings(
+            model=active.model if model is None else model,
+            reasoning=active.reasoning if reasoning is None else reasoning,
+            deadline_epoch=(
+                active.deadline_epoch
+                if deadline_epoch is None
+                else deadline_epoch
+            ),
+        )
         self.resume_input = resume_input
         self.jd_text = str(jd_text or "")
         # 岗位推荐模式：用户只给了简历没给JD → 先推荐大厂岗位，再针对第一名深入分析
@@ -145,7 +164,10 @@ class ResumeAgent:
         self.preferences = str(preferences or "").strip()
         self.resume_is_file = resume_is_file
         self.output_dir = output_dir or config.OUTPUT_DIR
-        self.client = LLMClient()
+        self.client = LLMClient(
+            model=self.settings.model,
+            reasoning=self.settings.reasoning,
+        )
         self.tool_definitions = get_tool_definitions()
         self.messages = []
         self.state = {
@@ -199,9 +221,12 @@ class ResumeAgent:
 
     def run(self):
         """强制整次运行的总墙钟预算。"""
-        self._run_deadline = time.monotonic() + max(0.001, float(config.RUN_TIMEOUT))
-        with _run_timeout(config.RUN_TIMEOUT):
-            return self._run_traced()
+        with use_run_settings(self.settings):
+            started = time.monotonic()
+            self._run_deadline = monotonic_deadline(limit=config.RUN_TIMEOUT)
+            timeout = max(0.001, self._run_deadline - started)
+            with _run_timeout(timeout):
+                return self._run_traced()
 
     def _check_run_deadline(self):
         deadline = getattr(self, "_run_deadline", None)
@@ -225,8 +250,8 @@ class ResumeAgent:
             data={
                 "mode": "job_search" if self.job_search_mode else "target_jd",
                 "mock": self.client.mock_mode,
-                "model": "mock" if self.client.mock_mode else config.MODEL_NAME,
-                "reasoning": None if self.client.mock_mode else config.REASONING_EFFORT,
+                "model": "mock" if self.client.mock_mode else self.settings.model,
+                "reasoning": None if self.client.mock_mode else self.settings.reasoning,
                 "resume_source": "file" if self.resume_is_file else "text",
                 "resume_chars": None if self.resume_is_file else len(str(self.resume_input or "")),
                 "jd_provided": not self.job_search_mode,
@@ -239,13 +264,13 @@ class ResumeAgent:
             if self.client.mock_mode:
                 print("🧪 模式：离线演示（Mock）")
             else:
-                print(f"🤖 模型：{config.MODEL_NAME} @ {config.API_BASE_URL}")
-                if config.REASONING_EFFORT:
-                    labels = {
-                        "none": "关闭推理", "low": "轻度", "medium": "中等",
-                        "high": "深度", "xhigh": "极深", "max": "极限",
-                    }
-                    print(f"🧩 推理强度：{labels.get(config.REASONING_EFFORT, config.REASONING_EFFORT)}（{config.REASONING_EFFORT}）")
+                print(f"🤖 模型：{self.settings.model} @ {config.API_BASE_URL}")
+                labels = {"high": "深度", "xhigh": "极深"}
+                print(
+                    f"🧩 推理强度："
+                    f"{labels.get(self.settings.reasoning, self.settings.reasoning)}"
+                    f"（{self.settings.reasoning}）"
+                )
             print(f"📄 简历来源：{'文件（' + str(self.resume_input) + '）' if self.resume_is_file else '文本'}")
             if self.job_search_mode:
                 print("🎯 任务：未提供JD → 岗位推荐模式（自动匹配最合适的大厂岗位）")
@@ -388,10 +413,15 @@ class ResumeAgent:
             print(f"\n--- 步骤 {self.step_count}/{self.max_steps} ---")
 
             # 调用LLM，传入当前对话历史和工具定义
+            call_options = {}
+            run_deadline = getattr(self, "_run_deadline", None)
+            if run_deadline is not None:
+                call_options["external_deadline"] = run_deadline
             response = self.client.chat(
                 messages=self.messages,
                 tools=self.tool_definitions,
                 temperature=0.3,
+                **call_options,
             )
             self._check_run_deadline()
 
@@ -497,7 +527,8 @@ class ResumeAgent:
                 },
             )
             try:
-                result = execute_tool(tool_name, arguments)
+                with use_run_deadline(getattr(self, "_run_deadline", None)):
+                    result = execute_tool(tool_name, arguments)
             except Exception as error:
                 emit_trace(
                     "tool.completed", level="error", span=tool_span,
@@ -876,9 +907,14 @@ class ResumeAgent:
         fallback_reason = "missing_sections"
         try:
             print("\n📝 正在生成最终报告...")
+            call_options = {}
+            run_deadline = getattr(self, "_run_deadline", None)
+            if run_deadline is not None:
+                call_options["external_deadline"] = run_deadline
             formatted = self.client.simple_ask(
                 prompt=prompt, temperature=0.3, max_tokens=config.REPORT_MAX_TOKENS,
                 operation="report.format", parent_span=span, step=self.step_count,
+                **call_options,
             )
             if formatted and all(section in formatted for section in self._required_sections()):
                 report = self._compose_report(self._ensure_full_resume(formatted))
@@ -947,7 +983,7 @@ class ResumeAgent:
             "# 简历优化报告",
             "",
             f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"- 分析引擎：{'离线演示模式' if self.client.mock_mode else config.MODEL_NAME}",
+            f"- 分析引擎：{'离线演示模式' if self.client.mock_mode else self.settings.model}",
         ]
         recommendations = self.state["job_recommendations"] or {}
         candidates = recommendations.get("candidates") or []
@@ -1231,10 +1267,8 @@ _USAGE = """用法：
   python agent.py --text "简历文本" ["JD文本"]
 
 模型与推理强度：
-  --model gpt-5.5       --reasoning none|low|medium|high|xhigh  （稳定，默认 xhigh）
-  --model gpt-5.6-terra --reasoning xhigh|max
-  --model gpt-5.6-sol   --reasoning high|xhigh|max
-注：GPT-5.6 Terra / Sol 是实验引擎；max 只用于显式实验。
+  --model gpt-5.5       --reasoning high|xhigh  （稳定，默认 xhigh）
+  --model gpt-5.6-terra --reasoning high|xhigh  （实验，默认 xhigh）
 
 岗位推荐模式可加 --prefer 指定求职偏好（地点/方向/公司类型等）：
   python agent.py resume.pdf --prefer "在中国求职大厂实习"
@@ -1318,6 +1352,8 @@ def main():
     import sys
 
     args = sys.argv[1:]
+    selected_model = config.MODEL_NAME
+    selected_reasoning = config.REASONING_EFFORT
 
     if args and args[0] in ("-h", "--help"):
         print(_USAGE)
@@ -1341,19 +1377,19 @@ def main():
             print(f"❌ --model 后面需要跟模型：{' / '.join(config.SUPPORTED_MODELS)}\n")
             print(_USAGE)
             return
-        config.MODEL_NAME = args[index + 1]
+        selected_model = args[index + 1]
         args = args[:index] + args[index + 2:]
-        config.REASONING_EFFORT = config.DEFAULT_REASONING_BY_MODEL[config.MODEL_NAME]
+        selected_reasoning = config.DEFAULT_REASONING_BY_MODEL[selected_model]
 
     # 提取 --reasoning 推理强度，并按当前模型校验。
     if "--reasoning" in args:
         index = args.index("--reasoning")
-        allowed = config.reasoning_levels_for_model(config.MODEL_NAME)
+        allowed = config.reasoning_levels_for_model(selected_model)
         if index + 1 >= len(args) or args[index + 1] not in allowed:
-            print(f"❌ {config.MODEL_NAME} 的 --reasoning 仅限：{' / '.join(allowed)}\n")
+            print(f"❌ {selected_model} 的 --reasoning 仅限：{' / '.join(allowed)}\n")
             print(_USAGE)
             return
-        config.REASONING_EFFORT = args[index + 1]
+        selected_reasoning = args[index + 1]
         args = args[:index] + args[index + 2:]
 
     if not args:
@@ -1391,6 +1427,8 @@ def main():
             jd_text=jd_text,
             resume_is_file=resume_is_file,
             preferences=preferences,
+            model=selected_model,
+            reasoning=selected_reasoning,
         )
     except Exception as error:
         emit_trace(

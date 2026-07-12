@@ -1,6 +1,8 @@
 """Production model policy and benchmark harness tests (offline only)."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,14 +10,16 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 import config
+import agent
+import probe_reasoning
+from runtime_context import current_settings
 from webui import server
 
 
 ROOT = Path(__file__).parent
 EXPECTED_LEVELS = {
-    "gpt-5.5": ("none", "low", "medium", "high", "xhigh"),
-    "gpt-5.6-terra": ("xhigh", "max"),
-    "gpt-5.6-sol": ("high", "xhigh", "max"),
+    "gpt-5.5": ("high", "xhigh"),
+    "gpt-5.6-terra": ("high", "xhigh"),
 }
 
 
@@ -25,13 +29,11 @@ def test_production_default_and_independent_catalog_labels():
     assert config.MODEL_REASONING_LEVELS == EXPECTED_LEVELS
 
     options = {item["id"]: item for item in config.MODEL_OPTIONS}
-    assert tuple(options) == ("gpt-5.5", "gpt-5.6-terra", "gpt-5.6-sol")
+    assert tuple(options) == ("gpt-5.5", "gpt-5.6-terra")
     assert options["gpt-5.5"]["status"] == "stable"
     assert options["gpt-5.5"]["status_label"] == "稳定"
     assert options["gpt-5.6-terra"]["status"] == "experimental"
-    assert options["gpt-5.6-sol"]["status"] == "experimental"
     assert options["gpt-5.6-terra"]["tier"] == "free"
-    assert options["gpt-5.6-sol"]["tier"] == "premium"
     assert options["gpt-5.5"]["tier"] == "unassigned"
     assert options["gpt-5.5"]["status"] != options["gpt-5.5"]["tier"]
 
@@ -40,17 +42,23 @@ def test_exact_model_reasoning_allowlist():
     assert config.validate_model_reasoning("gpt-5.5", "xhigh") == (
         "gpt-5.5", "xhigh"
     )
-    assert config.validate_model_reasoning("gpt-5.6-terra", "max") == (
-        "gpt-5.6-terra", "max"
+    assert config.validate_model_reasoning("gpt-5.6-terra", "high") == (
+        "gpt-5.6-terra", "high"
     )
-    assert config.validate_model_reasoning("gpt-5.6-sol", "high") == (
-        "gpt-5.6-sol", "high"
+    assert config.validate_model_reasoning("gpt-5.5", "high") == (
+        "gpt-5.5", "high"
     )
 
     invalid = (
+        ("gpt-5.5", "none"),
+        ("gpt-5.5", "low"),
+        ("gpt-5.5", "medium"),
         ("gpt-5.5", "max"),
-        ("gpt-5.6-terra", "high"),
-        ("gpt-5.6-sol", "low"),
+        ("gpt-5.6-terra", "none"),
+        ("gpt-5.6-terra", "low"),
+        ("gpt-5.6-terra", "medium"),
+        ("gpt-5.6-terra", "max"),
+        ("gpt-5.6-sol", "high"),
         ("GPT-5.5", "xhigh"),
         ("gpt-5.6-luna", "xhigh"),
         ("gpt-5.5", "XHIGH"),
@@ -75,14 +83,16 @@ def _assert_web_rejected(model, reasoning):
 
 def test_web_resolution_uses_stable_default_and_exact_allowlist():
     assert server._resolve_model_reasoning("", "") == ("gpt-5.5", "xhigh")
-    assert server._resolve_model_reasoning("gpt-5.5", "none") == (
-        "gpt-5.5", "none"
+    assert server._resolve_model_reasoning("gpt-5.5", "high") == (
+        "gpt-5.5", "high"
     )
-    assert server._resolve_model_reasoning("gpt-5.6-sol", "max") == (
-        "gpt-5.6-sol", "max"
+    assert server._resolve_model_reasoning("gpt-5.6-terra", "xhigh") == (
+        "gpt-5.6-terra", "xhigh"
     )
+    _assert_web_rejected("gpt-5.5", "none")
     _assert_web_rejected("gpt-5.5", "max")
-    _assert_web_rejected("gpt-5.6-terra", "high")
+    _assert_web_rejected("gpt-5.6-terra", "max")
+    _assert_web_rejected("gpt-5.6-sol", "high")
     _assert_web_rejected("gpt-5.6-luna", "xhigh")
 
 
@@ -137,6 +147,46 @@ class _FakeBenchmarkClient:
         )
         call = SimpleNamespace(function=function)
         return SimpleNamespace(content=None, tool_calls=[call])
+
+
+def test_concurrent_benchmarks_keep_request_policies_isolated():
+    import benchmark_models
+
+    initial = (config.MODEL_NAME, config.REASONING_EFFORT)
+    barrier = threading.Barrier(2)
+    observed = []
+    lock = threading.Lock()
+
+    def client_factory():
+        barrier.wait(timeout=1)
+        settings = current_settings()
+        with lock:
+            observed.append((settings.model, settings.reasoning))
+        barrier.wait(timeout=1)
+        return _FakeBenchmarkClient()
+
+    pairs = (
+        ("gpt-5.5", "high"),
+        ("gpt-5.6-terra", "xhigh"),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                benchmark_models.run_benchmark,
+                model,
+                reasoning,
+                client_factory,
+            )
+            for model, reasoning in pairs
+        ]
+        results = [future.result() for future in futures]
+
+    assert sorted(observed) == sorted(pairs)
+    assert sorted(
+        (result["model"], result["reasoning"])
+        for result in results
+    ) == sorted(pairs)
+    assert (config.MODEL_NAME, config.REASONING_EFFORT) == initial
 
 
 class _MaliciousRewriteClient(_FakeBenchmarkClient):
@@ -317,27 +367,19 @@ class _FakeClock:
         return self.value
 
 
-def test_frontend_marks_status_and_requires_max_confirmation():
-    html = (ROOT / "webui" / "static" / "index.html").read_text(
-        encoding="utf-8"
-    )
-    assert 'id="model-seg"' in html
-    assert 'status:"stable"' in html
-    assert html.count('status:"experimental"') >= 2
-    assert "status_label" in html
-    assert 'window.confirm(' in html
-    assert 'v === "max"' in html
-    assert "previousEffort" in html
-    assert 'applyModelCatalog(FALLBACK_MODELS, "gpt-5.5")' in html
-    assert 'getItem("agent_model")' not in html
-    assert 'fd.append("model", selectedModel)' in html
-    assert 'fd.append("reasoning", effort)' in html
+def test_cli_and_probe_expose_only_supported_options():
+    assert "gpt-5.5       --reasoning high|xhigh" in agent._USAGE
+    assert "gpt-5.6-terra --reasoning high|xhigh" in agent._USAGE
+    assert "gpt-5.6-sol" not in agent._USAGE
+    assert "max" not in agent._USAGE
+    assert probe_reasoning.CANDIDATES == ("high", "xhigh")
 
 
 def main():
     test_production_default_and_independent_catalog_labels()
     test_exact_model_reasoning_allowlist()
     test_web_resolution_uses_stable_default_and_exact_allowlist()
+    test_concurrent_benchmarks_keep_request_policies_isolated()
     from tempfile import TemporaryDirectory
 
     with TemporaryDirectory() as directory:
@@ -347,7 +389,7 @@ def main():
         test_verifier_audits_actual_rewrite_without_persisting_it(path)
         test_failed_operation_cannot_reuse_previous_token_metrics(path)
         test_invalid_rewrite_skips_verifier_instead_of_using_default_text(path)
-    test_frontend_marks_status_and_requires_max_confirmation()
+    test_cli_and_probe_expose_only_supported_options()
     print("模型政策与基准测试通过")
 
 

@@ -9,6 +9,7 @@ import time
 
 import config
 from llm_client import LLMClient
+from runtime_context import RunSettings, use_run_settings
 
 
 SCHEMA_VERSION = "resume-agent.model-benchmark.v1"
@@ -186,12 +187,11 @@ _RUNNERS = {
 def run_benchmark(model, reasoning, client_factory=None, clock=None):
     """Run the fixed live benchmark and return privacy-safe metrics only."""
     model, reasoning = config.validate_model_reasoning(model, reasoning)
-    client_factory = client_factory or LLMClient
+    if client_factory is None:
+        client_factory = lambda: LLMClient(model=model, reasoning=reasoning)
     clock = clock or time.perf_counter
-    previous = (config.MODEL_NAME, config.REASONING_EFFORT)
-    config.MODEL_NAME = model
-    config.REASONING_EFFORT = reasoning
-    try:
+    settings = RunSettings(model=model, reasoning=reasoning)
+    with use_run_settings(settings):
         client = client_factory()
         results = []
         context = {}
@@ -221,9 +221,6 @@ def run_benchmark(model, reasoning, client_factory=None, clock=None):
                 metrics=getattr(client, "last_call_metrics", None),
                 error_class=error_class,
             ))
-    finally:
-        config.MODEL_NAME, config.REASONING_EFFORT = previous
-
     verifier = next(
         item for item in results if item["operation"] == "verifier"
     )

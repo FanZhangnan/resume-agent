@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import config
 from llm_client import LLMClient
+from runtime_context import current_settings, monotonic_deadline
 from trace_catalog import emit_trace
 from utils import parse_json_safely
 
@@ -33,10 +34,16 @@ def get_client():
     """获取当前线程的客户端；显式_client注入保留给现有离线测试。"""
     if _client is not None:
         return _client
-    client = getattr(_thread_clients, "client", None)
+    settings = current_settings()
+    key = (settings.model, settings.reasoning)
+    clients = getattr(_thread_clients, "clients", None)
+    if clients is None:
+        clients = {}
+        _thread_clients.clients = clients
+    client = clients.get(key)
     if client is None:
-        client = LLMClient()
-        _thread_clients.client = client
+        client = LLMClient(model=settings.model, reasoning=settings.reasoning)
+        clients[key] = client
     return client
 
 
@@ -73,6 +80,10 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
     """调用LLM并解析JSON返回，失败自动重试一轮（区分截断和格式错误两种失败）
     成功时用default补齐缺失字段，保证下游字段访问安全
     """
+    logical_deadline = monotonic_deadline(limit=config.CALL_DEADLINE)
+    run_deadline = current_run_deadline()
+    if run_deadline is not None:
+        logical_deadline = min(logical_deadline, run_deadline)
     if label:
         print(f"   ⏳ {label}...")
     client = get_client()
@@ -84,7 +95,7 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
             prompt=current_prompt, system=system,
             temperature=temperature, max_tokens=current_max,
             operation=operation,
-            external_deadline=current_run_deadline(),
+            external_deadline=logical_deadline,
         )
         data = parse_json_safely(content, default={})
         if isinstance(data, dict) and data:

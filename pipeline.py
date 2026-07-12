@@ -11,6 +11,7 @@ from concurrent.futures import (
 )
 
 import config
+from runtime_context import current_settings, use_run_settings
 from tools import execute_tool
 from tools.common import use_run_deadline
 from trace_catalog import emit_trace
@@ -322,7 +323,11 @@ class DeterministicPipeline:
         )
         print(f"🔧 调用工具：{tool_name}")
         try:
-            with use_run_deadline(getattr(self.agent, "_run_deadline", None)):
+            settings = getattr(self.agent, "settings", current_settings())
+            with (
+                use_run_settings(settings),
+                use_run_deadline(getattr(self.agent, "_run_deadline", None)),
+            ):
                 result = execute_tool(tool_name, arguments)
         except Exception as error:
             return {

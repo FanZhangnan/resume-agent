@@ -11,6 +11,7 @@ import time
 import uuid
 from openai import OpenAI
 import config
+from runtime_context import current_settings
 from trace_catalog import emit_trace
 
 
@@ -58,12 +59,20 @@ def _is_streaming_unsupported(error):
 class LLMClient:
     """封装OpenAI兼容API的调用"""
 
-    def __init__(self):
+    def __init__(self, model=None, reasoning=None):
+        active = current_settings()
+        selected_model = active.model if model is None else model
+        selected_reasoning = active.reasoning if reasoning is None else reasoning
+        self.model, self.reasoning = config.validate_model_reasoning(
+            selected_model,
+            selected_reasoning,
+        )
         # 最近一次调用的结束原因："length"表示输出被max_tokens截断（调用方可据此扩容重试）
         self.last_finish_reason = None
         # 只暴露运行指标，不保存prompt或模型原文。
         self.last_call_metrics = {}
         self.mock_mode = os.environ.get("AGENT_MOCK", "") == "1"
+        self.streaming = config.STREAMING
         if self.mock_mode:
             from mock_data import reset_mock_counters
             self._mock_step = 0
@@ -78,7 +87,6 @@ class LLMClient:
                 "（ZENMUX_API_KEY优先生效；也兼容OPENAI_API_KEY。"
                 "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo）"
             )
-        self.streaming = config.STREAMING
         self.client = OpenAI(
             base_url=config.API_BASE_URL,
             api_key=config.API_KEY,
@@ -118,8 +126,8 @@ class LLMClient:
             started = call_started
             base_data = {
                 "operation": operation,
-                "model": "mock",
-                "reasoning": None,
+                "model": self.model,
+                "reasoning": self.reasoning,
                 "streaming": False,
                 "attempt": 1,
                 "max_tokens": token_limit,
@@ -148,8 +156,10 @@ class LLMClient:
             )
             return message
 
+        model = getattr(self, "model", config.MODEL_NAME)
+        reasoning = getattr(self, "reasoning", config.REASONING_EFFORT)
         base_kwargs = {
-            "model": config.MODEL_NAME,
+            "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": token_limit,
@@ -157,8 +167,8 @@ class LLMClient:
         if tools:
             base_kwargs["tools"] = tools
             base_kwargs["tool_choice"] = "auto"
-        if config.REASONING_EFFORT:
-            base_kwargs["reasoning_effort"] = config.REASONING_EFFORT
+        if reasoning:
+            base_kwargs["reasoning_effort"] = reasoning
 
         last_error = None
         max_attempts = max(1, config.MAX_RETRIES)
@@ -175,8 +185,8 @@ class LLMClient:
             streaming = bool(self.streaming)
             trace_data = {
                 "operation": operation,
-                "model": config.MODEL_NAME,
-                "reasoning": config.REASONING_EFFORT or None,
+                "model": model,
+                "reasoning": reasoning or None,
                 "streaming": streaming,
                 "attempt": attempt,
                 "max_attempts": max_attempts,

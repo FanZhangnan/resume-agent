@@ -11,37 +11,32 @@ from webui import server
 
 
 EXPECTED_LEVELS = {
-    "gpt-5.5": ("none", "low", "medium", "high", "xhigh"),
-    "gpt-5.6-terra": ("xhigh", "max"),
-    "gpt-5.6-sol": ("high", "xhigh", "max"),
+    "gpt-5.5": ("high", "xhigh"),
+    "gpt-5.6-terra": ("high", "xhigh"),
 }
 
 
 def test_model_catalog():
-    assert config.SUPPORTED_MODELS == (
-        "gpt-5.5", "gpt-5.6-terra", "gpt-5.6-sol"
-    )
+    assert config.SUPPORTED_MODELS == ("gpt-5.5", "gpt-5.6-terra")
     assert config.MODEL_REASONING_LEVELS == EXPECTED_LEVELS
     assert config.DEFAULT_MODEL == "gpt-5.5"
     assert config.DEFAULT_REASONING_BY_MODEL == {
         "gpt-5.5": "xhigh",
         "gpt-5.6-terra": "xhigh",
-        "gpt-5.6-sol": "high",
     }
     assert [item["tier"] for item in config.MODEL_OPTIONS] == [
-        "unassigned", "free", "premium"
+        "unassigned", "free"
     ]
     assert [item["status"] for item in config.MODEL_OPTIONS] == [
-        "stable", "experimental", "experimental"
+        "stable", "experimental"
     ]
 
 
 def test_model_reasoning_resolution():
     assert server._resolve_model_reasoning("", "") == ("gpt-5.5", "xhigh")
-    assert server._resolve_model_reasoning("gpt-5.5", "none") == ("gpt-5.5", "none")
-    assert server._resolve_model_reasoning("gpt-5.6-sol", "") == ("gpt-5.6-sol", "high")
-    assert server._resolve_model_reasoning("gpt-5.6-sol", "max") == ("gpt-5.6-sol", "max")
-    assert server._resolve_model_reasoning("gpt-5.6-terra", "max") == ("gpt-5.6-terra", "max")
+    assert server._resolve_model_reasoning("gpt-5.5", "high") == ("gpt-5.5", "high")
+    assert server._resolve_model_reasoning("gpt-5.6-terra", "") == ("gpt-5.6-terra", "xhigh")
+    assert server._resolve_model_reasoning("gpt-5.6-terra", "high") == ("gpt-5.6-terra", "high")
 
 
 def _assert_rejected(model, reasoning):
@@ -54,8 +49,9 @@ def _assert_rejected(model, reasoning):
 
 
 def test_invalid_combinations_are_rejected():
+    _assert_rejected("gpt-5.5", "none")
     _assert_rejected("gpt-5.5", "max")
-    _assert_rejected("gpt-5.6-terra", "high")
+    _assert_rejected("gpt-5.6-terra", "max")
     _assert_rejected("gpt-5.6-sol", "low")
     _assert_rejected("gpt-5.6-luna", "xhigh")
 
@@ -74,6 +70,8 @@ def test_reasoning_level_is_never_silently_removed():
     client = object.__new__(LLMClient)
     client.mock_mode = False
     client.streaming = False
+    client.model = "gpt-5.6-terra"
+    client.reasoning = "high"
     calls = []
 
     def reject_reasoning(kwargs):
@@ -84,8 +82,8 @@ def test_reasoning_level_is_never_silently_removed():
 
     client._chat_once = reject_reasoning
     with (
-        patch.object(config, "MODEL_NAME", "gpt-5.6-sol"),
-        patch.object(config, "REASONING_EFFORT", "max"),
+        patch.object(config, "MODEL_NAME", "gpt-5.5"),
+        patch.object(config, "REASONING_EFFORT", "xhigh"),
         patch.object(config, "MAX_RETRIES", 2),
         patch.object(config, "RETRY_DELAY", 0),
         patch.object(config, "RETRY_DELAY_CAP", 0),
@@ -99,7 +97,8 @@ def test_reasoning_level_is_never_silently_removed():
             raise AssertionError("推理档位被移除后请求不应静默成功")
 
     assert len(calls) == 2
-    assert all(call.get("reasoning_effort") == "max" for call in calls)
+    assert all(call.get("model") == "gpt-5.6-terra" for call in calls)
+    assert all(call.get("reasoning_effort") == "high" for call in calls)
 
 
 def main():

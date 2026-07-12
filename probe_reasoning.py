@@ -2,7 +2,7 @@
 
 用法：
   ./venv/bin/python probe_reasoning.py            # 使用.env里的网关与AGENT_MODEL
-  ./venv/bin/python probe_reasoning.py gpt-5.6-sol  # 指定模型
+  ./venv/bin/python probe_reasoning.py gpt-5.6-terra  # 指定模型
 
 原理：对每个候选值发送一条极小请求（"只回复数字1"），观察：
   - 是否被网关接受（HTTP 200 vs 4xx参数错误）
@@ -16,7 +16,7 @@ import urllib.request
 
 import config  # 自动加载.env
 
-CANDIDATES = [None, "none", "minimal", "low", "medium", "high", "xhigh", "max"]
+CANDIDATES = ("high", "xhigh")
 
 
 def probe(model, effort):
@@ -36,7 +36,7 @@ def probe(model, effort):
                  "User-Agent": "curl/8.7.1"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=config.CALL_DEADLINE) as resp:
             data = json.load(resp)
             usage = data.get("usage") or {}
             details = usage.get("completion_tokens_details") or {}
@@ -50,6 +50,9 @@ def probe(model, effort):
 
 def main():
     model = sys.argv[1] if len(sys.argv) > 1 else config.MODEL_NAME
+    if model not in config.SUPPORTED_MODELS:
+        print(f"模型仅限：{' / '.join(config.SUPPORTED_MODELS)}")
+        return
     if not config.API_KEY:
         print("未检测到API密钥（.env或环境变量）")
         return

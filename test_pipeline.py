@@ -731,8 +731,10 @@ def test_tool_clients_are_thread_local_but_explicit_injection_still_wins():
     class FakeClient:
         pass
 
-    def factory():
+    def factory(model=None, reasoning=None):
         client = FakeClient()
+        client.model = model
+        client.reasoning = reasoning
         created.append(client)
         return client
 
@@ -754,6 +756,10 @@ def test_tool_clients_are_thread_local_but_explicit_injection_still_wins():
             )]
     assert clients[0] is not clients[1]
     assert len(created) == 2
+    assert all(
+        (client.model, client.reasoning) == ("gpt-5.5", "xhigh")
+        for client in created
+    )
 
     injected = FakeClient()
     common._client = injected
