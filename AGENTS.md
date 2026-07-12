@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`agent.py` contains the CLI and ReAct orchestration. Supporting gateway, configuration, prompt, and parsing code lives in `llm_client.py`, `config.py`, `prompts.py`, and `utils.py`. Tool implementations are grouped by responsibility under `tools/`; keep schemas and function registration synchronized in `tools/__init__.py`. The FastAPI backend is `webui/server.py`, while `webui/static/index.html` contains the inline HTML, CSS, and JavaScript frontend. Demo inputs live in `samples/`; executable checks are the root-level `test_*.py` files. Treat `output/`, `output_test/`, uploads, runs, and quota files as generated data.
+`agent.py` contains the CLI and ReAct orchestration. Supporting gateway, configuration, prompt, and parsing code lives in `llm_client.py`, `config.py`, `prompts.py`, and `utils.py`. Tool implementations are grouped by responsibility under `tools/`; keep schemas and function registration synchronized in `tools/__init__.py`. The local FastAPI/SSE backend is `webui/server.py`, while `webui/static/index.html` contains the inline HTML, CSS, and JavaScript frontend. The Vercel Hobby deployment lives in `webui/vercel_server.py` (serverless FastAPI + `webui/static/vercel_app.html` polling UI), `workflows/` (durable eight-stage graph), `run_security.py`, and `vercel_trace.py`; these target Python 3.12 and are tested under a separate `.venv312` (see `docs/deployment-vercel.md`). Demo inputs live in `samples/`; executable checks are the root-level `test_*.py` files. Treat `output/`, `output_test/`, uploads, runs, and quota files as generated data.
 
 ## Build, Test, and Development Commands
 
