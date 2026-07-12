@@ -7,6 +7,7 @@
   · 重试仍失败返回None（工具据此返回success=False，Agent可感知并重试）
 """
 import threading
+import time
 from contextlib import contextmanager
 
 import config
@@ -80,8 +81,10 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
     """调用LLM并解析JSON返回，失败自动重试一轮（区分截断和格式错误两种失败）
     成功时用default补齐缺失字段，保证下游字段访问安全
     """
-    logical_deadline = monotonic_deadline(limit=config.CALL_DEADLINE)
+    logical_deadline = time.monotonic() + max(0.0, float(config.CALL_DEADLINE))
     run_deadline = current_run_deadline()
+    if run_deadline is None and current_settings().deadline_epoch is not None:
+        run_deadline = monotonic_deadline(limit=float("inf"))
     if label:
         print(f"   ⏳ {label}...")
     client = get_client()

@@ -59,6 +59,25 @@ def _is_streaming_unsupported(error):
 class LLMClient:
     """封装OpenAI兼容API的调用"""
 
+    @staticmethod
+    def _select_deadline(call_deadline, run_deadline):
+        """选择最早截止点；相等时优先保留 run 来源。"""
+        if run_deadline is not None and run_deadline <= call_deadline:
+            return run_deadline, "run"
+        return call_deadline, "call"
+
+    @staticmethod
+    def _timeout_error(source, before_retry=False):
+        """按截止点来源构造稳定的超时类型。"""
+        if source == "run":
+            return ExternalRunDeadlineExceeded("Agent run deadline exceeded")
+        message = (
+            "LLM call deadline exceeded before retry"
+            if before_retry
+            else "LLM call deadline exceeded"
+        )
+        return CallDeadlineExceeded(message)
+
     def __init__(self, model=None, reasoning=None):
         active = current_settings()
         selected_model = active.model if model is None else model
@@ -118,19 +137,16 @@ class LLMClient:
         self._logical_deadline = (
             float(logical_deadline) if logical_deadline is not None else None
         )
-        self._call_deadline = call_started + config.CALL_DEADLINE
-        self._deadline_source = "call"
+        call_deadline = call_started + config.CALL_DEADLINE
         if (
             self._logical_deadline is not None
-            and self._logical_deadline < self._call_deadline
+            and self._logical_deadline < call_deadline
         ):
-            self._call_deadline = self._logical_deadline
-        if (
-            self._external_deadline is not None
-            and self._external_deadline < self._call_deadline
-        ):
-            self._call_deadline = self._external_deadline
-            self._deadline_source = "run"
+            call_deadline = self._logical_deadline
+        self._call_deadline, self._deadline_source = self._select_deadline(
+            call_deadline,
+            self._external_deadline,
+        )
         self._remaining_timeout()
         if self.mock_mode:
             started = call_started
@@ -277,7 +293,10 @@ class LLMClient:
                         is_deadline = True
                         remaining = 0
                     if not is_deadline and delay >= remaining:
-                        last_error = CallDeadlineExceeded("LLM call deadline exceeded before retry")
+                        last_error = self._timeout_error(
+                            self._deadline_source,
+                            before_retry=True,
+                        )
                         is_deadline = True
                     elif not is_deadline:
                         emit_trace(
@@ -403,19 +422,22 @@ class LLMClient:
         供各个"子LLM调用"工具使用（如提取简历信息、分析JD等）
         """
         if self.mock_mode:
-            deadlines = []
-            if logical_deadline is not None:
-                deadlines.append((float(logical_deadline), "call"))
-            if external_deadline is not None:
-                deadlines.append((float(external_deadline), "run"))
-            if deadlines:
-                deadline, source = min(deadlines)
-                if time.monotonic() >= deadline:
-                    if source == "run":
-                        raise ExternalRunDeadlineExceeded(
-                            "Agent run deadline exceeded"
-                        )
-                    raise CallDeadlineExceeded("LLM call deadline exceeded")
+            call_deadline = (
+                float(logical_deadline)
+                if logical_deadline is not None
+                else float("inf")
+            )
+            run_deadline = (
+                float(external_deadline)
+                if external_deadline is not None
+                else None
+            )
+            deadline, source = self._select_deadline(
+                call_deadline,
+                run_deadline,
+            )
+            if time.monotonic() >= deadline:
+                raise self._timeout_error(source)
             from mock_data import mock_simple_ask
             self.last_finish_reason = "stop"
             return mock_simple_ask(prompt, system)
@@ -436,9 +458,7 @@ class LLMClient:
         now = time.monotonic()
         remaining = self._call_deadline - now
         if remaining <= 0:
-            if self._deadline_source == "run":
-                raise ExternalRunDeadlineExceeded("Agent run deadline exceeded")
-            raise CallDeadlineExceeded("LLM call deadline exceeded")
+            raise self._timeout_error(self._deadline_source)
         return remaining
 
     def _check_deadline(self):

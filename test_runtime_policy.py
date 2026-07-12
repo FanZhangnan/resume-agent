@@ -2,6 +2,7 @@
 
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
@@ -282,11 +283,7 @@ def test_tool_call_deadline_is_not_misclassified_as_run_timeout():
     with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
         common._client = LLMClient(model="gpt-5.5", reasoning="xhigh")
     try:
-        with patch.object(
-            common,
-            "monotonic_deadline",
-            return_value=0.0,
-        ):
+        with patch.object(config, "CALL_DEADLINE", 0):
             error = _assert_raises(
                 CallDeadlineExceeded,
                 lambda: common.ask_json("prompt", "system", {"value": 0}),
@@ -303,10 +300,7 @@ def test_shorter_bound_run_deadline_keeps_run_timeout_classification():
     with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
         common._client = LLMClient(model="gpt-5.5", reasoning="xhigh")
     try:
-        with (
-            common.use_run_deadline(0.0),
-            patch.object(common, "monotonic_deadline", return_value=999999999.0),
-        ):
+        with common.use_run_deadline(0.0):
             error = _assert_raises(
                 ExternalRunDeadlineExceeded,
                 lambda: common.ask_json("prompt", "system", {"value": 0}),
@@ -315,6 +309,100 @@ def test_shorter_bound_run_deadline_keeps_run_timeout_classification():
         common._client = original_client
 
     assert getattr(error, "is_run_deadline", False) is True
+
+
+def test_equal_expired_deadlines_prefer_run_source_for_real_client():
+    client = object.__new__(LLMClient)
+    client.mock_mode = False
+    client.streaming = False
+    client.model = "gpt-5.5"
+    client.reasoning = "xhigh"
+    client.last_finish_reason = None
+    client.last_call_metrics = {}
+
+    error = _assert_raises(
+        ExternalRunDeadlineExceeded,
+        lambda: client.chat(
+            [{"role": "user", "content": "offline"}],
+            logical_deadline=0.0,
+            external_deadline=0.0,
+        ),
+    )
+
+    assert getattr(error, "is_run_deadline", False) is True
+
+
+def test_equal_expired_deadlines_prefer_run_source_for_mock_client():
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        client = LLMClient(model="gpt-5.5", reasoning="xhigh")
+
+    error = _assert_raises(
+        ExternalRunDeadlineExceeded,
+        lambda: client.simple_ask(
+            "offline",
+            logical_deadline=0.0,
+            external_deadline=0.0,
+        ),
+    )
+
+    assert getattr(error, "is_run_deadline", False) is True
+
+
+def _failing_real_client():
+    client = object.__new__(LLMClient)
+    client.mock_mode = False
+    client.streaming = False
+    client.model = "gpt-5.5"
+    client.reasoning = "xhigh"
+    client.last_finish_reason = None
+    client.last_call_metrics = {}
+
+    def fail(kwargs):
+        raise RuntimeError("gateway unavailable")
+
+    client._chat_once = fail
+    return client
+
+
+def test_retry_delay_uses_run_deadline_error_when_run_budget_is_shorter():
+    client = _failing_real_client()
+    now = time.monotonic()
+    with (
+        patch.object(config, "MAX_RETRIES", 2),
+        patch.object(config, "RETRY_DELAY", 3),
+        patch.object(config, "RETRY_DELAY_CAP", 3),
+    ):
+        error = _assert_raises(
+            ExternalRunDeadlineExceeded,
+            lambda: client.chat(
+                [{"role": "user", "content": "offline"}],
+                logical_deadline=now + 10,
+                external_deadline=now + 0.5,
+            ),
+        )
+
+    assert getattr(error, "is_run_deadline", False) is True
+
+
+def test_retry_delay_uses_call_deadline_error_when_call_budget_is_shorter():
+    client = _failing_real_client()
+    now = time.monotonic()
+    with (
+        patch.object(config, "MAX_RETRIES", 2),
+        patch.object(config, "RETRY_DELAY", 3),
+        patch.object(config, "RETRY_DELAY_CAP", 3),
+    ):
+        error = _assert_raises(
+            CallDeadlineExceeded,
+            lambda: client.chat(
+                [{"role": "user", "content": "offline"}],
+                logical_deadline=now + 0.5,
+                external_deadline=now + 10,
+            ),
+        )
+
+    assert type(error) is CallDeadlineExceeded
+    assert getattr(error, "is_run_deadline", False) is False
 
 
 def test_semantic_retry_reuses_one_monotonic_deadline():
@@ -336,18 +424,22 @@ def test_semantic_retry_reuses_one_monotonic_deadline():
     settings = RunSettings(
         "gpt-5.5",
         "xhigh",
-        deadline_epoch=2000.0,
+        deadline_epoch=time.time() + 5,
     )
+    started = time.monotonic()
     with (
         use_run_settings(settings),
         patch.object(common, "get_client", return_value=fake),
-        patch.object(common, "monotonic_deadline", return_value=321.5) as convert,
     ):
         result = common.ask_json("prompt", "system", {"value": 0})
+    completed = time.monotonic()
 
     assert result == {"value": 7}
-    assert fake.deadlines == [(321.5, None), (321.5, None)]
-    convert.assert_called_once_with(limit=config.CALL_DEADLINE)
+    assert fake.deadlines[0] == fake.deadlines[1]
+    logical_deadline, run_deadline = fake.deadlines[0]
+    assert started + config.CALL_DEADLINE <= logical_deadline
+    assert logical_deadline <= completed + config.CALL_DEADLINE
+    assert started < run_deadline < completed + 5.1
 
 
 def main():
@@ -365,6 +457,10 @@ def main():
         test_resume_agent_run_binds_and_restores_its_context,
         test_tool_call_deadline_is_not_misclassified_as_run_timeout,
         test_shorter_bound_run_deadline_keeps_run_timeout_classification,
+        test_equal_expired_deadlines_prefer_run_source_for_real_client,
+        test_equal_expired_deadlines_prefer_run_source_for_mock_client,
+        test_retry_delay_uses_run_deadline_error_when_run_budget_is_shorter,
+        test_retry_delay_uses_call_deadline_error_when_call_budget_is_shorter,
         test_semantic_retry_reuses_one_monotonic_deadline,
     )
     for test in tests:
