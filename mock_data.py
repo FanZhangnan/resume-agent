@@ -16,6 +16,7 @@ MOCK_RESUME_INFO = {
         "email": "liming@example.com",
         "location": "",
         "target_role": "运营专员",
+        "work_authorization": False,
     },
     "education": [
         {"school": "江南大学", "degree": "本科", "major": "市场营销",
@@ -53,6 +54,10 @@ MOCK_JD_ANALYSIS = {
     "responsibilities": ["平台活动运营、商品运营和用户运营", "输出运营分析报告", "协同推进活动落地"],
     "risk_points": ["JD强调独立负责，候选人此前多为助理/协助角色"],
     "raw_summary": "典型电商运营专员岗，硬性门槛不高，核心看活动运营和数据分析的实操能力，隐含跨团队协作与抗压要求。",
+    "gates": {
+        "location": {"required": False, "accepted_values": []},
+        "work_authorization": {"required": False, "accepted_values": []},
+    },
 }
 
 

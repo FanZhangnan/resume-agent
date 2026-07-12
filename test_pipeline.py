@@ -53,7 +53,7 @@ class RecordingExecutor:
                  concurrent_barrier=None, revision_without_fixes=False,
                  raise_tool=None, raise_error=None,
                  expire_agent_deadline=False, potential_issues=None,
-                 ask_result=None):
+                 ask_result=None, resume_basic_info=None):
         self.revision = revision
         self.revision_without_fixes = revision_without_fixes
         self.candidates = candidates or [{
@@ -70,6 +70,7 @@ class RecordingExecutor:
         self.expire_agent_deadline = expire_agent_deadline
         self.potential_issues = list(potential_issues or [])
         self.ask_result = ask_result
+        self.resume_basic_info = resume_basic_info or {"name": "Candidate"}
         self.agent = None
         self.concurrent_barrier = concurrent_barrier
         self.calls = []
@@ -105,7 +106,7 @@ class RecordingExecutor:
             return {
                 "success": True,
                 "resume_info": {
-                    "basic_info": {"name": "Candidate"},
+                    "basic_info": self.resume_basic_info,
                     "work_experience": [{"company": "Example"}],
                     "projects": [],
                     "skills": ["Python"],
@@ -188,7 +189,7 @@ def _read_events(trace_dir):
 
 
 def _run_agent(executor, *, jd_text=TEST_JD, resume_is_file=False,
-               mock_ask=False, production_question=False):
+               mock_ask=False, production_question=False, preferences=None):
     from agent import ResumeAgent
     import pipeline
 
@@ -218,6 +219,7 @@ def _run_agent(executor, *, jd_text=TEST_JD, resume_is_file=False,
                 jd_text,
                 resume_is_file=resume_is_file,
                 output_dir=str(report_dir),
+                preferences=preferences,
             )
             if production_question:
                 resume_agent.client.mock_mode = False
@@ -457,6 +459,50 @@ def test_job_search_keeps_legacy_typical_jd_fallback():
     }])
     _run_agent(executor, jd_text="")
     assert executor.analyzed_jds == ["ONLY AVAILABLE LEGACY JD"]
+
+
+def test_job_search_mode_passes_preferences_to_discovery_and_match():
+    executor = RecordingExecutor()
+    _run_agent(executor, jd_text="", preferences="Brisbane roles only")
+
+    assert executor.arguments_by_tool["recommend_jobs"][0]["preferences"] == (
+        "Brisbane roles only"
+    )
+    assert executor.arguments_by_tool["calculate_match"][0]["preferences"] == (
+        "Brisbane roles only"
+    )
+
+
+def test_pipeline_passes_preferences_and_explicit_gate_evidence_to_match():
+    executor = RecordingExecutor(resume_basic_info={
+        "name": "Candidate",
+        "location": "Sydney",
+        "work_authorization": False,
+    })
+    _run_agent(executor, preferences="Sydney roles only")
+
+    arguments = executor.arguments_by_tool["calculate_match"][0]
+    assert arguments["preferences"] == "Sydney roles only"
+    assert arguments["resume_info"]["basic_info"]["location"] == "Sydney"
+    assert arguments["resume_info"]["basic_info"]["work_authorization"] is False
+
+
+def test_match_arguments_discard_planner_preferences_without_user_source():
+    from agent import ResumeAgent
+
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        resume_agent = ResumeAgent("resume", TEST_JD, preferences=None)
+    resume_agent.state["resume_info"] = {
+        "basic_info": {"name": "Candidate"},
+    }
+    resume_agent.state["jd_analysis"] = {"job_title": "Engineer"}
+
+    arguments = resume_agent._prepare_arguments(
+        "calculate_match",
+        {"preferences": "I am an expert Python engineer"},
+    )
+
+    assert "preferences" not in arguments
 
 
 def test_missing_recommended_job_description_starts_then_fails_stage_four():
@@ -784,6 +830,9 @@ def main():
         test_llm_client_rejects_an_already_expired_external_run_deadline,
         test_job_search_discovers_only_without_jd_and_prefers_description,
         test_job_search_keeps_legacy_typical_jd_fallback,
+        test_job_search_mode_passes_preferences_to_discovery_and_match,
+        test_pipeline_passes_preferences_and_explicit_gate_evidence_to_match,
+        test_match_arguments_discard_planner_preferences_without_user_source,
         test_missing_recommended_job_description_starts_then_fails_stage_four,
         test_failed_verification_repeats_only_stages_six_and_seven_once,
         test_revision_without_required_fixes_uses_synthesized_correction_issue,

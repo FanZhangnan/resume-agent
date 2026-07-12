@@ -50,7 +50,7 @@ _ALLOWED_PARAMS = {
     "parse_resume_file": {"file_path"},
     "extract_resume_info": {"resume_text"},
     "analyze_jd": {"jd_text"},
-    "calculate_match": {"resume_info", "jd_analysis"},
+    "calculate_match": {"resume_info", "jd_analysis", "preferences"},
     "generate_suggestions": {"resume_info", "jd_analysis", "match_result", "fix_instructions"},
     "verify_output": {"resume_info", "jd_analysis", "match_result", "suggestions"},
     "recommend_jobs": {"resume_info", "preferences"},
@@ -97,6 +97,11 @@ def _verification_issue_count(verification):
         "logic_issues", "match_authenticity_issues",
     )
     return sum(len(verification.get(key) or []) for key in keys)
+
+
+def _revision_limit(value=None):
+    configured = config.MAX_REVISION_ROUNDS if value is None else value
+    return min(1, max(0, int(configured)))
 
 
 class RunDeadlineExceeded(TimeoutError):
@@ -627,6 +632,10 @@ class ResumeAgent:
                 if state[key] is not None:
                     arguments[key] = state[key]
                 arguments.setdefault(key, {})
+            if self.preferences:
+                arguments["preferences"] = self.preferences
+            else:
+                arguments.pop("preferences", None)
             self._merge_clarifications(arguments)
         elif tool_name == "generate_suggestions":
             for key in ("resume_info", "jd_analysis", "match_result"):
@@ -808,11 +817,7 @@ class ResumeAgent:
                 print("   ✅ 修正后复检通过")
             return None
 
-        revision_limit = (
-            config.MAX_REVISION_ROUNDS
-            if max_revision_rounds is None
-            else max(0, int(max_revision_rounds))
-        )
+        revision_limit = _revision_limit(max_revision_rounds)
         if self.revision_rounds >= revision_limit:
             print("   ⚠️ 自我验证仍未通过且已达最大修正轮数，将在报告中如实标注")
             return None
@@ -860,7 +865,7 @@ class ResumeAgent:
         verification = self.state["verification"]
         if verification_is_deliverable(verification):
             return True
-        return self.revision_rounds >= config.MAX_REVISION_ROUNDS
+        return self.revision_rounds >= _revision_limit()
 
     # ==================== 最终报告 ====================
 

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from report_renderer import render_report
 from tools.analysis import calculate_match
+from tools.resume_tools import analyze_jd
 from tools.scoring import normalize_resume_evidence, score_requirements
 
 
@@ -220,6 +221,148 @@ def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
     assert all(row["status"] == "met" for row in match["requirement_scores"])
 
 
+def _empty_match_result():
+    return {
+        "score": 0,
+        "score_reason": "No requirement evidence supplied.",
+        "high_matches": [],
+        "partial_matches": [],
+        "missing_requirements": [],
+        "requirement_evidence": [],
+    }
+
+
+def test_analyze_jd_uses_strict_explicit_gate_contract():
+    jd_result = {
+        "job_title": "Platform Engineer",
+        "company_or_industry": "Technology",
+        "hard_requirements": [],
+        "bonus_points": [],
+        "implicit_requirements": [],
+        "keywords": [],
+        "responsibilities": [],
+        "risk_points": [],
+        "raw_summary": "Brisbane role requiring existing work authorization.",
+        "gates": {
+            "location": {
+                "required": True,
+                "accepted_values": ["Brisbane"],
+            },
+            "work_authorization": {
+                "required": True,
+                "accepted_values": [],
+            },
+        },
+    }
+    with patch("tools.resume_tools.ask_json", return_value=jd_result) as ask:
+        result = analyze_jd("This role is Brisbane-only. Existing work rights required.")
+
+    assert result["success"] is True
+    assert result["jd_analysis"]["gates"] == jd_result["gates"]
+    assert ask.call_args.kwargs["validator"].__name__ == "JDAnalysis"
+    prompt = ask.call_args.args[0]
+    assert "accepted_values" in prompt
+    assert "不得仅因JD提到城市" in prompt
+
+
+def test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate():
+    resume_info = {
+        "basic_info": {
+            "name": "Candidate",
+            "location": "Sydney",
+            "work_authorization": True,
+        },
+        "skills": [],
+    }
+    jd_analysis = {
+        "hard_requirements": [],
+        "bonus_points": [],
+        "responsibilities": [],
+        "implicit_requirements": [],
+        "gates": {
+            "location": {
+                "required": True,
+                "accepted_values": ["Brisbane"],
+            },
+            "work_authorization": {
+                "required": False,
+                "accepted_values": [],
+            },
+        },
+    }
+    with patch("tools.analysis.ask_json", return_value=_empty_match_result()) as ask:
+        result = calculate_match(
+            resume_info,
+            jd_analysis,
+            preferences="Sydney roles only",
+        )
+
+    match = result["match_result"]
+    assert match["eligible"] is False
+    assert match["gate_failures"] == ["location"]
+    prompt = ask.call_args.args[0]
+    assert "Sydney roles only" in prompt
+    assert "basic_info.work_authorization" in prompt
+    assert "user.preferences" in prompt
+
+
+def test_calculate_match_fails_explicit_work_authorization_gate_when_not_met():
+    resume_info = {
+        "basic_info": {
+            "name": "Candidate",
+            "location": "Brisbane",
+            "work_authorization": False,
+        },
+        "skills": [],
+    }
+    jd_analysis = {
+        "hard_requirements": [],
+        "bonus_points": [],
+        "responsibilities": [],
+        "implicit_requirements": [],
+        "gates": {
+            "location": {
+                "required": False,
+                "accepted_values": [],
+            },
+            "work_authorization": {
+                "required": True,
+                "accepted_values": [],
+            },
+        },
+    }
+    with patch("tools.analysis.ask_json", return_value=_empty_match_result()):
+        result = calculate_match(resume_info, jd_analysis)
+
+    match = result["match_result"]
+    assert match["eligible"] is False
+    assert match["gate_failures"] == ["work_authorization"]
+
+
+def test_calculate_match_does_not_infer_gates_from_requirement_keywords():
+    resume_info = {
+        "basic_info": {
+            "location": "Sydney",
+            "work_authorization": False,
+        },
+    }
+    jd_analysis = {
+        "hard_requirements": [
+            "Brisbane-only role",
+            "Existing work authorization required",
+        ],
+        "bonus_points": [],
+        "responsibilities": [],
+        "implicit_requirements": [],
+    }
+    with patch("tools.analysis.ask_json", return_value=_empty_match_result()):
+        result = calculate_match(resume_info, jd_analysis)
+
+    match = result["match_result"]
+    assert match["eligible"] is True
+    assert match["gate_failures"] == []
+
+
 def _report_state():
     return {
         "resume_info": {
@@ -319,6 +462,10 @@ def main():
         test_met_without_real_evidence_is_downgraded_without_invented_id,
         test_calculate_match_uses_local_score_instead_of_llm_score,
         test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries,
+        test_analyze_jd_uses_strict_explicit_gate_contract,
+        test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate,
+        test_calculate_match_fails_explicit_work_authorization_gate_when_not_met,
+        test_calculate_match_does_not_infer_gates_from_requirement_keywords,
         test_report_renderer_is_pure_and_keeps_existing_sections,
         test_report_renderer_marks_partial_and_lists_unresolved_fixes,
         test_report_renderer_treats_missing_verification_as_partial,

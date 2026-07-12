@@ -1,9 +1,13 @@
 import config
+from contracts import JDAnalysis
 from tools.common import ask_json
 from utils import clip_text
 
 _RESUME_SCHEMA = {
-    "basic_info": {"name": "", "phone": "", "email": "", "location": "", "target_role": ""},
+    "basic_info": {
+        "name": "", "phone": "", "email": "", "location": "",
+        "target_role": "", "work_authorization": False,
+    },
     "education": [],
     "work_experience": [],
     "projects": [],
@@ -25,6 +29,10 @@ _JD_SCHEMA = {
     "responsibilities": [],
     "risk_points": [],
     "raw_summary": "",
+    "gates": {
+        "location": {"required": False, "accepted_values": []},
+        "work_authorization": {"required": False, "accepted_values": []},
+    },
 }
 
 
@@ -37,7 +45,8 @@ def extract_resume_info(resume_text):
     system = "你是严谨的简历信息抽取专家。只输出JSON，不要输出解释。不得编造简历中没有的信息；缺失信息用空字符串或空数组表示。"
     prompt = f"""
 请将下面的简历文本结构化为JSON，字段必须包含：
-basic_info: name, phone, email, location, target_role
+basic_info: name, phone, email, location, target_role, work_authorization
+  work_authorization必须为布尔值；只有简历明确声明拥有工作权时才为true，缺失或不确定时为false
 education: 数组，每项包含 school, degree, major, start_date, end_date, details
 work_experience: 数组，每项包含 company, title, start_date, end_date, responsibilities, achievements
 projects: 数组，每项包含 name, role, start_date, end_date, description, achievements, technologies
@@ -73,11 +82,25 @@ keywords: 数组，ATS或HR筛选关键词
 responsibilities: 数组，岗位核心职责
 risk_points: 数组，候选人容易忽略或容易错配的点
 raw_summary: 150字以内总结
+gates: 对象，必须严格包含以下两个子对象：
+  location: {{required: 布尔值, accepted_values: 字符串数组}}
+  work_authorization: {{required: 布尔值, accepted_values: []}}
+只有JD明确表述必须在指定地点工作时，location.required才为true，accepted_values填入JD明示允许的地点。
+不得仅因JD提到城市、公司办公室或岗位所在地就推断为地点硬门槛。
+只有JD明确要求候选人已拥有工作许可时，work_authorization.required才为true；其accepted_values始终为空数组。
+本步只提取岗位门槛，不得输出或推断候选人是否满足门槛。
 
 JD文本：
 {clip_text(jd_text, max_chars=6000)}
 """
-    result = ask_json(prompt, system, _JD_SCHEMA, temperature=0.1, label="分析职位JD要求")
+    result = ask_json(
+        prompt,
+        system,
+        _JD_SCHEMA,
+        temperature=0.1,
+        label="分析职位JD要求",
+        validator=JDAnalysis,
+    )
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试analyze_jd"}
     return {"success": True, "jd_analysis": result}

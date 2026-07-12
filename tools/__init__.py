@@ -61,6 +61,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "resume_info": {"type": "object", "description": "extract_resume_info返回的resume_info对象（可传空对象，系统会自动注入完整数据）"},
                     "jd_analysis": {"type": "object", "description": "analyze_jd返回的jd_analysis对象（可传空对象，系统会自动注入完整数据）"},
+                    "preferences": {"type": "string", "description": "可选。用户明确表达的求职偏好，仅作证据传递，不从自由文本推断门槛"},
                 },
                 "required": ["resume_info", "jd_analysis"],
             },

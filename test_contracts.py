@@ -214,6 +214,100 @@ def test_missing_verification_is_partial_and_never_uses_report_formatter():
     assert "验证结果未满足严格交付契约" in report
 
 
+def test_react_revision_is_hard_capped_at_one_when_config_is_two():
+    from agent import ResumeAgent
+
+    failed_first = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["Fix the first failed patch"],
+    }
+    failed_second = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["Second verification still fails"],
+    }
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        resume_agent = ResumeAgent("resume", "JD")
+    resume_agent.state.update({
+        "resume_info": {"basic_info": {"name": "Candidate"}},
+        "jd_analysis": {"job_title": "Engineer"},
+        "match_result": {"score": 0},
+        "suggestions": {"optimized_resume": "Candidate"},
+        "verification": failed_first,
+    })
+
+    with patch.object(config, "MAX_REVISION_ROUNDS", 2):
+        first_note = resume_agent._handle_verification(failed_first)
+        assert first_note is not None
+        assert resume_agent.revision_rounds == 1
+        assert resume_agent.pending_revision is True
+
+        resume_agent.state["verification"] = failed_second
+        second_note = resume_agent._handle_verification(failed_second)
+
+        assert second_note is None
+        assert resume_agent.revision_rounds == 1
+        assert resume_agent.pending_revision is False
+        assert resume_agent._is_complete() is True
+        report = resume_agent._render_local_report()
+
+    assert len(resume_agent.correction_log) == 1
+    assert "本报告不完整" in report
+    assert "Second verification still fails" in report
+
+
+def test_jd_analysis_gate_contract_is_strict():
+    from contracts import JDAnalysis
+
+    for omitted in (
+        {},
+        {"gates": {}},
+        {
+            "gates": {
+                "location": {"required": False, "accepted_values": []},
+            },
+        },
+        {
+            "gates": {
+                "location": {"required": False, "accepted_values": []},
+                "work_authorization": {"required": False},
+            },
+        },
+    ):
+        _assert_validation_error(
+            lambda value=omitted: JDAnalysis.model_validate(value, strict=True)
+        )
+
+    result = JDAnalysis.model_validate({
+        "gates": {
+            "location": {
+                "required": True,
+                "accepted_values": ["Brisbane"],
+            },
+            "work_authorization": {
+                "required": False,
+                "accepted_values": [],
+            },
+        },
+    }, strict=True)
+    assert result.gates.location.accepted_values == ["Brisbane"]
+    _assert_validation_error(
+        lambda: JDAnalysis.model_validate({
+            "gates": {
+                "location": {"required": "true", "accepted_values": []},
+            },
+        }, strict=True)
+    )
+    _assert_validation_error(
+        lambda: JDAnalysis.model_validate({
+            "gates": {
+                "location": {"required": True, "accepted_values": ("Brisbane",)},
+            },
+        }, strict=True)
+    )
+
+
 def main():
     tests = (
         test_match_result_has_safe_defaults_and_strict_bounded_score,
@@ -224,6 +318,8 @@ def main():
         test_ask_json_without_validator_keeps_legacy_default_contract,
         test_validator_trace_redacts_private_extra_field_name,
         test_missing_verification_is_partial_and_never_uses_report_formatter,
+        test_react_revision_is_hard_capped_at_one_when_config_is_two,
+        test_jd_analysis_gate_contract_is_strict,
     )
     for test in tests:
         test()

@@ -100,7 +100,7 @@ def normalize_jd_requirements(jd_analysis):
     return normalize_requirements(normalized)
 
 
-def normalize_resume_evidence(resume_info):
+def normalize_resume_evidence(resume_info, preferences=None):
     """Build a stable catalog whose IDs always point to real resume records."""
     resume_info = resume_info if isinstance(resume_info, dict) else {}
     catalog = []
@@ -116,7 +116,7 @@ def normalize_resume_evidence(resume_info):
 
     basic = resume_info.get("basic_info")
     if isinstance(basic, dict):
-        for key in ("name", "location", "target_role"):
+        for key in ("name", "location", "target_role", "work_authorization"):
             add(f"basic_info.{key}", basic.get(key))
     for field in ("education", "work_experience", "projects"):
         values = resume_info.get(field)
@@ -129,6 +129,7 @@ def normalize_resume_evidence(resume_info):
             for index, value in enumerate(values, start=1):
                 add(f"{field}[{index}]", value)
     add("raw_summary", resume_info.get("raw_summary"))
+    add("user.preferences", _clean_text(preferences))
     return catalog
 
 
@@ -364,17 +365,37 @@ def evidence_from_match_result(match_result, requirements, evidence_catalog=None
     )
 
 
-def gates_from_jd(jd_analysis):
+def _normalized_exact_value(value):
+    return " ".join(_clean_text(value).casefold().split())
+
+
+def gates_from_jd(jd_analysis, resume_info=None):
+    """Resolve only explicit JD gates against explicit structured resume facts."""
     jd_analysis = jd_analysis if isinstance(jd_analysis, dict) else {}
-    if isinstance(jd_analysis.get("gates"), (dict, list)):
-        return jd_analysis["gates"]
-    gates = {}
+    resume_info = resume_info if isinstance(resume_info, dict) else {}
+    basic_info = resume_info.get("basic_info")
+    basic_info = basic_info if isinstance(basic_info, dict) else {}
+    raw_gates = jd_analysis.get("gates")
+    if not isinstance(raw_gates, dict):
+        return {}
+
+    resolved = {}
     for name in ("location", "work_authorization"):
-        required_key = f"{name}_required"
-        met_key = f"{name}_met"
-        if required_key in jd_analysis or met_key in jd_analysis:
-            gates[name] = {
-                "required": jd_analysis.get(required_key) is True,
-                "met": jd_analysis.get(met_key) is True,
+        gate = raw_gates.get(name)
+        if not isinstance(gate, dict):
+            continue
+        required = gate.get("required") is True
+        if name == "location":
+            accepted = gate.get("accepted_values")
+            accepted = accepted if isinstance(accepted, list) else []
+            accepted_keys = {
+                _normalized_exact_value(value)
+                for value in accepted
+                if _normalized_exact_value(value)
             }
-    return gates
+            candidate = _normalized_exact_value(basic_info.get("location"))
+            met = bool(candidate and candidate in accepted_keys)
+        else:
+            met = basic_info.get("work_authorization") is True
+        resolved[name] = {"required": required, "met": met}
+    return resolved

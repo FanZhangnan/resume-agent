@@ -29,6 +29,29 @@ class RequirementEvidence(_StrictResult):
         return self
 
 
+class JDGateRequirement(_StrictResult):
+    required: bool
+    accepted_values: list[str]
+
+
+class JDGates(_StrictResult):
+    location: JDGateRequirement
+    work_authorization: JDGateRequirement
+
+
+class JDAnalysis(_StrictResult):
+    job_title: str = ""
+    company_or_industry: str = ""
+    hard_requirements: list[str] = Field(default_factory=list)
+    bonus_points: list[str] = Field(default_factory=list)
+    implicit_requirements: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
+    risk_points: list[str] = Field(default_factory=list)
+    raw_summary: str = ""
+    gates: JDGates
+
+
 class MatchResult(_StrictResult):
     score: int = Field(ge=0, le=100)
     score_reason: str = ""
