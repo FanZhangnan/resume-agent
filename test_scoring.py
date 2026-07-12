@@ -4,10 +4,16 @@ import copy
 from decimal import Decimal
 from unittest.mock import patch
 
+from mock_data import MOCK_JD_ANALYSIS, MOCK_MATCH, MOCK_RESUME_INFO
 from report_renderer import render_report
 from tools.analysis import calculate_match
 from tools.resume_tools import analyze_jd
-from tools.scoring import normalize_resume_evidence, score_requirements
+from tools.scoring import (
+    normalize_jd_requirements,
+    normalize_resume_evidence,
+    requirement_ledger_from_match_result,
+    score_requirements,
+)
 
 
 def _four_categories():
@@ -55,8 +61,207 @@ def test_resume_evidence_catalog_ids_are_stable_unique_and_real():
     assert first == second
     ids = [item["evidence_id"] for item in first]
     assert len(ids) == len(set(ids))
-    assert ids == [f"evidence-{index:03d}" for index in range(1, len(ids) + 1)]
+    assert ids == [
+        "evidence-basic-info-name",
+        "evidence-basic-info-location",
+        "evidence-experience-001",
+        "evidence-skill-001",
+        "evidence-skill-002",
+    ]
     assert all(item["content"] not in (None, "", [], {}) for item in first)
+    assert not any("candidate" in evidence_id.lower() for evidence_id in ids)
+
+
+def test_basic_info_changes_do_not_renumber_structured_evidence_paths():
+    structured = {
+        "education": [{"school": "Example University"}],
+        "work_experience": [{"company": "Example Company"}],
+        "projects": [{"name": "Example Project"}],
+        "skills": ["Python"],
+    }
+    baseline = normalize_resume_evidence({
+        "basic_info": {"name": "Candidate"},
+        **structured,
+    })
+    expanded = normalize_resume_evidence({
+        "basic_info": {
+            "name": "Candidate",
+            "location": "Sydney",
+            "target_role": "Engineer",
+            "work_authorization": False,
+        },
+        **structured,
+    })
+
+    stable_sources = {
+        "education[1]",
+        "work_experience[1]",
+        "projects[1]",
+        "skills[1]",
+    }
+    baseline_ids = {
+        row["source"]: row["evidence_id"]
+        for row in baseline if row["source"] in stable_sources
+    }
+    expanded_ids = {
+        row["source"]: row["evidence_id"]
+        for row in expanded if row["source"] in stable_sources
+    }
+    assert baseline_ids == expanded_ids == {
+        "education[1]": "evidence-education-001",
+        "work_experience[1]": "evidence-experience-001",
+        "projects[1]": "evidence-project-001",
+        "skills[1]": "evidence-skill-001",
+    }
+
+
+def test_mock_hard_requirements_reference_semantically_correct_paths():
+    catalog = normalize_resume_evidence(MOCK_RESUME_INFO)
+    by_id = {row["evidence_id"]: row for row in catalog}
+    ledger = requirement_ledger_from_match_result(
+        MOCK_MATCH,
+        normalize_jd_requirements(MOCK_JD_ANALYSIS),
+        evidence_catalog=catalog,
+    )
+    by_requirement = {row["requirement_id"]: row for row in ledger}
+
+    degree_ids = by_requirement["hard-001"]["evidence_ids"]
+    experience_ids = by_requirement["hard-002"]["evidence_ids"]
+    assert degree_ids == ["evidence-education-001"]
+    assert experience_ids == ["evidence-experience-001"]
+    assert [by_id[evidence_id]["source"] for evidence_id in degree_ids] == [
+        "education[1]"
+    ]
+    assert [by_id[evidence_id]["evidence_type"] for evidence_id in degree_ids] == [
+        "education"
+    ]
+    assert [by_id[evidence_id]["source"] for evidence_id in experience_ids] == [
+        "work_experience[1]"
+    ]
+    assert [
+        by_id[evidence_id]["evidence_type"] for evidence_id in experience_ids
+    ] == ["experience"]
+
+
+def test_requirement_ledger_rejects_inherently_non_scoring_existing_id():
+    requirements = [{
+        "requirement_id": "hard-001",
+        "category": "hard",
+        "requirement": "Bachelor degree",
+    }]
+    catalog = [
+        {
+            "evidence_id": "valid-basic-id",
+            "source": "basic_info.work_authorization",
+            "evidence_type": "basic_info",
+            "content": False,
+        },
+        {
+            "evidence_id": "valid-education-id",
+            "source": "education[1]",
+            "evidence_type": "education",
+            "content": {"degree": "Bachelor"},
+        },
+        {
+            "evidence_id": "forged-education-id",
+            "source": "basic_info.work_authorization",
+            "evidence_type": "education",
+            "content": False,
+        },
+    ]
+    incompatible = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [{
+                "requirement_id": "hard-001",
+                "status": "met",
+                "evidence_ids": ["valid-basic-id", "forged-education-id"],
+            }],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+    compatible = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [{
+                "requirement_id": "hard-001",
+                "status": "met",
+                "evidence_ids": ["valid-education-id"],
+            }],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert incompatible == [{
+        "requirement_id": "hard-001",
+        "status": "missing",
+        "evidence_ids": [],
+    }]
+    assert compatible == [{
+        "requirement_id": "hard-001",
+        "status": "met",
+        "evidence_ids": ["valid-education-id"],
+    }]
+
+
+def test_weight_category_does_not_reject_factual_evidence_type():
+    requirements = [
+        {
+            "requirement_id": "skill-001",
+            "category": "skill",
+            "requirement": "MBA preferred",
+        },
+        {
+            "requirement_id": "business-001",
+            "category": "business",
+            "requirement": "Cloud platform delivery",
+        },
+    ]
+    catalog = [
+        {
+            "evidence_id": "evidence-education-001",
+            "source": "education[1]",
+            "evidence_type": "education",
+            "content": {"degree": "MBA"},
+        },
+        {
+            "evidence_id": "evidence-certificate-001",
+            "source": "certificates[1]",
+            "evidence_type": "certificate",
+            "content": "Cloud certification",
+        },
+    ]
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "skill-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-001"],
+                },
+                {
+                    "requirement_id": "business-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-certificate-001"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert ledger == [
+        {
+            "requirement_id": "skill-001",
+            "status": "met",
+            "evidence_ids": ["evidence-education-001"],
+        },
+        {
+            "requirement_id": "business-001",
+            "status": "met",
+            "evidence_ids": ["evidence-certificate-001"],
+        },
+    ]
 
 
 def test_under_evidenced_awards_half_points():
@@ -165,14 +370,19 @@ def test_calculate_match_uses_local_score_instead_of_llm_score():
         "partial_matches": [],
         "missing_requirements": [],
         "requirement_evidence": [
-            {"requirement_id": "hard-001", "status": "met", "evidence_ids": ["evidence-001"]},
-            {"requirement_id": "skill-001", "status": "met", "evidence_ids": ["evidence-001"]},
-            {"requirement_id": "business-001", "status": "met", "evidence_ids": ["evidence-001"]},
-            {"requirement_id": "soft-001", "status": "met", "evidence_ids": ["evidence-001"]},
+            {"requirement_id": "hard-001", "status": "met", "evidence_ids": ["evidence-education-001"]},
+            {"requirement_id": "skill-001", "status": "met", "evidence_ids": ["evidence-skill-001"]},
+            {"requirement_id": "business-001", "status": "met", "evidence_ids": ["evidence-experience-001"]},
+            {"requirement_id": "soft-001", "status": "met", "evidence_ids": ["evidence-project-001"]},
         ],
     }
     with patch("tools.analysis.ask_json", return_value=llm_result) as ask:
-        result = calculate_match({"skills": ["BSc Python Growth Team"]}, jd_analysis)
+        result = calculate_match({
+            "education": [{"degree": "BSc"}],
+            "work_experience": [{"achievement": "Growth"}],
+            "projects": [{"description": "Communication"}],
+            "skills": ["Python"],
+        }, jd_analysis)
 
     assert result["success"] is True
     match = result["match_result"]
@@ -207,7 +417,7 @@ def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
             {
                 "requirement_id": f"hard-{index:03d}",
                 "status": "met",
-                "evidence_ids": ["evidence-001"],
+                "evidence_ids": ["evidence-skill-001"],
             }
             for index in range(1, 8)
         ],
@@ -454,6 +664,10 @@ def main():
     tests = (
         test_exact_category_weights_and_evidence_ids,
         test_resume_evidence_catalog_ids_are_stable_unique_and_real,
+        test_basic_info_changes_do_not_renumber_structured_evidence_paths,
+        test_mock_hard_requirements_reference_semantically_correct_paths,
+        test_requirement_ledger_rejects_inherently_non_scoring_existing_id,
+        test_weight_category_does_not_reject_factual_evidence_type,
         test_under_evidenced_awards_half_points,
         test_row_points_add_up_to_exact_category_weight,
         test_empty_categories_are_zero_and_generated_ids_are_stable,

@@ -18,6 +18,13 @@ STATUS_FACTORS = {
     "missing": 0.0,
 }
 
+# Weight buckets are not evidence domains: an education record can support a
+# bonus requirement, while basic metadata and generated summaries support none.
+SCORABLE_EVIDENCE_TYPES = frozenset({
+    "education", "experience", "project", "skill", "certificate",
+    "achievement",
+})
+
 
 def _clean_text(value):
     return str(value or "").strip()
@@ -105,32 +112,91 @@ def normalize_resume_evidence(resume_info, preferences=None):
     resume_info = resume_info if isinstance(resume_info, dict) else {}
     catalog = []
 
-    def add(source, content):
+    def add(evidence_id, source, evidence_type, content):
         if content in (None, "", [], {}):
             return
         catalog.append({
-            "evidence_id": f"evidence-{len(catalog) + 1:03d}",
+            "evidence_id": evidence_id,
             "source": source,
+            "evidence_type": evidence_type,
             "content": content,
         })
 
     basic = resume_info.get("basic_info")
     if isinstance(basic, dict):
         for key in ("name", "location", "target_role", "work_authorization"):
-            add(f"basic_info.{key}", basic.get(key))
-    for field in ("education", "work_experience", "projects"):
+            add(
+                f"evidence-basic-info-{key.replace('_', '-')}",
+                f"basic_info.{key}",
+                "basic_info",
+                basic.get(key),
+            )
+    record_types = {
+        "education": "education",
+        "work_experience": "experience",
+        "projects": "project",
+    }
+    for field, evidence_type in record_types.items():
         values = resume_info.get(field)
         if isinstance(values, list):
             for index, value in enumerate(values, start=1):
-                add(f"{field}[{index}]", value)
-    for field in ("skills", "certificates", "achievements"):
+                add(
+                    f"evidence-{evidence_type}-{index:03d}",
+                    f"{field}[{index}]",
+                    evidence_type,
+                    value,
+                )
+    item_types = {
+        "skills": "skill",
+        "certificates": "certificate",
+        "achievements": "achievement",
+    }
+    for field, evidence_type in item_types.items():
         values = resume_info.get(field)
         if isinstance(values, list):
             for index, value in enumerate(values, start=1):
-                add(f"{field}[{index}]", value)
-    add("raw_summary", resume_info.get("raw_summary"))
-    add("user.preferences", _clean_text(preferences))
+                add(
+                    f"evidence-{evidence_type}-{index:03d}",
+                    f"{field}[{index}]",
+                    evidence_type,
+                    value,
+                )
+    add(
+        "evidence-raw-summary",
+        "raw_summary",
+        "raw_summary",
+        resume_info.get("raw_summary"),
+    )
+    add(
+        "evidence-user-preferences",
+        "user.preferences",
+        "preference",
+        _clean_text(preferences),
+    )
     return catalog
+
+
+def _evidence_type_from_catalog_item(item):
+    source = _clean_text(item.get("source"))
+    prefixes = (
+        ("basic_info.", "basic_info"),
+        ("education[", "education"),
+        ("work_experience[", "experience"),
+        ("projects[", "project"),
+        ("skills[", "skill"),
+        ("certificates[", "certificate"),
+        ("achievements[", "achievement"),
+    )
+    evidence_type = next(
+        (name for prefix, name in prefixes if source.startswith(prefix)),
+        "raw_summary" if source == "raw_summary" else (
+            "preference" if source == "user.preferences" else ""
+        ),
+    )
+    declared = _clean_text(item.get("evidence_type")).lower()
+    if declared and declared != evidence_type:
+        return ""
+    return evidence_type
 
 
 def _normalize_evidence(evidence):
@@ -308,13 +374,15 @@ def requirement_ledger_from_match_result(match_result, requirements,
     match_result = match_result if isinstance(match_result, dict) else {}
     requirements = normalize_requirements(requirements)
     known_ids = {item["requirement_id"] for item in requirements}
-    actual_evidence_ids = None
+    evidence_by_id = None
     if isinstance(evidence_catalog, list):
-        actual_evidence_ids = {
-            _clean_text(item.get("evidence_id"))
-            for item in evidence_catalog if isinstance(item, dict)
-        }
-
+        evidence_by_id = {}
+        for item in evidence_catalog:
+            if not isinstance(item, dict):
+                continue
+            evidence_id = _clean_text(item.get("evidence_id"))
+            if evidence_id and evidence_id not in evidence_by_id:
+                evidence_by_id[evidence_id] = item
     by_requirement = {}
     raw_rows = match_result.get("requirement_evidence") or []
     if not isinstance(raw_rows, list):
@@ -335,8 +403,13 @@ def requirement_ledger_from_match_result(match_result, requirements,
             evidence_id = _clean_text(evidence_id)
             if not evidence_id or evidence_id in evidence_ids:
                 continue
-            if actual_evidence_ids is not None and evidence_id not in actual_evidence_ids:
-                continue
+            if evidence_by_id is not None:
+                catalog_item = evidence_by_id.get(evidence_id)
+                if catalog_item is None:
+                    continue
+                evidence_type = _evidence_type_from_catalog_item(catalog_item)
+                if evidence_type not in SCORABLE_EVIDENCE_TYPES:
+                    continue
             evidence_ids.append(evidence_id)
         if status != "missing" and not evidence_ids:
             status = "missing"
