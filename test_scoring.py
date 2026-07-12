@@ -768,6 +768,130 @@ def test_met_multicore_requirement_needs_all_specific_terms():
     assert [row["status"] for row in right] == ["met"] * 5
 
 
+def test_non_conjunctive_multicore_requirement_needs_one_complete_record():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "Machine learning",
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "Product management",
+        },
+    ]
+    split_catalog = normalize_resume_evidence({
+        "skills": [
+            "Machine translation",
+            "Learning management system",
+            "Product support",
+            "Management consulting",
+        ],
+    })
+    split_ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "hard-001",
+                    "status": "met",
+                    "evidence_ids": [
+                        "evidence-skill-001", "evidence-skill-002",
+                    ],
+                },
+                {
+                    "requirement_id": "hard-002",
+                    "status": "met",
+                    "evidence_ids": [
+                        "evidence-skill-003", "evidence-skill-004",
+                    ],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=split_catalog,
+    )
+    complete_ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [{
+                "requirement_id": "hard-001",
+                "status": "met",
+                "evidence_ids": ["evidence-project-001"],
+            }],
+        },
+        requirements[:1],
+        evidence_catalog=normalize_resume_evidence({
+            "projects": [{"name": "Machine learning project"}],
+        }),
+    )
+    partial_ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [{
+                "requirement_id": "hard-001",
+                "status": "under_evidenced",
+                "evidence_ids": ["evidence-skill-001"],
+            }],
+        },
+        requirements[:1],
+        evidence_catalog=split_catalog,
+    )
+
+    assert [row["status"] for row in split_ledger] == ["missing", "missing"]
+    assert score_requirements(requirements, split_ledger, {})["score"] == 0
+    assert complete_ledger == [{
+        "requirement_id": "hard-001",
+        "status": "met",
+        "evidence_ids": ["evidence-project-001"],
+    }]
+    assert partial_ledger == [{
+        "requirement_id": "hard-001",
+        "status": "under_evidenced",
+        "evidence_ids": ["evidence-skill-001"],
+    }]
+
+
+def test_explicit_and_and_or_requirements_keep_connector_semantics():
+    requirements = [
+        {
+            "requirement_id": "skill-001",
+            "category": "skill",
+            "requirement": "Python and SQL",
+        },
+        {
+            "requirement_id": "skill-002",
+            "category": "skill",
+            "requirement": "Python or Java",
+        },
+    ]
+    catalog = normalize_resume_evidence({"skills": ["Python", "SQL"]})
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "skill-001",
+                    "status": "met",
+                    "evidence_ids": [
+                        "evidence-skill-001", "evidence-skill-002",
+                    ],
+                },
+                {
+                    "requirement_id": "skill-002",
+                    "status": "met",
+                    "evidence_ids": ["evidence-skill-001"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met", "met"]
+    assert ledger[0]["evidence_ids"] == [
+        "evidence-skill-001", "evidence-skill-002",
+    ]
+    assert ledger[1]["evidence_ids"] == ["evidence-skill-001"]
+
+
 def test_or_requirement_accepts_one_alternative_but_not_an_unlisted_skill():
     requirements = [
         {
@@ -1671,6 +1795,8 @@ def main():
         test_common_english_word_forms_share_the_same_core_term,
         test_generic_only_requirement_needs_the_complete_term_set,
         test_met_multicore_requirement_needs_all_specific_terms,
+        test_non_conjunctive_multicore_requirement_needs_one_complete_record,
+        test_explicit_and_and_or_requirements_keep_connector_semantics,
         test_or_requirement_accepts_one_alternative_but_not_an_unlisted_skill,
         test_degree_matching_uses_degree_field_aliases_and_hierarchy_only,
         test_multiterm_degree_subject_requires_the_specific_major_terms,

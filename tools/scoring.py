@@ -1016,10 +1016,13 @@ def requirement_ledger_from_match_result(match_result, requirements,
                 evidence_ids.append(evidence_id)
         if evidence_by_id is not None:
             requirement_text = requirements_by_id[requirement_id]["requirement"]
+            allows_cross_record_coverage = _requires_all_core_terms(
+                requirement_text
+            )
             requires_complete_coverage = (
                 not _is_degree_requirement(requirement_text)
                 and (
-                    _requires_all_core_terms(requirement_text)
+                    allows_cross_record_coverage
                     or (
                         status == "met"
                         and _requires_complete_met_coverage(requirement_text)
@@ -1037,6 +1040,7 @@ def requirement_ledger_from_match_result(match_result, requirements,
                 combined_core = set()
                 combined_terms = set()
                 relevant_ids = []
+                complete_ids = []
                 for evidence_id, evidence_type, content in evidence_candidates:
                     item_core = _evidence_core_terms(evidence_type, content)
                     item_terms = _all_match_terms(
@@ -1049,11 +1053,22 @@ def requirement_ledger_from_match_result(match_result, requirements,
                         or requirement_context & item_terms
                     ):
                         relevant_ids.append(evidence_id)
+                    if (
+                        requirement_core
+                        and requirement_core <= item_core
+                        and (
+                            not requirement_context
+                            or bool(requirement_context & item_terms)
+                        )
+                    ):
+                        complete_ids.append(evidence_id)
                 context_matches = (
                     not requirement_context
                     or bool(requirement_context & combined_terms)
                 )
-                if (
+                if not allows_cross_record_coverage:
+                    evidence_ids = complete_ids
+                elif (
                     requirement_core
                     and requirement_core <= combined_core
                     and context_matches
