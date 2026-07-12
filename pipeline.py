@@ -11,6 +11,7 @@ from concurrent.futures import (
 )
 
 import config
+from contracts import delivery_is_complete
 from runtime_context import current_settings, use_run_settings
 from tools import execute_tool
 from tools.common import use_run_deadline
@@ -106,6 +107,19 @@ class DeterministicPipeline:
         except Exception as error:
             self._fail_stage(8, span, started, error)
             raise
+
+    def terminal_status(self):
+        """Return the durable pipeline outcome using the shared delivery gate."""
+        if self.agent.interrupted_error:
+            return "partial"
+        return (
+            "completed"
+            if delivery_is_complete(
+                self.agent.state.get("verification"),
+                self.agent.state.get("suggestions"),
+            )
+            else "partial"
+        )
 
     def _parse_resume(self):
         span, started = self._start_stage(1)

@@ -1048,6 +1048,9 @@ def test_agent_lifecycle_report_and_revision_events_are_summaries():
         }
         resume_agent._handle_verification(failed_verification)
         resume_agent._handle_verification(passed_verification)
+        resume_agent.state["suggestions"] = {
+            "optimized_resume": "Candidate\nVerified experience",
+        }
         resume_agent.state["verification"] = passed_verification
 
         with patch.object(config, "ORCHESTRATOR", "react"):

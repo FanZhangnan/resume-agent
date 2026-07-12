@@ -190,6 +190,19 @@ class JDAnalysis(_StrictResult):
     raw_summary: str = ""
     gates: JDGates
 
+    @model_validator(mode="after")
+    def validate_semantic_content(self):
+        if not _has_semantic_text(
+            self.job_title,
+            self.responsibilities,
+            self.hard_requirements,
+            self.bonus_points,
+            self.keywords,
+            self.raw_summary,
+        ):
+            raise ValueError("JD analysis requires semantic job content")
+        return self
+
 
 class MatchResult(_StrictResult):
     score: int = Field(ge=0, le=100)
@@ -217,6 +230,66 @@ class MatchResult(_StrictResult):
         return self
 
 
+def optimized_resume_struct_is_usable(value):
+    """Accept only a renderable structure with at least one factual record."""
+    if not isinstance(value, dict) or not isinstance(value.get("basic_info"), dict):
+        return False
+    has_record = False
+    for field in ("education", "experience", "projects"):
+        records = value.get(field, [])
+        if not isinstance(records, list):
+            return False
+        for record in records:
+            if not isinstance(record, dict) or not _has_nested_semantic_content(record):
+                return False
+            has_record = True
+    return has_record
+
+
+def _has_nested_semantic_content(value):
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_has_nested_semantic_content(item) for item in value)
+    if isinstance(value, dict):
+        return any(_has_nested_semantic_content(item) for item in value.values())
+    return False
+
+
+class SuggestionResult(_StrictResult):
+    overall_strategy: str = ""
+    rewrite_suggestions: list[Any] = Field(default_factory=list)
+    star_rewrites: list[Any] = Field(default_factory=list)
+    keyword_injection: list[Any] = Field(default_factory=list)
+    honesty_boundaries: list[Any] = Field(default_factory=list)
+    optimized_resume: str = ""
+    optimized_resume_struct: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_optimized_resume(self):
+        if not (
+            self.optimized_resume.strip()
+            or optimized_resume_struct_is_usable(self.optimized_resume_struct)
+        ):
+            raise ValueError(
+                "suggestions require optimized_resume text or a usable structure"
+            )
+        return self
+
+
+def suggestions_are_usable(value):
+    """Return True only for a strict suggestion payload with deliverable content."""
+    if isinstance(value, SuggestionResult):
+        value = value.model_dump(mode="python")
+    if not isinstance(value, dict):
+        return False
+    try:
+        SuggestionResult.model_validate(value, strict=True)
+    except (ValidationError, TypeError, ValueError):
+        return False
+    return True
+
+
 class VerificationResult(_StrictResult):
     passed: bool = False
     overall_assessment: str = ""
@@ -242,4 +315,12 @@ def verification_is_deliverable(value):
         verification.passed is True
         and verification.safe_to_deliver is True
         and verification.required_fixes == []
+    )
+
+
+def delivery_is_complete(verification, suggestions):
+    """Require both strict verification gates and a usable optimized resume."""
+    return (
+        verification_is_deliverable(verification)
+        and suggestions_are_usable(suggestions)
     )

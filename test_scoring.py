@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from mock_data import MOCK_JD_ANALYSIS, MOCK_MATCH, MOCK_RESUME_INFO
 from report_renderer import render_report
-from tools.analysis import calculate_match
+from tools.analysis import calculate_match, generate_suggestions
 from tools.resume_tools import analyze_jd, extract_resume_info
 from tools.scoring import (
     normalize_jd_requirements,
@@ -1463,6 +1463,17 @@ def test_met_without_real_evidence_is_downgraded_without_invented_id():
     }]
 
 
+def test_normalize_jd_requirements_keeps_bonus_points_and_keywords():
+    requirements = normalize_jd_requirements({
+        "bonus_points": ["MBA"],
+        "keywords": ["Python", "SQL", "MBA"],
+    })
+
+    assert [row["requirement"] for row in requirements] == [
+        "MBA", "Python", "SQL",
+    ]
+
+
 def test_calculate_match_uses_local_score_instead_of_llm_score():
     jd_analysis = {
         "hard_requirements": ["Degree"],
@@ -1544,6 +1555,60 @@ def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
     assert match["score"] == 40
     assert len(match["requirement_scores"]) == 7
     assert all(row["status"] == "met" for row in match["requirement_scores"])
+
+
+def test_calculate_match_rebuilds_visible_summaries_from_local_ledger():
+    llm_result = {
+        "score": 99,
+        "high_matches": [{
+            "requirement_id": "hard-001",
+            "requirement": "Python",
+            "evidence": "SQL",
+            "reason": "UNRELATED SQL PROVES PYTHON",
+        }],
+        "partial_matches": [],
+        "missing_requirements": [],
+        "requirement_evidence": [{
+            "requirement_id": "hard-001",
+            "status": "met",
+            "evidence_ids": ["evidence-skill-001"],
+        }],
+    }
+    with patch("tools.analysis.ask_json", return_value=llm_result):
+        result = calculate_match(
+            {"skills": ["SQL"]},
+            {"hard_requirements": ["Python"]},
+        )
+
+    match = result["match_result"]
+    assert match["score"] == 0
+    assert match["high_matches"] == []
+    assert match["partial_matches"] == []
+    assert match["missing_requirements"] == [{
+        "requirement_id": "hard-001",
+        "requirement": "Python",
+    }]
+
+    state = _report_state()
+    state["match_result"] = match
+    report = render_report(state)
+    assert "**高度匹配**\uff1a\n（无）" in report
+    assert "UNRELATED SQL PROVES PYTHON" not in report
+    assert "要求：Python" in report
+
+
+def test_generate_suggestions_uses_strict_suggestion_validator():
+    valid = {
+        "optimized_resume_struct": {
+            "basic_info": {"name": "Candidate"},
+            "experience": [{"company": "Example", "title": "Engineer"}],
+        },
+    }
+    with patch("tools.analysis.ask_json", return_value=valid) as ask:
+        result = generate_suggestions({}, {}, {})
+
+    assert result["success"] is True
+    assert ask.call_args.kwargs["validator"].__name__ == "SuggestionResult"
 
 
 def _empty_match_result():
@@ -1784,6 +1849,7 @@ def main():
         test_requirement_ledger_rejects_inherently_non_scoring_existing_id,
         test_weight_category_does_not_reject_factual_evidence_type,
         test_cpp_and_csharp_remain_distinct_and_one_match_scores_half_skill_weight,
+        test_normalize_jd_requirements_keeps_bonus_points_and_keywords,
         test_duplicate_requirement_rows_are_downgraded_in_scoring_defense,
         test_requirement_evidence_must_be_semantically_relevant_across_types,
         test_generic_overlap_cannot_replace_the_requirement_core_term,
@@ -1815,6 +1881,8 @@ def main():
         test_met_without_real_evidence_is_downgraded_without_invented_id,
         test_calculate_match_uses_local_score_instead_of_llm_score,
         test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries,
+        test_calculate_match_rebuilds_visible_summaries_from_local_ledger,
+        test_generate_suggestions_uses_strict_suggestion_validator,
         test_analyze_jd_uses_strict_explicit_gate_contract,
         test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate,
         test_calculate_match_fails_explicit_work_authorization_gate_when_not_met,

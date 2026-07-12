@@ -8,7 +8,13 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 import config
-from contracts import MatchResult, VerificationResult, verification_is_deliverable
+from contracts import (
+    MatchResult,
+    SuggestionResult,
+    VerificationResult,
+    suggestions_are_usable,
+    verification_is_deliverable,
+)
 from tools import common
 
 
@@ -124,6 +130,61 @@ def test_deliverability_requires_all_three_gates_and_a_valid_model():
     assert verification_is_deliverable({**valid, "passed": "true"}) is False
     assert verification_is_deliverable({**valid, "unknown": "forbidden"}) is False
     assert verification_is_deliverable(None) is False
+
+
+def test_suggestion_result_requires_usable_text_or_struct():
+    for invalid in (
+        {},
+        {"optimized_resume": "   ", "optimized_resume_struct": {}},
+        {
+            "optimized_resume": "",
+            "optimized_resume_struct": {"basic_info": {"name": "Candidate"}},
+        },
+        {
+            "optimized_resume": "",
+            "optimized_resume_struct": {
+                "basic_info": {"name": "Candidate"},
+                "experience": [False],
+            },
+        },
+    ):
+        _assert_validation_error(
+            lambda value=invalid: SuggestionResult.model_validate(
+                value, strict=True
+            )
+        )
+        assert suggestions_are_usable(invalid) is False
+
+    text_result = SuggestionResult.model_validate(
+        {"optimized_resume": "Candidate\nPython Engineer"}, strict=True
+    )
+    assert suggestions_are_usable(text_result) is True
+
+    struct_result = SuggestionResult.model_validate({
+        "optimized_resume_struct": {
+            "basic_info": {"name": "Candidate"},
+            "experience": [{"company": "Example", "title": "Engineer"}],
+        },
+    }, strict=True)
+    assert suggestions_are_usable(struct_result) is True
+
+
+def test_suggestion_result_semantic_repair_reuses_one_deadline():
+    fake = _SemanticClient([
+        json.dumps({"optimized_resume": "", "optimized_resume_struct": {}}),
+        json.dumps({"optimized_resume": "Candidate\nPython Engineer"}),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"optimized_resume": "", "optimized_resume_struct": {}},
+            validator=SuggestionResult,
+        )
+
+    assert result["optimized_resume"] == "Candidate\nPython Engineer"
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
 
 
 class _SemanticClient:
@@ -254,6 +315,31 @@ def test_missing_verification_is_partial_and_never_uses_report_formatter():
     assert "验证结果未满足严格交付契约" in report
 
 
+def test_unusable_suggestions_stay_partial_even_after_verification_passes():
+    from agent import ResumeAgent
+
+    with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
+        resume_agent = ResumeAgent("resume", "JD")
+    resume_agent.state.update({
+        "suggestions": {
+            "optimized_resume": "",
+            "optimized_resume_struct": {},
+        },
+        "verification": {
+            "passed": True,
+            "safe_to_deliver": True,
+            "required_fixes": [],
+        },
+    })
+
+    assert resume_agent._report_terminal_status() == "partial"
+    report = resume_agent._render_local_report()
+    assert "本报告不完整" in report
+    assert "优化版简历未生成或结构无效" in report
+    assert "验证结果**：✅ 通过" in report
+    assert "交付内容：⚠️ 优化版简历未生成或结构无效" in report
+
+
 def test_react_revision_is_hard_capped_at_one_when_config_is_two():
     from agent import ResumeAgent
 
@@ -320,6 +406,7 @@ def test_jd_analysis_gate_contract_is_strict():
         )
 
     result = JDAnalysis.model_validate({
+        "job_title": "Platform Engineer",
         "gates": {
             "location": {
                 "required": True,
@@ -334,18 +421,59 @@ def test_jd_analysis_gate_contract_is_strict():
     assert result.gates.location.accepted_values == ["Brisbane"]
     _assert_validation_error(
         lambda: JDAnalysis.model_validate({
+            "job_title": "Platform Engineer",
             "gates": {
                 "location": {"required": "true", "accepted_values": []},
+                "work_authorization": {
+                    "required": False,
+                    "accepted_values": [],
+                },
             },
         }, strict=True)
     )
     _assert_validation_error(
         lambda: JDAnalysis.model_validate({
+            "job_title": "Platform Engineer",
             "gates": {
-                "location": {"required": True, "accepted_values": ("Brisbane",)},
+                "location": {
+                    "required": True,
+                    "accepted_values": ("Brisbane",),
+                },
+                "work_authorization": {
+                    "required": False,
+                    "accepted_values": [],
+                },
             },
         }, strict=True)
     )
+
+
+def test_jd_analysis_rejects_gate_only_payload_and_repairs_once():
+    from contracts import JDAnalysis
+
+    gates = {
+        "location": {"required": False, "accepted_values": []},
+        "work_authorization": {"required": False, "accepted_values": []},
+    }
+    _assert_validation_error(
+        lambda: JDAnalysis.model_validate({"gates": gates}, strict=True)
+    )
+
+    fake = _SemanticClient([
+        json.dumps({"gates": gates}),
+        json.dumps({"job_title": "Platform Engineer", "gates": gates}),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"gates": gates},
+            validator=JDAnalysis,
+        )
+
+    assert result["job_title"] == "Platform Engineer"
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
 
 
 def test_resume_info_contract_rejects_malformed_nested_evidence_records():
@@ -447,13 +575,17 @@ def main():
         test_match_result_rejects_duplicate_requirement_ids_and_repairs_once,
         test_verification_result_is_strict_and_defaults_to_not_deliverable,
         test_deliverability_requires_all_three_gates_and_a_valid_model,
+        test_suggestion_result_requires_usable_text_or_struct,
+        test_suggestion_result_semantic_repair_reuses_one_deadline,
         test_ask_json_repairs_schema_failure_with_shared_deadlines_and_safe_trace,
         test_ask_json_returns_none_after_second_schema_failure,
         test_ask_json_without_validator_keeps_legacy_default_contract,
         test_validator_trace_redacts_private_extra_field_name,
         test_missing_verification_is_partial_and_never_uses_report_formatter,
+        test_unusable_suggestions_stay_partial_even_after_verification_passes,
         test_react_revision_is_hard_capped_at_one_when_config_is_two,
         test_jd_analysis_gate_contract_is_strict,
+        test_jd_analysis_rejects_gate_only_payload_and_repairs_once,
         test_resume_info_contract_rejects_malformed_nested_evidence_records,
         test_resume_info_semantic_repair_reuses_one_deadline,
         test_resume_info_rejects_fully_empty_payload_and_repairs_once,

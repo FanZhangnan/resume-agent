@@ -649,8 +649,7 @@ def normalize_jd_requirements(jd_analysis):
         for field in fields:
             candidate = jd_analysis.get(field)
             if isinstance(candidate, list) and candidate:
-                values = candidate
-                break
+                values.extend(candidate)
         seen = set()
         for value in values:
             if isinstance(value, dict):

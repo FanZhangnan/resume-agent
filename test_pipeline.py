@@ -53,7 +53,8 @@ class RecordingExecutor:
                  concurrent_barrier=None, revision_without_fixes=False,
                  raise_tool=None, raise_error=None,
                  expire_agent_deadline=False, potential_issues=None,
-                 ask_result=None, resume_basic_info=None):
+                 ask_result=None, resume_basic_info=None,
+                 unusable_suggestions=False):
         self.revision = revision
         self.revision_without_fixes = revision_without_fixes
         self.candidates = candidates or [{
@@ -71,6 +72,7 @@ class RecordingExecutor:
         self.potential_issues = list(potential_issues or [])
         self.ask_result = ask_result
         self.resume_basic_info = resume_basic_info or {"name": "Candidate"}
+        self.unusable_suggestions = unusable_suggestions
         self.agent = None
         self.concurrent_barrier = concurrent_barrier
         self.calls = []
@@ -146,8 +148,15 @@ class RecordingExecutor:
             self.suggestion_calls += 1
             return {
                 "success": True,
-                "suggestions": _valid_suggestions(
-                    "revised" if self.suggestion_calls > 1 else "first"
+                "suggestions": (
+                    {
+                        "optimized_resume": "",
+                        "optimized_resume_struct": {},
+                    }
+                    if self.unusable_suggestions
+                    else _valid_suggestions(
+                        "revised" if self.suggestion_calls > 1 else "first"
+                    )
                 ),
             }
         if tool_name == "verify_output":
@@ -274,6 +283,20 @@ def test_supplied_jd_runs_eight_local_stages_without_planner_calls():
     assert terminal["data"]["steps"] == 8
     assert resume_agent.step_count == 8
     assert "【优化版简历】" in report
+
+
+def test_pipeline_never_completes_with_unusable_suggestions():
+    resume_agent, report, events = _run_agent(
+        RecordingExecutor(unusable_suggestions=True)
+    )
+
+    terminal = [
+        event for event in events if event["event"] == "run.completed"
+    ][-1]
+    assert terminal["data"]["status"] == "partial"
+    assert resume_agent._report_terminal_status() == "partial"
+    assert "本报告不完整" in report
+    assert "优化版简历未生成或结构无效" in report
 
 
 def test_supplied_jd_extract_and_analysis_overlap_on_distinct_threads():
@@ -823,6 +846,7 @@ def main():
     tests = [
         test_orchestrator_policy_defaults_to_pipeline_and_is_exact,
         test_supplied_jd_runs_eight_local_stages_without_planner_calls,
+        test_pipeline_never_completes_with_unusable_suggestions,
         test_supplied_jd_extract_and_analysis_overlap_on_distinct_threads,
         test_inverse_worker_completion_still_routes_parallel_observations_to_steps,
         test_parallel_watchdog_does_not_wait_for_blocked_worker_before_partial_report,

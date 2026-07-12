@@ -17,7 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime
 
 import config
-from contracts import verification_is_deliverable
+from contracts import (
+    delivery_is_complete,
+    suggestions_are_usable,
+    verification_is_deliverable,
+)
 from llm_client import LLMClient
 from pipeline import DeterministicPipeline, PipelineStageError
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
@@ -389,7 +393,11 @@ class ResumeAgent:
                 data={
                     "status": (
                         "completed"
-                        if self._report_terminal_status() == "completed"
+                        if (
+                            pipeline.terminal_status()
+                            if pipeline is not None
+                            else self._report_terminal_status()
+                        ) == "completed"
                         else "partial"
                     ),
                     "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
@@ -876,24 +884,33 @@ class ResumeAgent:
             sections.insert(1, "【岗位推荐】")
         return sections
 
-    def _unresolved_verification_fixes(self):
+    def _unresolved_delivery_fixes(self):
         verification = self.state.get("verification")
-        if verification_is_deliverable(verification):
-            return []
-        if not isinstance(verification, dict):
-            return ["验证结果未满足严格交付契约"]
-        fixes = verification.get("required_fixes")
-        if isinstance(fixes, list) and fixes:
-            return list(fixes)
-        return [verification.get("overall_assessment") or "验证结果未满足严格交付契约"]
+        unresolved = []
+        if not verification_is_deliverable(verification):
+            if not isinstance(verification, dict):
+                unresolved.append("验证结果未满足严格交付契约")
+            else:
+                fixes = verification.get("required_fixes")
+                if isinstance(fixes, list) and fixes:
+                    unresolved.extend(fixes)
+                else:
+                    unresolved.append(
+                        verification.get("overall_assessment")
+                        or "验证结果未满足严格交付契约"
+                    )
+        if not suggestions_are_usable(self.state.get("suggestions")):
+            unresolved.append("优化版简历未生成或结构无效")
+        return unresolved
 
     def _report_terminal_status(self):
         if self.interrupted_error:
             if "总时限" in str(self.interrupted_error):
                 return "deadline"
             return "partial"
-        verification = self.state.get("verification")
-        if not verification_is_deliverable(verification):
+        if not delivery_is_complete(
+            self.state.get("verification"), self.state.get("suggestions")
+        ):
             return "partial"
         return "completed"
 
@@ -909,11 +926,7 @@ class ResumeAgent:
             ),
             "interrupted_error": self.interrupted_error,
         }
-        unresolved = (
-            self._unresolved_verification_fixes()
-            if not verification_is_deliverable(self.state.get("verification"))
-            else []
-        )
+        unresolved = self._unresolved_delivery_fixes()
         return render_local_report(
             report_state,
             terminal_status=terminal_status,
@@ -932,7 +945,10 @@ class ResumeAgent:
                     not force_local
                     and not self.client.mock_mode
                     and not self.interrupted_error
-                    and verification_is_deliverable(self.state.get("verification"))
+                    and delivery_is_complete(
+                        self.state.get("verification"),
+                        self.state.get("suggestions"),
+                    )
                 )
             },
         )
@@ -960,9 +976,11 @@ class ResumeAgent:
             # 网络已经不稳定，不再发起LLM调用，直接用本地模板渲染已有数据
             report = self._render_local_report()
             return complete(report, "local", "analysis_interrupted")
-        if not verification_is_deliverable(self.state.get("verification")):
+        if not delivery_is_complete(
+            self.state.get("verification"), self.state.get("suggestions")
+        ):
             report = self._render_local_report()
-            return complete(report, "local", "verification_unresolved")
+            return complete(report, "local", "delivery_unresolved")
 
         prompt = FINAL_REPORT_FORMAT_PROMPT.format(data=self._serialize_report_data_for_llm())
         fallback_reason = "missing_sections"

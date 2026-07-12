@@ -1,5 +1,9 @@
 import config
-from contracts import MatchResult
+from contracts import (
+    MatchResult,
+    SuggestionResult,
+    optimized_resume_struct_is_usable,
+)
 from tools.common import ask_json, get_client
 from tools.scoring import (
     gates_from_jd,
@@ -35,6 +39,48 @@ _SUGGESTION_SCHEMA = {
     "optimized_resume": "",
     "optimized_resume_struct": {},
 }
+
+
+def _summary_rows_from_ledger(result, requirements, ledger):
+    """Build user-visible buckets from the same conservative ledger as scoring."""
+    requirements_by_id = {
+        item["requirement_id"]: item["requirement"]
+        for item in requirements
+    }
+    bucket_specs = {
+        "met": ("high_matches", ("reason",)),
+        "under_evidenced": (
+            "partial_matches", ("gap", "improvement")
+        ),
+        "missing": (
+            "missing_requirements", ("impact", "possible_action")
+        ),
+    }
+    original_by_bucket = {}
+    for _, (bucket, _) in bucket_specs.items():
+        rows = result.get(bucket)
+        original_by_bucket[bucket] = {
+            str(row.get("requirement_id") or "").strip(): row
+            for row in rows if isinstance(row, dict)
+        } if isinstance(rows, list) else {}
+
+    rebuilt = {bucket: [] for bucket, _ in bucket_specs.values()}
+    for ledger_row in ledger:
+        status = ledger_row["status"]
+        bucket, safe_fields = bucket_specs[status]
+        requirement_id = ledger_row["requirement_id"]
+        summary = {
+            "requirement_id": requirement_id,
+            "requirement": requirements_by_id.get(requirement_id, ""),
+        }
+        if status != "missing":
+            summary["evidence_ids"] = list(ledger_row.get("evidence_ids") or [])
+        original = original_by_bucket[bucket].get(requirement_id, {})
+        for field in safe_fields:
+            if original.get(field) not in (None, "", [], {}):
+                summary[field] = original[field]
+        rebuilt[bucket].append(summary)
+    return rebuilt
 
 
 def calculate_match(resume_info, jd_analysis, preferences=None):
@@ -99,6 +145,7 @@ JD分析：
     result["requirement_evidence"] = ledger
     result["requirement_scores"] = scoring["requirements"]
     result["gate_failures"] = scoring["gate_failures"]
+    result.update(_summary_rows_from_ledger(result, requirements, ledger))
     if not result.get("score_reason"):
         result["score_reason"] = "按岗位要求类别权重与简历证据充分度进行本地确定性评分。"
     if scoring["gate_failures"]:
@@ -147,19 +194,28 @@ JD分析：
 """
     label = "根据验证意见重新生成优化建议" if fix_instructions else "生成优化建议与优化版简历"
     # 该调用要输出完整优化版简历全文+全部建议，是最重的输出载荷，直接用大token预算
-    result = ask_json(prompt, system, _SUGGESTION_SCHEMA, temperature=0.2, label=label,
-                      max_tokens=config.REPORT_MAX_TOKENS)
+    result = ask_json(
+        prompt,
+        system,
+        _SUGGESTION_SCHEMA,
+        temperature=0.2,
+        label=label,
+        max_tokens=config.REPORT_MAX_TOKENS,
+        validator=SuggestionResult,
+    )
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试generate_suggestions"}
     result = _ensure_struct(result)
-    return {"success": True, "suggestions": result}
+    validated = SuggestionResult.model_validate(result, strict=True)
+    return {
+        "success": True,
+        "suggestions": validated.model_dump(mode="python"),
+    }
 
 
 def _valid_struct(struct):
     """结构化简历是否可用：需有basic_info且至少一段经历类内容"""
-    return (isinstance(struct, dict)
-            and isinstance(struct.get("basic_info"), dict)
-            and any(struct.get(key) for key in ("education", "experience", "projects")))
+    return optimized_resume_struct_is_usable(struct)
 
 
 def _ensure_struct(result):

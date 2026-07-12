@@ -1,6 +1,10 @@
 """Pure Markdown rendering for complete and partial resume reports."""
 
-from contracts import verification_is_deliverable
+from contracts import (
+    delivery_is_complete,
+    suggestions_are_usable,
+    verification_is_deliverable,
+)
 from utils import render_resume_text
 
 
@@ -68,7 +72,7 @@ def _unresolved_items(verification, unresolved_fixes):
     return ["验证结果未满足严格交付契约"]
 
 
-def _honest_assessment(match_result, verification):
+def _honest_assessment(match_result, verification, suggestions):
     match_result = _mapping(match_result)
     lines = []
     score = match_result.get("score")
@@ -94,6 +98,10 @@ def _honest_assessment(match_result, verification):
             "⚠️ 注意：本报告的优化建议在自我验证中仍存在未完全解决的问题，"
             "使用前请逐条核对'诚实边界'和'必须修复项'。"
         )
+    if not suggestions_are_usable(suggestions):
+        lines.append(
+            "⚠️ 注意：优化版简历未生成或结构无效，本次结果不可作为完整交付。"
+        )
     if not lines:
         lines.append("分析数据不足，无法给出可靠评估，请补充简历或JD信息后重试。")
     return "\n".join(lines)
@@ -106,6 +114,7 @@ def _report_body(state, deliverable):
     suggestions = _mapping(state.get("suggestions"))
     verification = state.get("verification")
     verification_data = _mapping(verification)
+    verification_deliverable = verification_is_deliverable(verification)
     correction_log = _items(state.get("correction_log"))
     user_clarifications = _items(state.get("user_clarifications"))
 
@@ -195,7 +204,12 @@ def _report_body(state, deliverable):
             sections.append(f"**{label}**：\n" + _format_list(values))
 
     sections.append("\n## 【自我验证】")
-    sections.append(f"**验证结果**：{'✅ 通过' if deliverable else '❌ 未通过'}")
+    sections.append(
+        f"**验证结果**："
+        f"{'✅ 通过' if verification_deliverable else '❌ 未通过'}"
+    )
+    if verification_deliverable and not deliverable:
+        sections.append("**交付内容**：⚠️ 优化版简历未生成或结构无效")
     if verification_data.get("overall_assessment"):
         sections.append(f"**总体评价**：{verification_data['overall_assessment']}")
     for label, key in (
@@ -216,12 +230,12 @@ def _report_body(state, deliverable):
             sections.append(f"- 第{entry.get('round')}轮（{status}）：")
             for issue in _items(entry.get("issues")):
                 sections.append(f"  - {_format_item(issue)}")
-    elif deliverable:
+    elif verification_deliverable:
         sections.append("本次分析首轮即通过验证，未触发修正。")
 
     sections.extend([
         "\n## 【诚实评估】",
-        _honest_assessment(match_result, verification),
+        _honest_assessment(match_result, verification, suggestions),
         "\n## 【优化版简历】",
         _optimized_resume_text(suggestions) or "（未生成）",
     ])
@@ -233,7 +247,10 @@ def render_report(state, terminal_status="completed", unresolved_fixes=None):
     state = _mapping(state)
     verification = state.get("verification")
     verification_present = verification is not None
-    deliverable = verification_is_deliverable(verification)
+    suggestions = state.get("suggestions")
+    suggestions_usable = suggestions_are_usable(suggestions)
+    verification_deliverable = verification_is_deliverable(verification)
+    deliverable = delivery_is_complete(verification, suggestions)
     partial = terminal_status != "completed" or not deliverable
 
     match_result = _mapping(state.get("match_result"))
@@ -258,9 +275,11 @@ def render_report(state, terminal_status="completed", unresolved_fixes=None):
         lines.append(f"- 自我修正：{len(correction_log)}轮")
     if verification_present:
         lines.append(
-            "- 自我验证：✅ 通过" if deliverable
+            "- 自我验证：✅ 通过" if verification_deliverable
             else "- 自我验证：⚠️ 未完全通过（剩余问题详见【自我验证】章节，采纳建议前请逐条核对）"
         )
+    if not suggestions_usable:
+        lines.append("- 交付内容：⚠️ 优化版简历未生成或结构无效")
 
     if partial:
         if terminal_status == "deadline":
@@ -272,7 +291,15 @@ def render_report(state, terminal_status="completed", unresolved_fixes=None):
             f"> ⚠️ **本报告不完整**：{reason}",
             "> 以下内容基于已完成的分析步骤生成，缺失的章节会显示为空。建议稍后重新运行。",
         ])
-        unresolved = _unresolved_items(verification, unresolved_fixes)
+        if unresolved_fixes is not None:
+            unresolved = _unresolved_items(verification, unresolved_fixes)
+        elif verification_is_deliverable(verification):
+            unresolved = []
+        else:
+            unresolved = _unresolved_items(verification, None)
+        suggestion_issue = "优化版简历未生成或结构无效"
+        if not suggestions_usable and suggestion_issue not in unresolved:
+            unresolved.append(suggestion_issue)
         if unresolved:
             lines.extend(["", "> **未解决修复项**："])
             lines.extend(f"> - {_format_item(item)}" for item in unresolved)
