@@ -1,0 +1,28 @@
+# Secrets and local environments — never ship
+.env
+.env.*
+.claude/
+venv/
+.venv312/
+.playwright-cli/
+
+# Caches and OS cruft
+__pycache__/
+*.pyc
+.DS_Store
+
+# Personal data: uploads, reports, run traces, quotas
+output/
+output_test/
+webui/uploads/
+webui/runs/
+webui/quota.json
+
+# Dev-only assets not needed at runtime
+docs/
+samples/
+test_*.py
+benchmark_models.py
+probe_reasoning.py
+简历优化Agent_项目企划.md
+启动WebUI.command
