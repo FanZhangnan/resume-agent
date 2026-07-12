@@ -264,6 +264,856 @@ def test_weight_category_does_not_reject_factual_evidence_type():
     ]
 
 
+def test_cpp_and_csharp_remain_distinct_and_one_match_scores_half_skill_weight():
+    requirements = normalize_jd_requirements({
+        "hard_requirements": [],
+        "bonus_points": ["熟悉C++开发", "熟悉C#开发"],
+        "responsibilities": [],
+        "implicit_requirements": [],
+    })
+    assert [row["requirement"] for row in requirements] == [
+        "熟悉C++开发", "熟悉C#开发",
+    ]
+
+    catalog = normalize_resume_evidence({"skills": ["C++"]})
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "skill-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-skill-001"],
+                },
+                {
+                    "requirement_id": "skill-002",
+                    "status": "missing",
+                    "evidence_ids": [],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+    scoring = score_requirements(requirements, ledger, {})
+
+    assert [row["status"] for row in ledger] == ["met", "missing"]
+    assert [row["points"] for row in scoring["requirements"]] == [12.5, 0]
+    assert scoring["score"] == 13
+
+
+def test_duplicate_requirement_rows_are_downgraded_in_scoring_defense():
+    requirements = [{
+        "requirement_id": "hard-001",
+        "category": "hard",
+        "requirement": "Bachelor degree",
+    }]
+    catalog = normalize_resume_evidence({
+        "education": [{"degree": "Bachelor"}],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "hard-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-001"],
+                },
+                {
+                    "requirement_id": "hard-001",
+                    "status": "missing",
+                    "evidence_ids": [],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert ledger == [{
+        "requirement_id": "hard-001",
+        "status": "missing",
+        "evidence_ids": [],
+    }]
+    assert score_requirements(requirements, ledger, {})["score"] == 0
+
+
+def test_requirement_evidence_must_be_semantically_relevant_across_types():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "PhD in Physics",
+        },
+        {
+            "requirement_id": "skill-001",
+            "category": "skill",
+            "requirement": "MBA preferred",
+        },
+        {
+            "requirement_id": "business-001",
+            "category": "business",
+            "requirement": "Python service delivery",
+        },
+        {
+            "requirement_id": "soft-001",
+            "category": "soft",
+            "requirement": "本科及以上学历",
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [{"degree": "MBA"}, {"degree": "本科"}],
+        "work_experience": [{
+            "company": "Example",
+            "responsibilities": ["Built Python services"],
+        }],
+        "skills": ["Python"],
+    })
+    catalog[-1]["search_text"] = "phd physics"
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "hard-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-skill-001"],
+                },
+                {
+                    "requirement_id": "skill-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-001"],
+                },
+                {
+                    "requirement_id": "business-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-experience-001"],
+                },
+                {
+                    "requirement_id": "soft-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-002"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "missing", "met", "met", "met",
+    ]
+    assert ledger[0]["evidence_ids"] == []
+
+
+def test_generic_overlap_cannot_replace_the_requirement_core_term():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "Python service delivery",
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "Kubernetes production experience",
+        },
+        {
+            "requirement_id": "hard-003",
+            "category": "hard",
+            "requirement": "数据分析",
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "work_experience": [
+            {"responsibilities": ["Java service delivery"]},
+            {"responsibilities": ["Production support"]},
+            {"responsibilities": ["数据录入"]},
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-experience-{index:03d}"],
+                }
+                for index in range(1, 4)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["missing"] * 3
+    assert score_requirements(requirements, ledger, {})["score"] == 0
+
+
+def test_shared_role_words_and_partial_and_requirements_do_not_match():
+    requirements = [
+        {
+            "requirement_id": "skill-001",
+            "category": "skill",
+            "requirement": requirement,
+        }
+        for requirement in (
+            "React frontend",
+            "Python developer",
+            "AWS cloud",
+            "C++ backend",
+            "Python and SQL",
+            "Python & SQL",
+            "Python + SQL",
+            "Python与SQL",
+            "Python及SQL",
+        )
+    ]
+    for index, requirement in enumerate(requirements, start=1):
+        requirement["requirement_id"] = f"skill-{index:03d}"
+    catalog = normalize_resume_evidence({
+        "skills": [
+            "Vue frontend",
+            "Java developer",
+            "Azure cloud",
+            "Java backend",
+            "Python",
+            "Python",
+            "Python",
+            "Python",
+            "Python",
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"skill-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-skill-{index:03d}"],
+                }
+                for index in range(1, 10)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["missing"] * 9
+
+
+def test_and_requirement_can_combine_multiple_relevant_evidence_records():
+    requirements = [
+        {
+            "requirement_id": f"skill-{index:03d}",
+            "category": "skill",
+            "requirement": requirement,
+        }
+        for index, requirement in enumerate(
+            (
+                "Python and SQL", "Python & SQL", "Python + SQL",
+                "Python与SQL", "Python及SQL",
+            ),
+            start=1,
+        )
+    ]
+    catalog = normalize_resume_evidence({"skills": ["Python", "SQL"]})
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"skill-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [
+                        "evidence-skill-001", "evidence-skill-002",
+                    ],
+                }
+                for index in range(1, 6)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met"] * 5
+    assert all(
+        row["evidence_ids"] == [
+            "evidence-skill-001", "evidence-skill-002",
+        ]
+        for row in ledger
+    )
+
+
+def test_chinese_conjunction_characters_inside_words_do_not_require_all_terms():
+    requirements = [
+        {
+            "requirement_id": "skill-001",
+            "category": "skill",
+            "requirement": "参与Python开发",
+        },
+        {
+            "requirement_id": "skill-002",
+            "category": "skill",
+            "requirement": "涉及数据分析",
+        },
+    ]
+    catalog = normalize_resume_evidence({"skills": ["Python开发", "数据分析"]})
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "skill-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-skill-001"],
+                },
+                {
+                    "requirement_id": "skill-002",
+                    "status": "met",
+                    "evidence_ids": ["evidence-skill-002"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met", "met"]
+
+
+def test_credential_words_in_job_titles_are_not_degree_requirements():
+    requirements = [
+        {
+            "requirement_id": f"hard-{index:03d}",
+            "category": "hard",
+            "requirement": requirement,
+        }
+        for index, requirement in enumerate((
+            "Associate Product Manager",
+            "Associate Software Engineer",
+            "Master Data Management",
+        ), start=1)
+    ]
+    catalog = normalize_resume_evidence({
+        "work_experience": [
+            {"title": "Associate Product Manager"},
+            {"title": "Associate Software Engineer"},
+            {"responsibilities": ["Master Data Management"]},
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-experience-{index:03d}"],
+                }
+                for index in range(1, 4)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met"] * 3
+
+
+def test_explicit_credential_context_is_not_treated_as_degree_subject():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "Master qualification",
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "硕士学位",
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [{"degree": "MSc"}, {"degree": "硕士"}],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "hard-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-001"],
+                },
+                {
+                    "requirement_id": "hard-002",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-002"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met", "met"]
+
+
+def test_common_english_word_forms_share_the_same_core_term():
+    requirements = [{
+        "requirement_id": "hard-001",
+        "category": "hard",
+        "requirement": "Data analysis",
+    }]
+    catalog = normalize_resume_evidence({
+        "work_experience": [{"achievements": ["Analyzed data"]}],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [{
+                "requirement_id": "hard-001",
+                "status": "met",
+                "evidence_ids": ["evidence-experience-001"],
+            }],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert ledger[0]["status"] == "met"
+
+
+def test_generic_only_requirement_needs_the_complete_term_set():
+    phrases = (
+        "Data engineering",
+        "Backend development",
+        "Production support",
+        "Frontend development",
+    )
+    requirements = [
+        {
+            "requirement_id": f"hard-{index:03d}",
+            "category": "hard",
+            "requirement": phrase,
+        }
+        for index, phrase in enumerate(phrases, start=1)
+    ]
+    catalog = normalize_resume_evidence({
+        "work_experience": [
+            {"responsibilities": [phrase]} for phrase in phrases
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-experience-{index:03d}"],
+                }
+                for index in range(1, 5)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met"] * 4
+
+
+def test_met_multicore_requirement_needs_all_specific_terms():
+    phrases = (
+        "Machine learning",
+        "Product management",
+        "Financial analysis",
+        "Customer acquisition",
+        "Distributed systems",
+    )
+    requirements = [
+        {
+            "requirement_id": f"hard-{index:03d}",
+            "category": "hard",
+            "requirement": phrase,
+        }
+        for index, phrase in enumerate(phrases, start=1)
+    ]
+
+    def ledger_for(skills):
+        return requirement_ledger_from_match_result(
+            {
+                "requirement_evidence": [
+                    {
+                        "requirement_id": f"hard-{index:03d}",
+                        "status": "met",
+                        "evidence_ids": [f"evidence-skill-{index:03d}"],
+                    }
+                    for index in range(1, 6)
+                ],
+            },
+            requirements,
+            evidence_catalog=normalize_resume_evidence({"skills": list(skills)}),
+        )
+
+    wrong = ledger_for((
+        "Machine translation",
+        "Product support",
+        "Financial reporting",
+        "Customer support",
+        "Distributed teams",
+    ))
+    right = ledger_for((
+        "Machine learning",
+        "Product management",
+        "Analyzed financial performance",
+        "Customer acquisition",
+        "Distributed systems",
+    ))
+
+    assert [row["status"] for row in wrong] == ["missing"] * 5
+    assert [row["status"] for row in right] == ["met"] * 5
+
+
+def test_or_requirement_accepts_one_alternative_but_not_an_unlisted_skill():
+    requirements = [
+        {
+            "requirement_id": f"skill-{index:03d}",
+            "category": "skill",
+            "requirement": requirement,
+        }
+        for index, requirement in enumerate((
+            "Python or Java",
+            "Python or Java",
+            "Python/Java",
+            "Python/Java",
+            "Python或Java",
+            "Python或Java",
+        ), start=1)
+    ]
+    catalog = normalize_resume_evidence({
+        "skills": ["Python", "Go", "Java", "Go", "Python", "Go"],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"skill-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-skill-{index:03d}"],
+                }
+                for index in range(1, 7)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "met", "missing", "met", "missing", "met", "missing",
+    ]
+
+
+def test_degree_matching_uses_degree_field_aliases_and_hierarchy_only():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "Bachelor's degree",
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "Bachelor degree or above",
+        },
+        {
+            "requirement_id": "hard-003",
+            "category": "hard",
+            "requirement": "Bachelor degree",
+        },
+        {
+            "requirement_id": "hard-004",
+            "category": "hard",
+            "requirement": "Master degree",
+        },
+        {
+            "requirement_id": "hard-005",
+            "category": "hard",
+            "requirement": "PhD in Physics",
+        },
+        {
+            "requirement_id": "hard-006",
+            "category": "hard",
+            "requirement": "PhD in Physics",
+        },
+        {
+            "requirement_id": "hard-007",
+            "category": "hard",
+            "requirement": "MBA preferred",
+        },
+        {
+            "requirement_id": "hard-008",
+            "category": "hard",
+            "requirement": "Master of Business Administration preferred",
+        },
+        {
+            "requirement_id": "hard-009",
+            "category": "hard",
+            "requirement": "PhD in Physics",
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [
+            {"degree": "BSc"},
+            {"degree": "Master"},
+            {"school": "Master University"},
+            {"degree": "PhD", "major": "Computer Science"},
+            {"degree": "PhD", "major": "Physics"},
+            {"degree": "MSc", "major": "Physics"},
+            {"degree": "MBA"},
+            {"degree": "PhD in Physics"},
+        ],
+        "work_experience": [{"title": "BA"}],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": "hard-001",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-001"],
+                },
+                {
+                    "requirement_id": "hard-002",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-002"],
+                },
+                {
+                    "requirement_id": "hard-003",
+                    "status": "met",
+                    "evidence_ids": ["evidence-experience-001"],
+                },
+                {
+                    "requirement_id": "hard-004",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-003"],
+                },
+                {
+                    "requirement_id": "hard-005",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-004"],
+                },
+                {
+                    "requirement_id": "hard-006",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-005"],
+                },
+                {
+                    "requirement_id": "hard-007",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-006"],
+                },
+                {
+                    "requirement_id": "hard-008",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-007"],
+                },
+                {
+                    "requirement_id": "hard-009",
+                    "status": "met",
+                    "evidence_ids": ["evidence-education-008"],
+                },
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "met", "met", "missing", "missing", "missing", "met",
+        "missing", "met", "met",
+    ]
+
+
+def test_multiterm_degree_subject_requires_the_specific_major_terms():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": "Bachelor's degree in Computer Science",
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "Bachelor's degree in Computer Science",
+        },
+        {
+            "requirement_id": "hard-003",
+            "category": "hard",
+            "requirement": "Master of Science in Data Science",
+        },
+        {
+            "requirement_id": "hard-004",
+            "category": "hard",
+            "requirement": "Master of Science in Data Science",
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [
+            {"degree": "Bachelor of Science", "major": "Chemistry"},
+            {"degree": "Bachelor of Science", "major": "Computer Science"},
+            {"degree": "Master of Science", "major": "Physics"},
+            {"degree": "Master of Science in Data Science"},
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-education-{index:03d}"],
+                }
+                for index in range(1, 5)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "missing", "met", "missing", "met",
+    ]
+
+
+def test_degree_subject_allows_related_field_and_or_alternatives():
+    requirements = [
+        {
+            "requirement_id": "hard-001",
+            "category": "hard",
+            "requirement": (
+                "Bachelor's degree in Computer Science or related field"
+            ),
+        },
+        {
+            "requirement_id": "hard-002",
+            "category": "hard",
+            "requirement": "Bachelor's degree in Computer Science or equivalent",
+        },
+        {
+            "requirement_id": "hard-003",
+            "category": "hard",
+            "requirement": (
+                "Bachelor's degree in Computer Science, Engineering, "
+                "or related discipline"
+            ),
+        },
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [
+            {"degree": "Bachelor of Science", "major": "Computer Science"}
+            for _ in range(3)
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-education-{index:03d}"],
+                }
+                for index in range(1, 4)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == ["met"] * 3
+
+
+def test_chinese_degree_subject_requires_the_specific_major_phrase():
+    requirements = [
+        {
+            "requirement_id": f"hard-{index:03d}",
+            "category": "hard",
+            "requirement": requirement,
+        }
+        for index, requirement in enumerate((
+            "计算机科学硕士学位",
+            "计算机科学硕士学位",
+            "数据科学硕士学位",
+            "数据科学硕士学位",
+            "物理学博士学位",
+            "物理学博士学位",
+        ), start=1)
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [
+            {"degree": "硕士", "major": "计算机工程"},
+            {"degree": "硕士", "major": "计算机科学"},
+            {"degree": "硕士", "major": "数据工程"},
+            {"degree": "硕士", "major": "数据科学"},
+            {"degree": "博士", "major": "物理教育"},
+            {"degree": "博士", "major": "物理学"},
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-education-{index:03d}"],
+                }
+                for index in range(1, 7)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "missing", "met", "missing", "met", "missing", "met",
+    ]
+
+
+def test_education_degree_subject_is_not_treated_as_context_only():
+    requirements = [
+        {
+            "requirement_id": f"hard-{index:03d}",
+            "category": "hard",
+            "requirement": requirement,
+        }
+        for index, requirement in enumerate((
+            "Bachelor's degree in Education",
+            "Bachelor's degree in Education",
+            "Master's degree in Education",
+            "Master's degree in Education",
+        ), start=1)
+    ]
+    catalog = normalize_resume_evidence({
+        "education": [
+            {"degree": "Bachelor of Science", "major": "Chemistry"},
+            {"degree": "Bachelor of Science", "major": "Education"},
+            {"degree": "Master of Science", "major": "Physics"},
+            {"degree": "Master of Education"},
+        ],
+    })
+    ledger = requirement_ledger_from_match_result(
+        {
+            "requirement_evidence": [
+                {
+                    "requirement_id": f"hard-{index:03d}",
+                    "status": "met",
+                    "evidence_ids": [f"evidence-education-{index:03d}"],
+                }
+                for index in range(1, 5)
+            ],
+        },
+        requirements,
+        evidence_catalog=catalog,
+    )
+
+    assert [row["status"] for row in ledger] == [
+        "missing", "met", "missing", "met",
+    ]
+
+
 def test_extract_resume_info_uses_strict_resume_validator():
     valid_result = {
         "education": [{"degree": "BSc"}],
@@ -532,11 +1382,14 @@ def test_calculate_match_uses_local_score_instead_of_llm_score():
         "hard-001", "skill-001", "business-001", "soft-001"
     ]
     assert ask.call_args.kwargs["validator"].__name__ == "MatchResult"
+    assert "search_text" not in ask.call_args.args[0]
 
 
 def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
     jd_analysis = {
-        "hard_requirements": [f"Requirement {index}" for index in range(1, 8)],
+        "hard_requirements": [
+            f"Verified requirement {index}" for index in range(1, 8)
+        ],
         "bonus_points": [],
         "responsibilities": [],
         "implicit_requirements": [],
@@ -546,7 +1399,7 @@ def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
         "score_reason": "All seven requirements cite the same verified resume record.",
         "high_matches": [{
             "requirement_id": "hard-001",
-            "requirement": "Requirement 1",
+            "requirement": "Verified requirement 1",
             "evidence": "Verified evidence",
         }],
         "partial_matches": [],
@@ -806,6 +1659,24 @@ def main():
         test_mock_hard_requirements_reference_semantically_correct_paths,
         test_requirement_ledger_rejects_inherently_non_scoring_existing_id,
         test_weight_category_does_not_reject_factual_evidence_type,
+        test_cpp_and_csharp_remain_distinct_and_one_match_scores_half_skill_weight,
+        test_duplicate_requirement_rows_are_downgraded_in_scoring_defense,
+        test_requirement_evidence_must_be_semantically_relevant_across_types,
+        test_generic_overlap_cannot_replace_the_requirement_core_term,
+        test_shared_role_words_and_partial_and_requirements_do_not_match,
+        test_and_requirement_can_combine_multiple_relevant_evidence_records,
+        test_chinese_conjunction_characters_inside_words_do_not_require_all_terms,
+        test_credential_words_in_job_titles_are_not_degree_requirements,
+        test_explicit_credential_context_is_not_treated_as_degree_subject,
+        test_common_english_word_forms_share_the_same_core_term,
+        test_generic_only_requirement_needs_the_complete_term_set,
+        test_met_multicore_requirement_needs_all_specific_terms,
+        test_or_requirement_accepts_one_alternative_but_not_an_unlisted_skill,
+        test_degree_matching_uses_degree_field_aliases_and_hierarchy_only,
+        test_multiterm_degree_subject_requires_the_specific_major_terms,
+        test_degree_subject_allows_related_field_and_or_alternatives,
+        test_chinese_degree_subject_requires_the_specific_major_phrase,
+        test_education_degree_subject_is_not_treated_as_context_only,
         test_extract_resume_info_uses_strict_resume_validator,
         test_normalize_resume_evidence_skips_malformed_nested_shapes,
         test_scoring_accepts_legacy_aliases_and_harmless_extra_fields,

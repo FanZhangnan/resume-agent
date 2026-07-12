@@ -146,6 +146,25 @@ class ResumeInfo(_StrictResult):
         for field in ("certificates", "achievements", "potential_issues"):
             if any(not item.strip() for item in getattr(self, field)):
                 raise ValueError(f"{field} cannot contain blank strings")
+        has_basic_info = _has_semantic_text(
+            self.basic_info.name,
+            self.basic_info.phone,
+            self.basic_info.email,
+            self.basic_info.location,
+            self.basic_info.target_role,
+        )
+        has_evidence = any((
+            self.education,
+            self.work_experience,
+            self.projects,
+            self.skills,
+            self.certificates,
+            self.achievements,
+        ))
+        if not has_basic_info and not has_evidence:
+            raise ValueError(
+                "resume requires basic semantic information or evidence"
+            )
         return self
 
 
@@ -185,6 +204,17 @@ class MatchResult(_StrictResult):
     eligible: bool = True
     requirement_scores: list[Any] = Field(default_factory=list)
     gate_failures: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_requirement_evidence(self):
+        requirement_ids = [
+            row.requirement_id.strip() for row in self.requirement_evidence
+        ]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            raise ValueError(
+                "requirement_evidence must contain one row per requirement_id"
+            )
+        return self
 
 
 class VerificationResult(_StrictResult):

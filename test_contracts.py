@@ -44,6 +44,46 @@ def test_match_result_has_safe_defaults_and_strict_bounded_score():
     )
 
 
+def test_match_result_rejects_duplicate_requirement_ids_and_repairs_once():
+    duplicate_rows = [
+        {
+            "requirement_id": "hard-001",
+            "status": "missing",
+            "evidence_ids": [],
+        },
+        {
+            "requirement_id": "hard-001",
+            "status": "missing",
+            "evidence_ids": [],
+        },
+    ]
+    _assert_validation_error(
+        lambda: MatchResult.model_validate(
+            {"score": 0, "requirement_evidence": duplicate_rows},
+            strict=True,
+        )
+    )
+
+    fake = _SemanticClient([
+        json.dumps({"score": 0, "requirement_evidence": duplicate_rows}),
+        json.dumps({
+            "score": 0,
+            "requirement_evidence": [duplicate_rows[0]],
+        }),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"score": 0, "requirement_evidence": []},
+            validator=MatchResult,
+        )
+
+    assert len(result["requirement_evidence"]) == 1
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
+
+
 def test_verification_result_is_strict_and_defaults_to_not_deliverable():
     result = VerificationResult.model_validate({}, strict=True)
     assert result.passed is False
@@ -369,9 +409,42 @@ def test_resume_info_semantic_repair_reuses_one_deadline():
     assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
 
 
+def test_resume_info_rejects_fully_empty_payload_and_repairs_once():
+    from contracts import ResumeInfo
+
+    for empty in ({}, {"basic_info": {}}):
+        _assert_validation_error(
+            lambda value=empty: ResumeInfo.model_validate(value, strict=True)
+        )
+
+    assert ResumeInfo.model_validate(
+        {"basic_info": {"name": "Candidate"}}, strict=True
+    ).basic_info.name == "Candidate"
+    assert ResumeInfo.model_validate(
+        {"skills": ["Python"]}, strict=True
+    ).skills == ["Python"]
+
+    fake = _SemanticClient([
+        json.dumps({"basic_info": {}}),
+        json.dumps({"basic_info": {"name": "Candidate"}}),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"basic_info": {}},
+            validator=ResumeInfo,
+        )
+
+    assert result["basic_info"]["name"] == "Candidate"
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
+
+
 def main():
     tests = (
         test_match_result_has_safe_defaults_and_strict_bounded_score,
+        test_match_result_rejects_duplicate_requirement_ids_and_repairs_once,
         test_verification_result_is_strict_and_defaults_to_not_deliverable,
         test_deliverability_requires_all_three_gates_and_a_valid_model,
         test_ask_json_repairs_schema_failure_with_shared_deadlines_and_safe_trace,
@@ -383,6 +456,7 @@ def main():
         test_jd_analysis_gate_contract_is_strict,
         test_resume_info_contract_rejects_malformed_nested_evidence_records,
         test_resume_info_semantic_repair_reuses_one_deadline,
+        test_resume_info_rejects_fully_empty_payload_and_repairs_once,
     )
     for test in tests:
         test()
