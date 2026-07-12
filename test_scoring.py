@@ -7,7 +7,7 @@ from unittest.mock import patch
 from mock_data import MOCK_JD_ANALYSIS, MOCK_MATCH, MOCK_RESUME_INFO
 from report_renderer import render_report
 from tools.analysis import calculate_match
-from tools.resume_tools import analyze_jd
+from tools.resume_tools import analyze_jd, extract_resume_info
 from tools.scoring import (
     normalize_jd_requirements,
     normalize_resume_evidence,
@@ -262,6 +262,144 @@ def test_weight_category_does_not_reject_factual_evidence_type():
             "evidence_ids": ["evidence-certificate-001"],
         },
     ]
+
+
+def test_extract_resume_info_uses_strict_resume_validator():
+    valid_result = {
+        "education": [{"degree": "BSc"}],
+        "work_experience": [],
+        "projects": [],
+        "skills": ["Python"],
+    }
+    with patch("tools.resume_tools.ask_json", return_value=valid_result) as ask:
+        result = extract_resume_info("Candidate resume")
+
+    assert result["success"] is True
+    assert ask.call_args.kwargs["validator"].__name__ == "ResumeInfo"
+    prompt = ask.call_args.args[0]
+    assert "responsibilities和achievements必须为字符串数组" in prompt
+    assert "skills" in prompt and "name" in prompt
+
+
+def test_normalize_resume_evidence_skips_malformed_nested_shapes():
+    resume_info = {
+        "education": [False, {}, {"school": "   "}, {"degree": "BSc"}],
+        "work_experience": [
+            7,
+            {},
+            {"company": ""},
+            {"company": "Malformed", "responsibilities": [""]},
+            {"company": "Example"},
+        ],
+        "projects": [
+            "not a record",
+            {},
+            {"name": "   "},
+            {"name": "Malformed", "technologies": ["   "]},
+            {"description": "Built a service"},
+        ],
+        "skills": [
+            False,
+            7,
+            {},
+            "",
+            "   ",
+            {"name": ""},
+            "Python",
+            {"name": "SQL"},
+        ],
+    }
+
+    catalog = normalize_resume_evidence(resume_info)
+    assert [(row["evidence_id"], row["source"]) for row in catalog] == [
+        ("evidence-education-004", "education[4]"),
+        ("evidence-experience-005", "work_experience[5]"),
+        ("evidence-project-005", "projects[5]"),
+        ("evidence-skill-007", "skills[7]"),
+        ("evidence-skill-008", "skills[8]"),
+    ]
+
+
+def test_scoring_accepts_legacy_aliases_and_harmless_extra_fields():
+    catalog = normalize_resume_evidence({
+        "education": [{"degree": "BSc", "country": "AU"}],
+        "work_experience": [{
+            "achievement": "Growth",
+            "source_system": "legacy",
+        }],
+        "projects": [{
+            "description": "Launched service",
+            "legacy_id": 7,
+        }],
+        "skills": [{"name": "Python", "years": 5}],
+    })
+
+    assert [(row["evidence_id"], row["source"]) for row in catalog] == [
+        ("evidence-education-001", "education[1]"),
+        ("evidence-experience-001", "work_experience[1]"),
+        ("evidence-project-001", "projects[1]"),
+        ("evidence-skill-001", "skills[1]"),
+    ]
+    by_id = {row["evidence_id"]: row["content"] for row in catalog}
+    assert by_id["evidence-education-001"] == {"degree": "BSc"}
+    assert by_id["evidence-experience-001"] == {"achievements": ["Growth"]}
+    assert by_id["evidence-project-001"] == {"description": "Launched service"}
+    assert by_id["evidence-skill-001"] == {"name": "Python"}
+
+
+def test_ledger_rejects_malformed_catalog_content_and_scores_zero():
+    requirements = [
+        {"requirement_id": "hard-001", "category": "hard", "requirement": "Degree"},
+        {"requirement_id": "skill-001", "category": "skill", "requirement": "Python"},
+        {"requirement_id": "business-001", "category": "business", "requirement": "Delivery"},
+        {"requirement_id": "soft-001", "category": "soft", "requirement": "Communication"},
+    ]
+    catalog = [
+        {
+            "evidence_id": "evidence-education-001",
+            "source": "education[1]",
+            "evidence_type": "education",
+            "content": False,
+        },
+        {
+            "evidence_id": "evidence-skill-001",
+            "source": "skills[1]",
+            "evidence_type": "skill",
+            "content": False,
+        },
+        {
+            "evidence_id": "evidence-experience-001",
+            "source": "work_experience[1]",
+            "evidence_type": "experience",
+            "content": 7,
+        },
+        {
+            "evidence_id": "evidence-project-001",
+            "source": "projects[1]",
+            "evidence_type": "project",
+            "content": "not a record",
+        },
+    ]
+    match_result = {
+        "requirement_evidence": [
+            {
+                "requirement_id": requirement["requirement_id"],
+                "status": "met",
+                "evidence_ids": [catalog[index]["evidence_id"]],
+            }
+            for index, requirement in enumerate(requirements)
+        ],
+    }
+    ledger = requirement_ledger_from_match_result(
+        match_result,
+        requirements,
+        evidence_catalog=catalog,
+    )
+    scoring = score_requirements(requirements, ledger, {})
+
+    assert all(row["status"] == "missing" for row in ledger)
+    assert all(row["evidence_ids"] == [] for row in ledger)
+    assert scoring["score"] == 0
 
 
 def test_under_evidenced_awards_half_points():
@@ -668,6 +806,10 @@ def main():
         test_mock_hard_requirements_reference_semantically_correct_paths,
         test_requirement_ledger_rejects_inherently_non_scoring_existing_id,
         test_weight_category_does_not_reject_factual_evidence_type,
+        test_extract_resume_info_uses_strict_resume_validator,
+        test_normalize_resume_evidence_skips_malformed_nested_shapes,
+        test_scoring_accepts_legacy_aliases_and_harmless_extra_fields,
+        test_ledger_rejects_malformed_catalog_content_and_scores_zero,
         test_under_evidenced_awards_half_points,
         test_row_points_add_up_to_exact_category_weight,
         test_empty_categories_are_zero_and_generated_ids_are_stable,

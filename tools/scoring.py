@@ -4,6 +4,15 @@ import re
 from collections import defaultdict
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
+from pydantic import ValidationError
+
+from contracts import (
+    EducationRecord,
+    ProjectRecord,
+    SkillRecord,
+    WorkExperienceRecord,
+)
+
 
 CATEGORY_WEIGHTS = {
     "hard": 40,
@@ -25,6 +34,12 @@ SCORABLE_EVIDENCE_TYPES = frozenset({
     "achievement",
 })
 
+_RECORD_MODELS = {
+    "education": EducationRecord,
+    "experience": WorkExperienceRecord,
+    "project": ProjectRecord,
+}
+
 
 def _clean_text(value):
     return str(value or "").strip()
@@ -32,6 +47,47 @@ def _clean_text(value):
 
 def _compact_key(value):
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", _clean_text(value).lower())
+
+
+def _canonicalize_evidence_content(evidence_type, value):
+    model = _RECORD_MODELS.get(evidence_type)
+    if model is not None:
+        if not isinstance(value, dict):
+            return None
+        known_fields = {
+            name: value[name] for name in model.model_fields if name in value
+        }
+        if (
+            evidence_type == "experience"
+            and "achievements" not in known_fields
+            and "achievement" in value
+        ):
+            achievement = value["achievement"]
+            known_fields["achievements"] = (
+                [achievement] if isinstance(achievement, str) else achievement
+            )
+        try:
+            validated = model.model_validate(known_fields, strict=True)
+        except (ValidationError, TypeError, ValueError):
+            return None
+        return validated.model_dump(mode="python", exclude_defaults=True)
+    if evidence_type == "skill":
+        if isinstance(value, str):
+            return value.strip() or None
+        if not isinstance(value, dict):
+            return None
+        known_fields = {
+            name: value[name]
+            for name in SkillRecord.model_fields if name in value
+        }
+        try:
+            validated = SkillRecord.model_validate(known_fields, strict=True)
+        except (ValidationError, TypeError, ValueError):
+            return None
+        return validated.model_dump(mode="python", exclude_defaults=True)
+    if evidence_type in ("certificate", "achievement"):
+        return value.strip() if isinstance(value, str) and value.strip() else None
+    return None
 
 
 def normalize_requirements(requirements):
@@ -140,11 +196,14 @@ def normalize_resume_evidence(resume_info, preferences=None):
         values = resume_info.get(field)
         if isinstance(values, list):
             for index, value in enumerate(values, start=1):
+                canonical = _canonicalize_evidence_content(evidence_type, value)
+                if canonical is None:
+                    continue
                 add(
                     f"evidence-{evidence_type}-{index:03d}",
                     f"{field}[{index}]",
                     evidence_type,
-                    value,
+                    canonical,
                 )
     item_types = {
         "skills": "skill",
@@ -155,11 +214,14 @@ def normalize_resume_evidence(resume_info, preferences=None):
         values = resume_info.get(field)
         if isinstance(values, list):
             for index, value in enumerate(values, start=1):
+                canonical = _canonicalize_evidence_content(evidence_type, value)
+                if canonical is None:
+                    continue
                 add(
                     f"evidence-{evidence_type}-{index:03d}",
                     f"{field}[{index}]",
                     evidence_type,
-                    value,
+                    canonical,
                 )
     add(
         "evidence-raw-summary",
@@ -195,6 +257,13 @@ def _evidence_type_from_catalog_item(item):
     )
     declared = _clean_text(item.get("evidence_type")).lower()
     if declared and declared != evidence_type:
+        return ""
+    if (
+        evidence_type in SCORABLE_EVIDENCE_TYPES
+        and _canonicalize_evidence_content(
+            evidence_type, item.get("content")
+        ) is None
+    ):
         return ""
     return evidence_type
 

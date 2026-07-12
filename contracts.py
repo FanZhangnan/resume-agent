@@ -1,6 +1,6 @@
 """Strict output contracts shared by tools and delivery checks."""
 
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -26,6 +26,126 @@ class RequirementEvidence(_StrictResult):
             raise ValueError("missing status cannot reference evidence_ids")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("evidence_ids must be unique within a row")
+        return self
+
+
+def _has_semantic_text(*values):
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            return True
+    return False
+
+
+class ResumeBasicInfo(_StrictResult):
+    name: str = ""
+    phone: str = ""
+    email: str = ""
+    location: str = ""
+    target_role: str = ""
+    work_authorization: bool = False
+
+
+class EducationRecord(_StrictResult):
+    school: str = ""
+    degree: str = ""
+    major: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    details: str = ""
+
+    @model_validator(mode="after")
+    def validate_semantic_content(self):
+        if not _has_semantic_text(
+            self.school, self.degree, self.major, self.details
+        ):
+            raise ValueError("education record requires semantic content")
+        return self
+
+
+class WorkExperienceRecord(_StrictResult):
+    company: str = ""
+    title: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    responsibilities: list[str] = Field(default_factory=list)
+    achievements: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_semantic_content(self):
+        if any(
+            not item.strip()
+            for item in self.responsibilities + self.achievements
+        ):
+            raise ValueError("work experience evidence cannot contain blanks")
+        if not _has_semantic_text(
+            self.company, self.title, self.responsibilities, self.achievements
+        ):
+            raise ValueError("work experience record requires semantic content")
+        return self
+
+
+class ProjectRecord(_StrictResult):
+    name: str = ""
+    role: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    description: str = ""
+    achievements: list[str] = Field(default_factory=list)
+    technologies: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_semantic_content(self):
+        if any(
+            not item.strip() for item in self.achievements + self.technologies
+        ):
+            raise ValueError("project evidence cannot contain blanks")
+        if not _has_semantic_text(
+            self.name,
+            self.role,
+            self.description,
+            self.achievements,
+            self.technologies,
+        ):
+            raise ValueError("project record requires semantic content")
+        return self
+
+
+class SkillRecord(_StrictResult):
+    name: str = ""
+    category: str = ""
+    level: str = ""
+    details: str = ""
+
+    @model_validator(mode="after")
+    def validate_name(self):
+        if not self.name.strip():
+            raise ValueError("skill record requires a non-empty name")
+        return self
+
+
+class ResumeInfo(_StrictResult):
+    basic_info: ResumeBasicInfo = Field(default_factory=ResumeBasicInfo)
+    education: list[EducationRecord] = Field(default_factory=list)
+    work_experience: list[WorkExperienceRecord] = Field(default_factory=list)
+    projects: list[ProjectRecord] = Field(default_factory=list)
+    skills: list[Union[str, SkillRecord]] = Field(default_factory=list)
+    certificates: list[str] = Field(default_factory=list)
+    achievements: list[str] = Field(default_factory=list)
+    potential_issues: list[str] = Field(default_factory=list)
+    raw_summary: str = ""
+
+    @model_validator(mode="after")
+    def validate_string_items(self):
+        for item in self.skills:
+            if isinstance(item, str) and not item.strip():
+                raise ValueError("skills cannot contain blank strings")
+        for field in ("certificates", "achievements", "potential_issues"):
+            if any(not item.strip() for item in getattr(self, field)):
+                raise ValueError(f"{field} cannot contain blank strings")
         return self
 
 

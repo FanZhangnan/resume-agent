@@ -308,6 +308,67 @@ def test_jd_analysis_gate_contract_is_strict():
     )
 
 
+def test_resume_info_contract_rejects_malformed_nested_evidence_records():
+    from contracts import ResumeInfo
+
+    valid = ResumeInfo.model_validate({
+        "education": [{"degree": "BSc"}],
+        "work_experience": [{"company": "Example"}],
+        "projects": [{"description": "Built a service"}],
+        "skills": ["Python", {"name": "SQL"}],
+    }, strict=True)
+    assert valid.education[0].degree == "BSc"
+    assert valid.work_experience[0].company == "Example"
+    assert valid.projects[0].description == "Built a service"
+    assert valid.skills[0] == "Python"
+    assert valid.skills[1].name == "SQL"
+
+    invalid_shapes = (
+        {"education": [False]},
+        {"education": [{}]},
+        {"education": [{"school": "   "}]},
+        {"work_experience": [7]},
+        {"work_experience": [{}]},
+        {"work_experience": [{"company": ""}]},
+        {"work_experience": [{"achievement": "Growth"}]},
+        {"work_experience": [{"company": "Example", "responsibilities": [""]}]},
+        {"projects": ["not a record"]},
+        {"projects": [{}]},
+        {"projects": [{"name": "   "}]},
+        {"projects": [{"name": "Example", "technologies": ["   "]}]},
+        {"skills": [False]},
+        {"skills": [7]},
+        {"skills": [""]},
+        {"skills": ["   "]},
+        {"skills": [{}]},
+        {"skills": [{"name": ""}]},
+    )
+    for invalid in invalid_shapes:
+        _assert_validation_error(
+            lambda value=invalid: ResumeInfo.model_validate(value, strict=True)
+        )
+
+
+def test_resume_info_semantic_repair_reuses_one_deadline():
+    from contracts import ResumeInfo
+
+    fake = _SemanticClient([
+        json.dumps({"education": [False]}),
+        json.dumps({"education": [{"degree": "BSc"}]}),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"education": []},
+            validator=ResumeInfo,
+        )
+
+    assert result["education"][0]["degree"] == "BSc"
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
+
+
 def main():
     tests = (
         test_match_result_has_safe_defaults_and_strict_bounded_score,
@@ -320,6 +381,8 @@ def main():
         test_missing_verification_is_partial_and_never_uses_report_formatter,
         test_react_revision_is_hard_capped_at_one_when_config_is_two,
         test_jd_analysis_gate_contract_is_strict,
+        test_resume_info_contract_rejects_malformed_nested_evidence_records,
+        test_resume_info_semantic_repair_reuses_one_deadline,
     )
     for test in tests:
         test()
