@@ -187,6 +187,31 @@ def test_suggestion_result_semantic_repair_reuses_one_deadline():
     assert fake.calls[0]["logical_deadline"] == fake.calls[1]["logical_deadline"]
 
 
+def test_truncated_retry_respects_explicit_token_cap():
+    class TruncatedClient(_SemanticClient):
+        def simple_ask(self, **kwargs):
+            self.calls.append(kwargs)
+            self.last_finish_reason = "length" if len(self.calls) == 1 else "stop"
+            return next(self.responses)
+
+    fake = TruncatedClient([
+        '{"optimized_resume":',
+        json.dumps({"optimized_resume": "Candidate\nPython Engineer"}),
+    ])
+    with patch.object(common, "get_client", return_value=fake):
+        result = common.ask_json(
+            "prompt",
+            "system",
+            {"optimized_resume": "", "optimized_resume_struct": {}},
+            max_tokens=4096,
+            retry_max_tokens=4096,
+            validator=SuggestionResult,
+        )
+
+    assert result["optimized_resume"] == "Candidate\nPython Engineer"
+    assert [call["max_tokens"] for call in fake.calls] == [4096, 4096]
+
+
 class _SemanticClient:
     last_finish_reason = "stop"
 
@@ -577,6 +602,7 @@ def main():
         test_deliverability_requires_all_three_gates_and_a_valid_model,
         test_suggestion_result_requires_usable_text_or_struct,
         test_suggestion_result_semantic_repair_reuses_one_deadline,
+        test_truncated_retry_respects_explicit_token_cap,
         test_ask_json_repairs_schema_failure_with_shared_deadlines_and_safe_trace,
         test_ask_json_returns_none_after_second_schema_failure,
         test_ask_json_without_validator_keeps_legacy_default_contract,

@@ -155,12 +155,12 @@ def generate_suggestions(resume_info, jd_analysis, match_result, fix_instruction
 """
 
     prompt = f"""
-请基于简历、JD和匹配分析生成优化建议，输出紧凑JSON，数组最多8项，字段必须包含：
+请基于简历、JD和匹配分析生成优化建议，只输出紧凑JSON。不要复述输入，不要解释推理过程。字段必须包含：
 overall_strategy: 150字以内总体优化策略
-rewrite_suggestions: 数组，逐段建议，每项包含 section, problem, suggestion, before, after
-star_rewrites: 数组，用STAR法则改写经历，每项包含 original, situation, task, action, result, rewritten
-keyword_injection: 数组，可自然补充的关键词及放置位置，每项包含 keyword, placement
-honesty_boundaries: 数组，明确哪些内容不能夸大或编造
+rewrite_suggestions最多4项: 只保留影响最大的逐段建议，每项包含 section, problem, suggestion, before, after；problem和suggestion各80字以内，before和after各180字以内
+star_rewrites最多3项: 用STAR法则改写最关键经历，每项包含 original, situation, task, action, result, rewritten；每个字段160字以内
+keyword_injection最多8项: 可自然补充的关键词及放置位置，每项包含 keyword, placement
+honesty_boundaries最多6项: 明确哪些内容不能夸大或编造，每项100字以内
 optimized_resume_struct: 结构化的完整优化版简历（主要输出，供排版渲染），字段：
   basic_info: {{name, phone, email, location, target_role}}
   summary: 个人简介字符串（100字以内）
@@ -182,14 +182,15 @@ JD分析：
 {compact_text(to_pretty_json(match_result))}
 """
     label = "根据验证意见重新生成优化建议" if fix_instructions else "生成优化建议与优化版简历"
-    # 该调用要输出完整优化版简历全文+全部建议，是最重的输出载荷，直接用大token预算
+    # 完整简历仍是主要输出；建议项严格限量，避免高推理档在大预算下长时间展开。
     result = ask_json(
         prompt,
         system,
         _SUGGESTION_SCHEMA,
         temperature=0.2,
         label=label,
-        max_tokens=config.REPORT_MAX_TOKENS,
+        max_tokens=config.MAX_TOKENS,
+        retry_max_tokens=config.MAX_TOKENS,
         validator=SuggestionResult,
     )
     if result is None:
@@ -249,4 +250,5 @@ extras: 数组（证书/奖项/语言等，可为空数组）
 """
     return ask_json(prompt, "你是精确的文档结构化助手。只输出JSON，不改写内容。",
                     schema, temperature=0.0, label="补全结构化排版数据",
-                    max_tokens=config.REPORT_MAX_TOKENS)
+                    max_tokens=config.MAX_TOKENS,
+                    retry_max_tokens=config.MAX_TOKENS)

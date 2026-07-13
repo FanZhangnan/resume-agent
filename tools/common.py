@@ -103,7 +103,7 @@ def use_run_deadline(deadline):
 
 
 def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=None,
-             validator=None):
+             retry_max_tokens=None, validator=None):
     """调用LLM并解析JSON返回，失败自动重试一轮（区分截断和格式错误两种失败）
     成功时用default补齐缺失字段，保证下游字段访问安全
     """
@@ -147,7 +147,15 @@ def ask_json(prompt, system, default, temperature=0.2, label=None, max_tokens=No
         if attempt == 1:
             if client.last_finish_reason == "length":
                 # 截断导致的失败：扩大输出上限 + 要求压缩表述
-                current_max = max(config.REPORT_MAX_TOKENS, (current_max or config.MAX_TOKENS) * 2)
+                expanded_max = max(
+                    config.REPORT_MAX_TOKENS,
+                    (current_max or config.MAX_TOKENS) * 2,
+                )
+                current_max = (
+                    min(expanded_max, max(1, int(retry_max_tokens)))
+                    if retry_max_tokens is not None
+                    else expanded_max
+                )
                 current_prompt = prompt + _TRUNCATED_RETRY_SUFFIX
                 reason = "truncated"
                 validation_errors = []

@@ -1644,6 +1644,24 @@ def test_generate_suggestions_uses_strict_suggestion_validator():
     assert ask.call_args.kwargs["validator"].__name__ == "SuggestionResult"
 
 
+def test_generate_suggestions_uses_bounded_compact_output_budget():
+    valid = {
+        "optimized_resume_struct": {
+            "basic_info": {"name": "Candidate"},
+            "experience": [{"company": "Example", "title": "Engineer"}],
+        },
+    }
+    with patch("tools.analysis.ask_json", return_value=valid) as ask:
+        result = generate_suggestions({}, {}, {})
+
+    assert result["success"] is True
+    assert ask.call_args.kwargs["max_tokens"] == 4096
+    assert ask.call_args.kwargs["retry_max_tokens"] == 4096
+    prompt = ask.call_args.args[0]
+    assert "rewrite_suggestions最多4项" in prompt
+    assert "star_rewrites最多3项" in prompt
+
+
 def _empty_match_result():
     return {
         "score": 0,
@@ -1917,6 +1935,7 @@ def main():
         test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries,
         test_calculate_match_rebuilds_visible_summaries_from_local_ledger,
         test_generate_suggestions_uses_strict_suggestion_validator,
+        test_generate_suggestions_uses_bounded_compact_output_budget,
         test_analyze_jd_uses_strict_explicit_gate_contract,
         test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate,
         test_calculate_match_fails_explicit_work_authorization_gate_when_not_met,
