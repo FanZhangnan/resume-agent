@@ -82,6 +82,18 @@ def test_status_reports_vercel_mode():
     assert body["deployment_mode"] == "vercel"
 
 
+def test_stage_rows_expose_fallback_validation_status():
+    rows = server._stage_rows({
+        6: {
+            "status": "completed",
+            "reason": "fact_only_fallback",
+            "validation_status": "rejected_ai_draft",
+        },
+    })
+    stage = next(row for row in rows if row["stage_id"] == 6)
+    assert stage["validation_status"] == "rejected_ai_draft"
+
+
 def test_model_validation_rejects_forbidden():
     client, _, _ = _client()
     assert _start_ok(client, data={"model": "gpt-5.6-sol", "reasoning": "high"}).status_code == 400

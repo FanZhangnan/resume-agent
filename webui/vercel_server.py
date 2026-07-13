@@ -121,6 +121,7 @@ def _stage_rows(stage_docs):
             "revision_round": doc.get("revision_round"),
             "error_category": doc.get("error_category"),
             "reason": doc.get("reason"),
+            "validation_status": doc.get("validation_status"),
             "attempt": doc.get("attempt"),
         })
     return rows

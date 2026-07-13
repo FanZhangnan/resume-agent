@@ -73,6 +73,8 @@ def test_trace_detail_drawer_present():
     # The drawer must never inject trace strings as HTML.
     assert "box.textContent" in html
     assert "box.innerHTML" not in html
+    assert "s.validation_status" in html
+    assert "验证状态" in html
 
 
 def test_report_export_button_present():

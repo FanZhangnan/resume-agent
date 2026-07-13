@@ -179,6 +179,7 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     if(s.revision_round != null){ parts.push("修正轮 " + s.revision_round); }
     if(s.error_category){ parts.push("错误类别 " + s.error_category); }
     if(s.reason){ parts.push("原因 " + s.reason); }
+    if(s.validation_status){ parts.push("验证状态 " + s.validation_status); }
     box.textContent = parts.length ? parts.join(" · ") : "暂无明细";
   }
 

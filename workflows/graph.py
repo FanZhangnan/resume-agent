@@ -256,6 +256,44 @@ def _resolve_rewrite_suggestion_only_fixes(verification, suggestions):
     return cleaned_verification, cleaned_suggestions, fixes
 
 
+def _fact_only_fallback(resume_text):
+    """Return the parsed upload text unchanged after an unsafe AI draft."""
+    original_text = str(resume_text or "").strip()
+    if not original_text:
+        return None
+    suggestions = {
+        "generation_mode": "conservative_fallback",
+        "overall_strategy": (
+            "AI优化稿未形成可安全交付结果；本版直接保留"
+            "用户上传简历的解析原文，未进行AI改写。"
+        ),
+        "rewrite_suggestions": [],
+        "star_rewrites": [],
+        "keyword_injection": [],
+        "honesty_boundaries": [
+            "可靠性降级结果：以下简历为上传文件的解析原文，不包含本轮AI改写。"
+        ],
+        "optimized_resume": original_text,
+        "optimized_resume_struct": {},
+    }
+    verification = {
+        "passed": True,
+        "overall_assessment": (
+            "AI优化稿未通过最终严格审查；系统已丢弃该草稿，"
+            "并保留用户上传简历的解析原文，未新增内容。"
+        ),
+        "overstatement_issues": [],
+        "fabrication_risks": [],
+        "logic_issues": [],
+        "match_authenticity_issues": [],
+        "required_fixes": [],
+        "safe_to_deliver": True,
+    }
+    if not delivery_is_complete(verification, suggestions):
+        return None
+    return verification, suggestions
+
+
 def _unresolved_fixes(state):
     if delivery_is_complete(state.get("verification"), state.get("suggestions")):
         return []
@@ -293,7 +331,7 @@ def _category_from_exception(error):
 
 async def _run_stage(trace, stage_id, op, args, key, clock, revision_round=None):
     """Execute one stage operation and record its trace. Never raises for
-    ordinary tool failures; returns ('completed'|'failed', value)."""
+    ordinary tool failures; returns ('completed'|'failed', value, metadata)."""
     started = clock() if clock is not None else None
     running = {}
     if revision_round is not None:
@@ -306,7 +344,7 @@ async def _run_stage(trace, stage_id, op, args, key, clock, revision_round=None)
         if revision_round is not None:
             data["revision_round"] = revision_round
         await trace.stage(stage_id, "failed", **data)
-        return "failed", None
+        return "failed", None, data
     if clock is not None:
         duration_ms = max(0, int((clock() - started) * 1000))
     elif isinstance(result, dict) and isinstance(result.get("_duration_ms"), (int, float)):
@@ -325,14 +363,14 @@ async def _run_stage(trace, stage_id, op, args, key, clock, revision_round=None)
         if revision_round is not None:
             data["revision_round"] = revision_round
         await trace.stage(stage_id, "failed", **data)
-        return "failed", None
+        return "failed", None, data
     data = {}
     if duration_ms is not None:
         data["duration_ms"] = duration_ms
     if revision_round is not None:
         data["revision_round"] = revision_round
     await trace.stage(stage_id, "completed", **data)
-    return "completed", result.get(key)
+    return "completed", result.get(key), data
 
 
 def _render_state(state, analysis_engine, cancelled):
@@ -381,7 +419,15 @@ async def _finalize(trace, state, raw_status, model, reasoning):
     }
 
 
-async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel=None):
+async def run_workflow_graph(
+    payload,
+    operations,
+    trace,
+    *,
+    clock=None,
+    parallel=None,
+    allow_fact_fallback=True,
+):
     """Run the supplied-JD eight-stage graph to a bounded terminal state."""
     durable_boundaries = clock is None and hasattr(trace, "check_boundary")
     if clock is None and not durable_boundaries:
@@ -423,6 +469,39 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
             return "deadline_exceeded"
         return None
 
+    async def apply_original_resume_fallback(recovery=None):
+        """Discard generated content and expose the unchanged upload as delivery."""
+        fallback = _fact_only_fallback(state["resume_text"])
+        if fallback is None:
+            return False
+        state["verification"], state["suggestions"] = fallback
+        recovery = recovery if isinstance(recovery, dict) else {}
+        for stage_id in (STAGE_SUGGEST, STAGE_VERIFY):
+            prior = recovery.get(stage_id)
+            prior = prior if isinstance(prior, dict) else {}
+            data = {
+                "reason": "fact_only_fallback",
+                "validation_status": prior.get(
+                    "validation_status", "original_text_fallback",
+                ),
+            }
+            for key in (
+                "duration_ms", "error_category", "revision_round",
+                "attempt", "retry_category",
+            ):
+                if prior.get(key) is not None:
+                    data[key] = prior[key]
+            if stage_id == STAGE_VERIFY:
+                data["safe_to_deliver"] = True
+            await trace.stage(stage_id, "completed", **data)
+        state["correction_log"] = [{
+            "round": 1,
+            "issues": ["AI优化稿未形成安全交付内容，已整体丢弃"],
+            "resolved": True,
+            "resolution": "回退至用户原始简历文本",
+        }]
+        return True
+
     # No-JD live discovery is not enabled in this preview.
     if job_search or not jd_text.strip():
         await trace.stage(
@@ -451,10 +530,12 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
         )
 
     if parallel:
-        (s2, v2), (s4, v4) = await asyncio.gather(extract_stage(), jd_stage())
+        (s2, v2, _), (s4, v4, _) = await asyncio.gather(
+            extract_stage(), jd_stage(),
+        )
     else:
-        s2, v2 = await extract_stage()
-        s4, v4 = await jd_stage()
+        s2, v2, _ = await extract_stage()
+        s4, v4, _ = await jd_stage()
     if s2 == "completed":
         state["resume_info"] = v2
     if s4 == "completed":
@@ -468,7 +549,7 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     term = await boundary()
     if term:
         return await _finalize(trace, state, term, model, reasoning)
-    s5, v5 = await _run_stage(
+    s5, v5, _ = await _run_stage(
         trace, STAGE_MATCH, operations.match,
         (state["resume_info"], state["jd_analysis"]), "match_result", clock,
     )
@@ -479,27 +560,59 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     term = await boundary()
     if term:
         return await _finalize(trace, state, term, model, reasoning)
-    s6, v6 = await _run_stage(
+    s6, v6, s6_meta = await _run_stage(
         trace, STAGE_SUGGEST, operations.suggest,
         (state["resume_info"], state["jd_analysis"], state["match_result"], None),
         "suggestions", clock,
     )
     if s6 != "completed":
-        return await _finalize(trace, state, "partial", model, reasoning)
+        term = await boundary()
+        if (
+            allow_fact_fallback
+            and term is None
+            and await apply_original_resume_fallback({STAGE_SUGGEST: s6_meta})
+        ):
+            return await _finalize(trace, state, "completed", model, reasoning)
+        return await _finalize(trace, state, term or "partial", model, reasoning)
     state["suggestions"] = _with_struct_fallback(v6)
+    latest_suggest_meta = s6_meta
 
     term = await boundary()
     if term:
         return await _finalize(trace, state, term, model, reasoning)
-    s7, v7 = await _run_stage(
+    if state["suggestions"].get("generation_mode") == "conservative_fallback":
+        state["suggestions"] = None
+        legacy_meta = {
+            **s6_meta,
+            "validation_status": "discarded_legacy_fallback",
+        }
+        if (
+            allow_fact_fallback
+            and await apply_original_resume_fallback({STAGE_SUGGEST: legacy_meta})
+        ):
+            return await _finalize(trace, state, "completed", model, reasoning)
+        return await _finalize(trace, state, "partial", model, reasoning)
+    s7, v7, s7_meta = await _run_stage(
         trace, STAGE_VERIFY, operations.verify,
         (state["resume_info"], state["jd_analysis"], state["match_result"],
          state["suggestions"]),
         "verification", clock,
     )
     if s7 != "completed":
-        return await _finalize(trace, state, "partial", model, reasoning)
+        term = await boundary()
+        if (
+            allow_fact_fallback
+            and term is None
+            and await apply_original_resume_fallback({
+                STAGE_SUGGEST: latest_suggest_meta,
+                STAGE_VERIFY: s7_meta,
+            })
+        ):
+            return await _finalize(trace, state, "completed", model, reasoning)
+        return await _finalize(trace, state, term or "partial", model, reasoning)
     state["verification"] = v7
+    latest_verify_meta = s7_meta
+    fallback_recovery = {}
     (
         state["verification"], state["suggestions"], star_fixes,
     ) = _resolve_star_only_fixes(
@@ -524,23 +637,48 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
             "resolved": True,
             "resolution": "移除可选逐段修改建议",
         })
-
     # One targeted repair round if the strict delivery gate is not yet met.
     if not delivery_is_complete(state["verification"], state["suggestions"]):
         term = await boundary()
         if term is None and last_remaining > _REPAIR_MIN_SECONDS:
             fixes = _required_fixes(state["verification"])
-            r6s, r6v = await _run_stage(
+            r6s, r6v, r6_meta = await _run_stage(
                 trace, STAGE_SUGGEST, operations.suggest,
                 (state["resume_info"], state["jd_analysis"], state["match_result"], fixes),
                 "suggestions", clock, revision_round=1,
             )
             if r6s == "completed":
                 state["suggestions"] = _with_struct_fallback(r6v)
+                latest_suggest_meta = r6_meta
                 term = await boundary()
                 if term:
                     return await _finalize(trace, state, term, model, reasoning)
-                r7s, r7v = await _run_stage(
+                if (
+                    state["suggestions"].get("generation_mode")
+                    == "conservative_fallback"
+                ):
+                    state["suggestions"] = None
+                    legacy_meta = {
+                        **r6_meta,
+                        "validation_status": "discarded_legacy_fallback",
+                    }
+                    if (
+                        allow_fact_fallback
+                        and await apply_original_resume_fallback({
+                            STAGE_SUGGEST: legacy_meta,
+                            STAGE_VERIFY: {
+                                **latest_verify_meta,
+                                "validation_status": "rejected_ai_draft",
+                            },
+                        })
+                    ):
+                        return await _finalize(
+                            trace, state, "completed", model, reasoning,
+                        )
+                    return await _finalize(
+                        trace, state, "partial", model, reasoning,
+                    )
+                r7s, r7v, r7_meta = await _run_stage(
                     trace, STAGE_VERIFY, operations.verify,
                     (state["resume_info"], state["jd_analysis"], state["match_result"],
                      state["suggestions"]),
@@ -548,6 +686,7 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                 )
                 if r7s == "completed":
                     state["verification"] = r7v
+                    latest_verify_meta = r7_meta
                     (
                         state["verification"], state["suggestions"],
                         residual_star_fixes,
@@ -563,6 +702,7 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                 else:
                     residual_star_fixes = []
                     residual_rewrite_fixes = []
+                    fallback_recovery[STAGE_VERIFY] = r7_meta
                 resolved = delivery_is_complete(
                     state["verification"], state["suggestions"]
                 )
@@ -582,8 +722,28 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                     ]
                     correction["resolution"] = "移除可选逐段修改建议"
                 state["correction_log"].append(correction)
+            else:
+                fallback_recovery[STAGE_SUGGEST] = r6_meta
 
-    term = await boundary()
+    needs_fallback = (
+        allow_fact_fallback
+        and term is None
+        and not delivery_is_complete(state["verification"], state["suggestions"])
+    )
+    if needs_fallback:
+        term = await boundary()
+    if needs_fallback and term is None:
+        fallback_recovery.setdefault(STAGE_SUGGEST, latest_suggest_meta)
+        if STAGE_VERIFY not in fallback_recovery:
+            fallback_recovery[STAGE_VERIFY] = {
+                **latest_verify_meta,
+                "validation_status": "rejected_ai_draft",
+            }
+        if await apply_original_resume_fallback(fallback_recovery):
+            return await _finalize(trace, state, "completed", model, reasoning)
+
+    if term is None:
+        term = await boundary()
     return await _finalize(trace, state, term or "completed", model, reasoning)
 
 

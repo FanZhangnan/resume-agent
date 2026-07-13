@@ -119,6 +119,11 @@ def _report_body(state, deliverable):
     user_clarifications = _items(state.get("user_clarifications"))
 
     sections = ["## 【简历解析】"]
+    if suggestions.get("generation_mode") == "conservative_fallback":
+        sections.append(
+            "> 本次交付已回退至上传简历原文；"
+            "AI解析仅供核对，不应视为经历事实。"
+        )
     basic = _mapping(resume_info.get("basic_info"))
     basic_parts = [
         str(value) for value in (
@@ -226,7 +231,15 @@ def _report_body(state, deliverable):
         sections.append("**修正日志**：")
         for entry in correction_log:
             entry = _mapping(entry)
-            status = "已修正并通过复检" if entry.get("resolved") else "修正后复检仍未通过"
+            resolution = str(entry.get("resolution") or "")
+            if resolution == "回退至用户原始简历文本":
+                status = "已回退至原始简历，无AI改写"
+            else:
+                status = (
+                    "已修正并通过复检"
+                    if entry.get("resolved")
+                    else "修正后复检仍未通过"
+                )
             sections.append(f"- 第{entry.get('round')}轮（{status}）：")
             for issue in _items(entry.get("issues")):
                 sections.append(f"  - {_format_item(issue)}")

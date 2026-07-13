@@ -8,6 +8,7 @@ case runs the graph against the real tool adapters under AGENT_MOCK=1.
 import asyncio
 import importlib
 import os
+import sys
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 os.environ.setdefault("AGENT_MOCK", "1")
@@ -40,11 +41,13 @@ _VERIFY_BAD = {"passed": False, "safe_to_deliver": False, "required_fixes": ["�
 class FakeTrace:
     def __init__(self, cancel_after=None):
         self.writes = []          # (stage_id, status)
+        self.events = []          # (stage_id, status, metadata)
         self._cancel_after = cancel_after
         self._checks = 0
 
     async def stage(self, stage_id, status, **data):
         self.writes.append((stage_id, status))
+        self.events.append((stage_id, status, dict(data)))
 
     async def cancelled(self):
         self._checks += 1
@@ -61,6 +64,19 @@ class FakeTrace:
 
     def statuses(self, stage_id):
         return [s for sid, s in self.writes if sid == stage_id]
+
+    def last_event(self, stage_id):
+        return next(event for event in reversed(self.events) if event[0] == stage_id)
+
+
+class DeadlineBeforeFallbackTrace(FakeTrace):
+    async def check_boundary(self, deadline_epoch):
+        self._checks += 1
+        expired = self._checks >= 7
+        return {
+            "status": "deadline_exceeded" if expired else None,
+            "remaining_seconds": 0 if expired else 60,
+        }
 
 
 class FakeOps:
@@ -95,6 +111,8 @@ class FakeOps:
 
     async def verify(self, resume_info, jd_analysis, match_result, suggestions):
         self.calls.append("verify")
+        if "verify" in self._fail:
+            return {"success": False, "error": "boom"}
         result = self._verify_sequence.pop(0) if self._verify_sequence else _VERIFY_OK
         return {"success": True, "verification": dict(result)}
 
@@ -124,12 +142,127 @@ class RewriteSuggestionOps(FakeOps):
         return result
 
 
+class UnsafeResumeOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        result = await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+        result["suggestions"]["optimized_resume"] = (
+            "MODEL_ONLY_UNSAFE_CLAIM: 主导亿级项目"
+        )
+        return result
+
+
+class RepairSuggestFailsOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        if fix_instructions:
+            self.calls.append(("suggest", tuple(fix_instructions)))
+            return {"success": False, "error": "repair unavailable"}
+        return await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+
+
+class RepairVerifyFailsOps(FakeOps):
+    async def verify(self, resume_info, jd_analysis, match_result, suggestions):
+        self.calls.append("verify")
+        if self.calls.count("verify") == 1:
+            return {"success": True, "verification": dict(_VERIFY_BAD)}
+        return {"success": False, "error": "repair verification unavailable"}
+
+
+def _legacy_conservative_suggestions():
+    return {
+        "generation_mode": "conservative_fallback",
+        "overall_strategy": "legacy fallback",
+        "rewrite_suggestions": [],
+        "star_rewrites": [],
+        "keyword_injection": [],
+        "honesty_boundaries": [],
+        "optimized_resume": "EXTRACTED_ONLY_CLAIM",
+        "optimized_resume_struct": {},
+    }
+
+
+class LegacyConservativeOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        self.calls.append(("suggest", tuple(fix_instructions or ())))
+        return {
+            "success": True,
+            "suggestions": _legacy_conservative_suggestions(),
+        }
+
+
+class RepairLegacyConservativeOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        if fix_instructions:
+            self.calls.append(("suggest", tuple(fix_instructions)))
+            return {
+                "success": True,
+                "suggestions": _legacy_conservative_suggestions(),
+                "_duration_ms": 222,
+            }
+        return await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+
+    async def verify(self, resume_info, jd_analysis, match_result, suggestions):
+        result = await super().verify(
+            resume_info, jd_analysis, match_result, suggestions,
+        )
+        result["_duration_ms"] = 333
+        return result
+
+
+class TimedRecoveryOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        result = await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+        result["_duration_ms"] = 222 if fix_instructions else 111
+        return result
+
+    async def verify(self, resume_info, jd_analysis, match_result, suggestions):
+        result = await super().verify(
+            resume_info, jd_analysis, match_result, suggestions,
+        )
+        result["_duration_ms"] = 444 if self.calls.count("verify") == 2 else 333
+        return result
+
+
+class TimedInitialVerifyFailureOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        result = await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+        result["_duration_ms"] = 111
+        return result
+
+    async def verify(self, resume_info, jd_analysis, match_result, suggestions):
+        self.calls.append("verify")
+        return {
+            "success": False,
+            "error": "verification unavailable",
+            "_duration_ms": 333,
+        }
+
+
 def _payload(**kw):
     base = {"resume_text": "张三 后端工程师", "jd_text": "招后端工程师，需要 Python",
             "model": "gpt-5.5", "reasoning": "xhigh", "deadline_epoch": None,
             "run_id": "run-test"}
     base.update(kw)
     return base
+
+
+def run_without_fact_fallback(ops, trace=None):
+    """Exercise narrow auto-resolution rules without the final production fallback."""
+    return run(run_workflow_graph(
+        _payload(),
+        ops,
+        trace or FakeTrace(),
+        allow_fact_fallback=False,
+    ))
 
 
 # ---- tests ------------------------------------------------------------
@@ -163,6 +296,91 @@ def test_graph_runs_inside_real_workflow_sandbox():
 
     result = run(scenario())
     assert result["status"] == "completed"
+
+
+def test_fact_only_fallback_runs_inside_cold_workflow_sandbox():
+    from vercel._internal.workflow.py_sandbox import workflow_sandbox
+
+    assert "tools.analysis" not in sys.modules
+
+    async def scenario():
+        with workflow_sandbox(random_seed="fallback-sandbox"):
+            sandboxed_graph = importlib.import_module("workflows.graph")
+            return await sandboxed_graph.run_workflow_graph(
+                _payload(),
+                FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD]),
+                FakeTrace(),
+            )
+
+    result = run(scenario())
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+
+
+def test_initial_suggestion_failure_uses_original_resume_fallback():
+    ops, trace = FakeOps(fail={"suggest"}), FakeTrace()
+    original_resume = "ORIGINAL_UPLOAD_ONLY"
+    result = run(run_workflow_graph(
+        _payload(resume_text=original_resume), ops, trace,
+    ))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    optimized_resume = result["report"].split("## 【优化版简历】", 1)[1].strip()
+    assert optimized_resume == original_resume
+    _, status, data = trace.last_event(6)
+    assert status == "completed"
+    assert data["reason"] == "fact_only_fallback"
+    assert data["error_category"] == "tool_error"
+
+
+def test_initial_verification_failure_uses_original_resume_fallback():
+    ops, trace = TimedInitialVerifyFailureOps(), FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    _, status, data = trace.last_event(7)
+    assert status == "completed"
+    assert data["reason"] == "fact_only_fallback"
+    assert data["error_category"] == "tool_error"
+    _, _, suggest_data = trace.last_event(6)
+    assert suggest_data["duration_ms"] == 111
+
+
+def test_legacy_conservative_marker_cannot_bypass_original_resume_fallback():
+    original_resume = "ORIGINAL_UPLOAD_ONLY"
+    ops, trace = LegacyConservativeOps(), FakeTrace()
+    result = run(run_workflow_graph(
+        _payload(resume_text=original_resume), ops, trace,
+    ))
+
+    assert result["status"] == "completed"
+    assert ops.calls.count("verify") == 0
+    optimized_resume = result["report"].split("## 【优化版简历】", 1)[1].strip()
+    assert optimized_resume == original_resume
+    assert "EXTRACTED_ONLY_CLAIM" not in result["report"]
+
+
+def test_repair_legacy_conservative_marker_uses_original_resume_fallback():
+    original_resume = "ORIGINAL_UPLOAD_ONLY"
+    ops = RepairLegacyConservativeOps(verify_sequence=[_VERIFY_BAD])
+    trace = FakeTrace()
+    result = run(run_workflow_graph(
+        _payload(resume_text=original_resume), ops, trace,
+    ))
+
+    assert result["status"] == "completed"
+    assert ops.calls.count("verify") == 1
+    optimized_resume = result["report"].split("## 【优化版简历】", 1)[1].strip()
+    assert optimized_resume == original_resume
+    assert "EXTRACTED_ONLY_CLAIM" not in result["report"]
+    _, _, suggest_data = trace.last_event(6)
+    assert suggest_data["duration_ms"] == 222
+    assert suggest_data["revision_round"] == 1
+    _, _, verify_data = trace.last_event(7)
+    assert verify_data["duration_ms"] == 333
+    assert verify_data["validation_status"] == "rejected_ai_draft"
 
 
 def test_missing_time_returns_deadline_without_invoking_tools():
@@ -355,7 +573,7 @@ def test_rewrite_suggestion_fix_cannot_hide_main_resume_issue():
         ],
     }
     ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -369,7 +587,7 @@ def test_rewrite_suggestion_fix_cannot_hide_non_rewrite_risk_row():
         "fabrication_risks": ["优化版简历正文新增了未证实技能。"],
     }
     ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -388,7 +606,7 @@ def test_rewrite_suggestion_fix_cannot_override_main_resume_assessment():
     ops = RewriteSuggestionOps(
         verify_sequence=[conflicting_issue, conflicting_issue],
     )
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -405,7 +623,7 @@ def test_structured_rewrite_suggestion_risk_is_not_auto_resolved():
         }],
     }
     ops = RewriteSuggestionOps(verify_sequence=[structured_risk, structured_risk])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -418,7 +636,7 @@ def test_rewrite_suggestion_fix_requires_nonempty_optional_section():
         "required_fixes": ["rewrite_suggestions第1项before中有夸大表述。"],
     }
     ops = FakeOps(verify_sequence=[rewrite_issue, rewrite_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -431,7 +649,7 @@ def test_rewrite_suggestion_field_name_must_match_exactly():
         "required_fixes": ["rewrite_suggestions_backup中有夸大表述。"],
     }
     ops = RewriteSuggestionOps(verify_sequence=[backup_issue, backup_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -444,7 +662,7 @@ def test_rewrite_suggestion_alias_is_not_auto_resolved():
         "required_fixes": ["逐段修改建议中有夸大表述。"],
     }
     ops = RewriteSuggestionOps(verify_sequence=[alias_issue, alias_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -461,7 +679,7 @@ def test_rewrite_suggestion_fix_cannot_include_other_optional_section():
     ops = RewriteSuggestionOps(
         verify_sequence=[mixed_optional_issue, mixed_optional_issue],
     )
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -477,7 +695,7 @@ def test_rewrite_suggestion_fix_cannot_include_chinese_optional_sections():
             ],
         }
         ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
-        result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+        result = run_without_fact_fallback(ops)
 
         assert result["status"] == "partial", section
         assert result["safe_to_deliver"] is False, section
@@ -493,7 +711,7 @@ def test_structured_rewrite_suggestion_fix_is_not_auto_resolved():
         }],
     }
     ops = RewriteSuggestionOps(verify_sequence=[structured_issue, structured_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -507,7 +725,7 @@ def test_star_named_fix_does_not_hide_non_star_risk_rows():
         "fabrication_risks": ["优化版简历正文新增了未证实技能"],
     }
     ops = StarSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -521,7 +739,7 @@ def test_start_prefix_is_not_treated_as_star_section():
         "required_fixes": ["修正START日期字段"],
     }
     ops = StarSuggestionOps(verify_sequence=[start_issue, start_issue])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -534,7 +752,7 @@ def test_star_and_main_resume_fix_is_not_auto_resolved():
         "required_fixes": ["删除STAR改写及优化版简历正文中的虚构内容"],
     }
     ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -550,7 +768,7 @@ def test_star_fix_cannot_include_rewrite_suggestion_section():
             ],
         }
         ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
-        result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+        result = run_without_fact_fallback(ops)
 
         assert result["status"] == "partial", section
         assert result["safe_to_deliver"] is False, section
@@ -563,7 +781,7 @@ def test_star_and_optimized_draft_fix_is_not_auto_resolved():
         "required_fixes": ["删除STAR改写和优化稿中的虚构内容"],
     }
     ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -576,7 +794,7 @@ def test_star_and_other_section_fix_is_not_auto_resolved():
         "required_fixes": ["删除STAR中的推断和其他段落的虚构内容"],
     }
     ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -589,7 +807,7 @@ def test_star_and_second_scoped_draft_fix_is_not_auto_resolved():
         "required_fixes": ["删除STAR中的推断和改后文案中的未证实内容"],
     }
     ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -605,7 +823,7 @@ def test_structured_star_fix_cannot_hide_main_draft_issue():
         }],
     }
     ops = StarSuggestionOps(verify_sequence=[structured_fix, structured_fix])
-    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+    result = run_without_fact_fallback(ops)
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
@@ -620,13 +838,150 @@ def test_cancellation_after_repair_skips_second_verification():
     assert ops.calls.count("verify") == 1
 
 
-def test_unrecovered_verification_is_partial_with_fixes():
+def test_unrecovered_verification_uses_fact_only_fallback():
     ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
     trace = FakeTrace()
     result = run(run_workflow_graph(_payload(), ops, trace))
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert result["unresolved_fixes"] == []
+    assert "可靠性降级结果" in result["report"]
+    assert "张三" in result["report"]
+    assert "已修正并通过复检" not in result["report"]
+    assert "已回退至原始简历，无AI改写" in result["report"]
+    assert "AI解析仅供核对" in result["report"]
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 2
+    assert ops.calls.count("verify") == 2
+    for stage_id in (6, 7):
+        _, status, data = trace.last_event(stage_id)
+        assert status == "completed"
+        assert data["reason"] == "fact_only_fallback"
+
+
+def test_fact_only_fallback_preserves_latest_stage_timings():
+    ops = TimedRecoveryOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    trace = FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    _, _, suggest_data = trace.last_event(6)
+    assert suggest_data["duration_ms"] == 222
+    assert suggest_data["revision_round"] == 1
+    _, _, verify_data = trace.last_event(7)
+    assert verify_data["duration_ms"] == 444
+    assert verify_data["revision_round"] == 1
+    assert verify_data["validation_status"] == "rejected_ai_draft"
+
+
+def test_fact_only_fallback_repairs_trace_after_revision_suggest_failure():
+    ops = RepairSuggestFailsOps(verify_sequence=[_VERIFY_BAD])
+    trace = FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    _, status, data = trace.last_event(6)
+    assert status == "completed"
+    assert data["reason"] == "fact_only_fallback"
+
+
+def test_fact_only_fallback_repairs_trace_after_revision_verify_failure():
+    ops = RepairVerifyFailsOps()
+    trace = FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    _, status, data = trace.last_event(7)
+    assert status == "completed"
+    assert data["reason"] == "fact_only_fallback"
+    assert data["safe_to_deliver"] is True
+    assert data["error_category"] == "tool_error"
+    assert data["revision_round"] == 1
+
+
+def test_fact_only_fallback_does_not_leak_rejected_verifier_text():
+    leaked_marker = "MODEL_ONLY_UNSAFE_CLAIM"
+    leaking_verification = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [f"删除{leaked_marker}中的虚构内容"],
+    }
+    ops = UnsafeResumeOps(
+        verify_sequence=[leaking_verification, leaking_verification],
+    )
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "completed"
+    assert leaked_marker not in result["report"]
+
+
+def test_cancellation_before_fact_only_fallback_stays_cancelled():
+    ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    trace = FakeTrace(cancel_after=6)
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "cancelled"
+    assert result["safe_to_deliver"] is False
+    assert all(
+        data.get("reason") != "fact_only_fallback"
+        for _, _, data in trace.events
+    )
+
+
+def test_deadline_before_fact_only_fallback_stays_deadline_exceeded():
+    ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    trace = DeadlineBeforeFallbackTrace()
+    result = run(run_workflow_graph(_payload(deadline_epoch=1000), ops, trace))
+
+    assert result["status"] == "deadline_exceeded"
+    assert result["safe_to_deliver"] is False
+    assert all(
+        data.get("reason") != "fact_only_fallback"
+        for _, _, data in trace.events
+    )
+
+
+def test_fact_only_fallback_discards_model_generated_resume():
+    ops = UnsafeResumeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    original_resume = "ORIGINAL FACTS\n未负责团队\nExcel"
+    result = run(run_workflow_graph(
+        _payload(resume_text=original_resume), ops, FakeTrace(),
+    ))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert "MODEL_ONLY_UNSAFE_CLAIM" not in result["report"]
+    assert "可靠性降级结果" in result["report"]
+    optimized_resume = result["report"].split("## 【优化版简历】", 1)[1].strip()
+    assert optimized_resume == original_resume
+    assert "带队交付" not in optimized_resume
+    assert "提升转化20%" not in optimized_resume
+
+
+def test_fact_only_fallback_failure_remains_partial():
+    import workflows.graph as graph_module
+
+    original = graph_module._fact_only_fallback
+
+    def broken_fallback(resume_text):
+        return None
+
+    graph_module._fact_only_fallback = broken_fallback
+    try:
+        ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+        trace = FakeTrace()
+        result = run(run_workflow_graph(_payload(), ops, trace))
+    finally:
+        graph_module._fact_only_fallback = original
+
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
-    assert any("删除夸大表述" in f for f in result["unresolved_fixes"])
+    assert any("删除夸大表述" in fix for fix in result["unresolved_fixes"])
+    assert all(
+        data.get("reason") != "fact_only_fallback"
+        for _, _, data in trace.events
+    )
 
 
 def test_no_jd_path_is_disabled_in_preview():
