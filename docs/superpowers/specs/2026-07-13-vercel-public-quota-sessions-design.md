@@ -75,7 +75,8 @@ errors focus the BYOK field in the frontend.
 ## BYOK Handling
 
 The public form accepts only an API key. Users cannot provide or override a
-Base URL; all requests use server-side `AGENT_BASE_URL`. A supplied key is
+Base URL; all requests use the fixed server-side `AGENT_BASE_URL` value
+`https://api.wangdefou.studio/v1`. A supplied key is
 encrypted with AES-GCM using a purpose-derived key from
 `AGENT_RUN_SIGNING_KEY`, stored in Redis under a random credential reference,
 and given the same 15-minute TTL as the admission lease.
@@ -84,7 +85,7 @@ Workflow tool steps fetch and decrypt the credential inside the serverless
 step, bind it through `RunSettings`, and never return it in workflow state,
 traces, logs, or reports. The credential is deleted on terminal release,
 cancellation, start failure, or TTL expiry. Runs without BYOK read the site's
-`ZENMUX_API_KEY` from Vercel environment variables.
+`OPENAI_API_KEY` from Vercel environment variables.
 
 ## Request and Workflow Flow
 
@@ -111,10 +112,16 @@ cookie and recent-run endpoint.
 
 ## Configuration and Infrastructure
 
-Required server values are `ZENMUX_API_KEY`, `AGENT_BASE_URL`,
+Required server values are `OPENAI_API_KEY`,
+`AGENT_BASE_URL=https://api.wangdefou.studio/v1`,
 `AGENT_RUN_SIGNING_KEY`, `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`,
 `KV_REST_API_URL`, and `KV_REST_API_TOKEN`. Public controls retain these
 defaults:
+
+```dotenv
+OPENAI_API_KEY=你的得否网关密钥
+AGENT_BASE_URL=https://api.wangdefou.studio/v1
+```
 
 - `AGENT_FREE_PER_DAY=2`
 - `AGENT_SITE_FREE_PER_DAY=20`
