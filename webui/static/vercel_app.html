@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>简历优化 Agent · 内测</title>
+<title>简历优化 Agent</title>
 <style>
 :root{
   --paper:#fbfbf9; --card:#ffffff; --ink:#16181d; --sub:#5f6672; --faint:#a7adb8;
@@ -64,14 +64,11 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
 <div class="wrap">
   <header>
     <span class="mark"></span>
-    <div><h1>简历优化 Agent</h1><div class="tag">Invite-only preview</div></div>
+    <div><h1>简历优化 Agent</h1><div class="tag">Preview</div></div>
   </header>
 
   <div class="grid">
     <section id="formPane">
-      <label for="inviteCode">邀请码</label>
-      <input type="password" id="inviteCode" autocomplete="off" placeholder="内测邀请码">
-
       <label for="resumeFile">简历文件（PDF / DOCX / TXT / MD，≤4MB）</label>
       <input type="file" id="resumeFile" accept=".pdf,.docx,.txt,.md">
 
@@ -308,15 +305,12 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
 
   async function onStart(){
     setError("");
-    var invite = $("inviteCode").value.trim();
     var jd = $("jdText").value.trim();
     var file = $("resumeFile").files[0];
-    if(!invite){ setError("请输入邀请码"); return; }
     if(!file){ setError("请上传简历文件"); return; }
     if(!jd){ setError("请粘贴目标 JD"); return; }
 
     var fd = new FormData();
-    fd.append("invite_code", invite);
     fd.append("jd_text", jd);
     fd.append("model", $("modelSelect").value);
     fd.append("reasoning", $("reasoningSelect").value);

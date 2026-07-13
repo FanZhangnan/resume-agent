@@ -1,9 +1,9 @@
-"""Stateless invite verification and HMAC-signed run access tokens.
+"""HMAC-signed run access tokens.
 
 No secret value is ever logged. Tokens carry only a run id and an absolute
 expiry; knowing or guessing a run id is insufficient without a valid signature.
-The signing key and invite code come from the environment on the server and may
-be injected explicitly in tests.
+The signing key comes from the environment on the server and may be injected
+explicitly in tests.
 """
 
 import base64
@@ -27,20 +27,6 @@ def _resolve(value, env_name):
     if value is not None:
         return str(value)
     return os.environ.get(env_name, "")
-
-
-def verify_invite(candidate, *, expected=None) -> bool:
-    """Constant-time compare an invite code against the configured value.
-
-    An empty configured code never authorizes access, so a missing
-    ``AGENT_INVITE_CODE`` fails closed rather than open.
-    """
-    configured = _resolve(expected, "AGENT_INVITE_CODE")
-    if not configured:
-        return False
-    if not isinstance(candidate, str) or not candidate:
-        return False
-    return hmac.compare_digest(candidate, configured)
 
 
 def _signing_key(key) -> bytes:

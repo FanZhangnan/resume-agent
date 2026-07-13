@@ -1,16 +1,8 @@
-"""Offline tests for invite verification and stateless signed run tokens."""
+"""Offline tests for stateless signed run tokens."""
 
 import run_security as rs
 
 KEY = "test-signing-key-please-rotate"
-
-
-def test_invite_constant_time_and_exact():
-    assert rs.verify_invite("open-sesame", expected="open-sesame") is True
-    assert rs.verify_invite("Open-Sesame", expected="open-sesame") is False
-    assert rs.verify_invite("", expected="open-sesame") is False
-    assert rs.verify_invite("anything", expected="") is False
-    assert rs.verify_invite(None, expected="open-sesame") is False
 
 
 def test_signed_token_round_trip():

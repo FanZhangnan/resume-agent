@@ -6,7 +6,6 @@ import time
 import zipfile
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
-os.environ["AGENT_INVITE_CODE"] = "let-me-in"
 os.environ["AGENT_RUN_SIGNING_KEY"] = "unit-test-signing-key"
 os.environ["CRON_SECRET"] = "cron-secret"
 
@@ -52,7 +51,7 @@ def _client():
 
 
 def _start_ok(client, **overrides):
-    data = {"invite_code": "let-me-in", "jd_text": "招聘后端工程师，需要 Python 经验",
+    data = {"jd_text": "招聘后端工程师，需要 Python 经验",
             "model": "gpt-5.5", "reasoning": "xhigh"}
     data.update(overrides.pop("data", {}))
     files = overrides.pop("files", {
@@ -78,15 +77,6 @@ def test_status_reports_vercel_mode():
     client, _, _ = _client()
     body = client.get("/api/status").json()
     assert body["deployment_mode"] == "vercel"
-
-
-def test_invite_rejected():
-    client, _, _ = _client()
-    assert _start_ok(client, data={"invite_code": "wrong"}).status_code == 403
-    resp = client.post("/api/runs", data={"jd_text": "x", "model": "gpt-5.5",
-                                          "reasoning": "xhigh"},
-                       files={"resume_file": ("r.txt", b"hi there resume", "text/plain")})
-    assert resp.status_code == 403
 
 
 def test_model_validation_rejects_forbidden():

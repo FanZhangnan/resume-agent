@@ -12,7 +12,6 @@ import shutil
 import subprocess
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
-os.environ.setdefault("AGENT_INVITE_CODE", "let-me-in")
 os.environ.setdefault("AGENT_RUN_SIGNING_KEY", "unit-test-signing-key")
 
 HERE = os.path.dirname(os.path.abspath(__file__))

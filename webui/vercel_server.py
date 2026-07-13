@@ -1,7 +1,7 @@
 """FastAPI serverless entrypoint for the Vercel Hobby deployment.
 
 This module has no sweeper threads, subprocesses, global job registry, sessions,
-or quota files. It validates the invite and model policy, extracts the uploaded
+or quota files. It validates the model policy, extracts the uploaded
 resume in the request (deleting the temp file in ``finally``), starts a durable
 workflow, and serves signed-token status, cancellation, deletion, and cron
 cleanup endpoints. The gateway key and base URL are never exposed to the browser.
@@ -252,7 +252,6 @@ def api_status():
 @app.post("/api/runs")
 async def create_run(
     request: Request,
-    invite_code: str = Form(""),
     jd_text: str = Form(""),
     resume_text: str = Form(""),
     model: str = Form(""),
@@ -260,9 +259,6 @@ async def create_run(
     job_search: str = Form("0"),
     resume_file: UploadFile = File(None),
 ):
-    if not run_security.verify_invite(invite_code):
-        return JSONResponse({"error": "邀请码无效"}, status_code=403)
-
     try:
         model, reasoning = config.validate_model_reasoning(model, reasoning)
     except ValueError as error:
