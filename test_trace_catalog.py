@@ -230,28 +230,94 @@ def test_emit_trace_falls_back_when_append_or_summary_raises_runtime_error():
         assert private_prompt not in output.getvalue()
 
 
+def test_emit_trace_uses_redacted_emergency_stdout_when_catalog_fails():
+    secret = "sk-live-emergency-must-stay-private"
+    private_prompt = "private emergency prompt must stay private"
+    private_error = "catalog failure must not reach stdout"
+
+    def fail_emit(*args, **kwargs):
+        raise RuntimeError(private_error)
+
+    failure_catalogs = (
+        RuntimeError(private_error),
+        SimpleNamespace(emit=fail_emit),
+    )
+    for index, failure_catalog in enumerate(failure_catalogs, start=1):
+        output = io.StringIO()
+        catalog_patch = (
+            patch("trace_catalog.get_trace_catalog", side_effect=failure_catalog)
+            if isinstance(failure_catalog, Exception)
+            else patch("trace_catalog.get_trace_catalog", return_value=failure_catalog)
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"AGENT_RUN_ID": f"emergency-fallback-{index}"},
+                clear=False,
+            ),
+            catalog_patch,
+            redirect_stdout(output),
+        ):
+            record = emit_trace(
+                "llm.call.started",
+                level="warning",
+                span="llm:test",
+                step=3,
+                data={
+                    "api_key": secret,
+                    "prompt": private_prompt,
+                    "attempt": 1,
+                },
+            )
+
+        trace_lines = [
+            line for line in output.getvalue().splitlines()
+            if line.startswith(TRACE_PREFIX)
+        ]
+        assert len(trace_lines) == 1
+        mirrored = json.loads(trace_lines[0][len(TRACE_PREFIX):])
+        assert record == mirrored
+        assert mirrored["schema"] == "resume-agent.trace.v1"
+        assert mirrored["run_id"] == f"emergency-fallback-{index}"
+        assert mirrored["event"] == "llm.call.started"
+        assert mirrored["level"] == "warning"
+        assert mirrored["span"] == "llm:test"
+        assert mirrored["step"] == 3
+        assert mirrored["data"]["api_key"] == "[REDACTED]"
+        assert mirrored["data"]["prompt"] == "[REDACTED]"
+        assert mirrored["data"]["attempt"] == 1
+        assert mirrored["data"]["error_class"] == "RuntimeError"
+        assert secret not in output.getvalue()
+        assert private_prompt not in output.getvalue()
+        assert private_error not in output.getvalue()
+
+
 def test_trace_storage_fallback_preserves_deadline_and_base_exception_semantics():
     class StorageDeadline(RuntimeError):
         is_run_deadline = True
 
-    for expected, failure in (
-        (StorageDeadline, StorageDeadline("run deadline")),
-        (KeyboardInterrupt, KeyboardInterrupt()),
+    for failure_target in (
+        "trace_catalog.Path.mkdir",
+        "trace_catalog.get_trace_catalog",
     ):
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "AGENT_RUN_ID": "storage-exception-contract",
-                    "AGENT_TRACE_DIR": "/var/task/output/traces",
-                },
-                clear=False,
-            ),
-            patch("trace_catalog.Path.mkdir", side_effect=failure),
+        for expected, failure in (
+            (StorageDeadline, StorageDeadline("run deadline")),
+            (KeyboardInterrupt, KeyboardInterrupt()),
         ):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_RUN_ID": "storage-exception-contract",
+                        "AGENT_TRACE_DIR": "/var/task/output/traces",
+                    },
+                    clear=False,
+                ),
+                patch(failure_target, side_effect=failure),
+            ):
+                _reset_trace_catalog_for_tests()
+                _assert_raises(expected, lambda: emit_trace("run.started"))
             _reset_trace_catalog_for_tests()
-            _assert_raises(expected, lambda: emit_trace("run.started"))
-        _reset_trace_catalog_for_tests()
 
 
 class _FailingCompletions:
@@ -1427,6 +1493,7 @@ def main():
     test_trace_catalog_writes_ordered_redacted_events()
     test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable()
     test_emit_trace_falls_back_when_append_or_summary_raises_runtime_error()
+    test_emit_trace_uses_redacted_emergency_stdout_when_catalog_fails()
     test_trace_storage_fallback_preserves_deadline_and_base_exception_semantics()
     test_llm_owns_exactly_two_attempts_and_disables_sdk_retries()
     test_llm_completion_trace_includes_usage_and_finish_reason()

@@ -81,6 +81,28 @@ def _raise_if_run_deadline(error):
         raise error
 
 
+def _emergency_trace_record(event, kwargs, error):
+    data = _sanitize(kwargs.get("data") or {})
+    if not isinstance(data, dict):
+        data = {"data_type": type(data).__name__}
+    data["error_class"] = type(error).__name__
+    return {
+        "schema": TRACE_SCHEMA,
+        "run_id": _safe_run_id(os.environ.get("AGENT_RUN_ID")),
+        "seq": 0,
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        ),
+        "mono_ms": 0,
+        "event": str(event),
+        "level": str(kwargs.get("level", "info")),
+        "span": str(kwargs["span"]) if kwargs.get("span") is not None else None,
+        "parent": str(kwargs["parent"]) if kwargs.get("parent") is not None else None,
+        "step": kwargs.get("step"),
+        "data": data,
+    }
+
+
 class TraceCatalog:
     """为单次运行写 JSONL，并把同一事件镜像到 stdout。"""
 
@@ -241,7 +263,13 @@ def emit_trace(event, **kwargs):
         return get_trace_catalog().emit(event, **kwargs)
     except Exception as error:
         _raise_if_run_deadline(error)
-        return None
+        record = _emergency_trace_record(event, kwargs, error)
+        print(
+            TRACE_PREFIX
+            + json.dumps(record, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
+        return record
 
 
 def _reset_trace_catalog_for_tests():
