@@ -80,6 +80,26 @@ def test_workflow_body_has_no_blob_client_io():
     assert trace._run_id == "run-contract"
 
 
+def test_paid_llm_steps_disable_sdk_retries():
+    from workflows import resume_workflow as module
+
+    paid_steps = (
+        module.step_extract,
+        module.step_analyze_jd,
+        module.step_match,
+        module.step_suggest,
+        module.step_verify,
+    )
+    assert all(step.max_retries == 0 for step in paid_steps)
+
+    idempotent_steps = (
+        module.step_trace_stage,
+        module.step_trace_cancelled,
+        module.step_run_boundary,
+    )
+    assert all(step.max_retries == 3 for step in idempotent_steps)
+
+
 def test_ga_worker_adapter_registers_workflow_subscriptions():
     source_path = os.path.join(ROOT, "workflows", "vercel_worker.py")
     assert os.path.isfile(source_path)

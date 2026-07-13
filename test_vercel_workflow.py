@@ -159,6 +159,37 @@ def test_provider_failure_produces_partial_not_exception():
     assert "本报告不完整" in result["report"]
 
 
+def test_match_timeout_category_survives_into_stage_trace():
+    class TimeoutMatchOps(FakeOps):
+        async def match(self, resume_info, jd_analysis):
+            self.calls.append("match")
+            return {
+                "success": False,
+                "error": "private upstream timeout detail",
+                "error_category": "timeout",
+            }
+
+    class CapturingTrace(FakeTrace):
+        def __init__(self):
+            super().__init__()
+            self.details = []
+
+        async def stage(self, stage_id, status, **data):
+            await super().stage(stage_id, status, **data)
+            self.details.append((stage_id, status, data))
+
+    trace = CapturingTrace()
+    result = run(run_workflow_graph(_payload(), TimeoutMatchOps(), trace))
+
+    assert result["status"] == "partial"
+    failed_match = next(
+        data for stage_id, status, data in trace.details
+        if stage_id == 5 and status == "failed"
+    )
+    assert failed_match["error_category"] == "timeout"
+    assert "private upstream timeout detail" not in str(trace.details)
+
+
 def test_foundation_failure_is_failed_without_empty_report():
     ops = FakeOps(fail={"extract", "analyze_jd"})
     trace = FakeTrace()

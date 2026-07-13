@@ -176,4 +176,7 @@ def execute_tool(tool_name, arguments):
     except Exception as error:
         if getattr(error, "is_run_deadline", False):
             raise
-        return {"success": False, "error": str(error), "tool_name": tool_name}
+        result = {"success": False, "error": str(error), "tool_name": tool_name}
+        if isinstance(error, TimeoutError):
+            result["error_category"] = "timeout"
+        return result

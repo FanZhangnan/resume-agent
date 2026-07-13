@@ -92,32 +92,21 @@ def calculate_match(resume_info, jd_analysis, preferences=None):
         for item in evidence_catalog
     ]
     prompt = f"""
-请逐项对比候选人简历结构化信息与JD分析，输出紧凑JSON，每个数组最多6项，字段必须包含：
-score: 0到100的整数匹配度
+请根据下方标准化要求与证据目录逐项评估，只输出紧凑JSON：
+score: 0到100的整数解释草稿
 score_reason: 100字以内评分依据
-high_matches: 数组，高度匹配项，每项包含 requirement_id, requirement, evidence, reason
-partial_matches: 数组，部分匹配项，每项包含 requirement_id, requirement, evidence, gap, improvement
-missing_requirements: 数组，缺失项，每项包含 requirement_id, requirement, impact, possible_action
-redundant_or_irrelevant: 数组，简历中与目标岗位弱相关或冗余的内容
-risks: 数组，风险点，如年限不足、领域不匹配、证据薄弱
+requirement_evidence: 为每个requirement_id输出且仅输出一行，每行只含requirement_id, status, evidence_ids
+redundant_or_irrelevant: 最多6项弱相关或冗余内容
+risks: 最多6项年限、领域或证据风险
 recommendation: 100字以内建议
-requirement_evidence: 不限条数的数组，必须为标准化要求清单中的每个requirement_id输出且仅输出一行；每行包含requirement_id, status, evidence_ids。status只能是met、under_evidenced、missing；met/under_evidenced必须引用下方证据目录中的真实evidence_id，missing的evidence_ids必须为空数组。不得编造证据ID
-requirement_id必须从下方标准化要求清单中原样选取。score仅作解释草稿，系统会按逐项证据在本地重新计算最终分数。
+
+status只能是met、under_evidenced、missing。met/under_evidenced必须引用证据目录中的真实evidence_id，missing的evidence_ids必须为空数组。requirement_id必须从要求清单原样选取，不得编造要求或证据。系统会在本地重建匹配分类并重算最终分数。
 
 标准化要求清单：
 {compact_text(to_pretty_json(requirements))}
 
 简历证据目录：
 {compact_text(to_pretty_json(prompt_evidence_catalog))}
-
-用户求职偏好（仅作可审计证据，不得从自由文本推断硬门槛是否满足）：
-{compact_text(to_pretty_json(preferences or ""))}
-
-简历信息：
-{compact_text(to_pretty_json(resume_info))}
-
-JD分析：
-{compact_text(to_pretty_json(jd_analysis))}
 """
     result = ask_json(
         prompt,

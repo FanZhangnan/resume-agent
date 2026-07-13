@@ -94,7 +94,10 @@ class TraceCatalog:
             output_dir = Path(os.environ.get("AGENT_OUTPUT_DIR", "output"))
             self.trace_dir = output_dir / "traces" / self.run_id
         self.trace_path = self.trace_dir / "trace.jsonl"
-        self._prepare_path()
+        try:
+            self._prepare_path()
+        except OSError:
+            self.trace_path = None
 
     def _prepare_path(self):
         self.trace_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -132,12 +135,22 @@ class TraceCatalog:
                 "data": _sanitize(data or {}),
             }
             serialized = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-            with self.trace_path.open("a", encoding="utf-8") as trace_file:
-                trace_file.write(serialized + "\n")
-                trace_file.flush()
+            if self.trace_path is not None:
+                try:
+                    with self.trace_path.open("a", encoding="utf-8") as trace_file:
+                        trace_file.write(serialized + "\n")
+                        trace_file.flush()
+                except OSError:
+                    self.trace_path = None
             print(TRACE_PREFIX + serialized, flush=True)
-            if record["event"] in ("run.completed", "run.error"):
-                self._write_summary(record)
+            if (
+                self.trace_path is not None
+                and record["event"] in ("run.completed", "run.error")
+            ):
+                try:
+                    self._write_summary(record)
+                except OSError:
+                    self.trace_path = None
             return record
 
     def _write_summary(self, terminal_event):

@@ -24,6 +24,7 @@ from trace_catalog import (
     TRACE_PREFIX,
     TraceCatalog,
     _reset_trace_catalog_for_tests,
+    emit_trace,
 )
 from webui import server
 
@@ -123,6 +124,57 @@ def test_trace_catalog_writes_ordered_redacted_events():
 
         assert stat.S_IMODE(trace_path.stat().st_mode) & 0o077 == 0
         assert stat.S_IMODE(trace_path.parent.stat().st_mode) & 0o077 == 0
+
+
+def test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable():
+    secret = "sk-live-must-never-reach-stdout"
+    private_prompt = "private resume prompt must stay private"
+    failure_targets = (
+        "trace_catalog.Path.mkdir",
+        "trace_catalog.os.open",
+    )
+
+    for index, failure_target in enumerate(failure_targets, start=1):
+        output = io.StringIO()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AGENT_RUN_ID": f"stdout-fallback-{index}",
+                    "AGENT_TRACE_DIR": "/var/task/output/traces",
+                },
+                clear=False,
+            ),
+            patch(failure_target, side_effect=PermissionError("read-only filesystem")),
+            redirect_stdout(output),
+        ):
+            _reset_trace_catalog_for_tests()
+            record = emit_trace(
+                "llm.call.started",
+                span="llm:test",
+                data={
+                    "api_key": secret,
+                    "prompt": private_prompt,
+                    "attempt": 1,
+                },
+            )
+        _reset_trace_catalog_for_tests()
+
+        trace_lines = [
+            line for line in output.getvalue().splitlines()
+            if line.startswith(TRACE_PREFIX)
+        ]
+        assert len(trace_lines) == 1
+        mirrored = json.loads(trace_lines[0][len(TRACE_PREFIX):])
+        assert record == mirrored
+        assert mirrored["event"] == "llm.call.started"
+        assert mirrored["data"] == {
+            "api_key": "[REDACTED]",
+            "prompt": "[REDACTED]",
+            "attempt": 1,
+        }
+        assert secret not in output.getvalue()
+        assert private_prompt not in output.getvalue()
 
 
 class _FailingCompletions:
@@ -1296,6 +1348,7 @@ def test_cli_client_construction_failure_emits_terminal_error():
 
 def main():
     test_trace_catalog_writes_ordered_redacted_events()
+    test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable()
     test_llm_owns_exactly_two_attempts_and_disables_sdk_retries()
     test_llm_completion_trace_includes_usage_and_finish_reason()
     test_stream_consumption_honors_call_deadline()

@@ -18,6 +18,13 @@ from workflows.graph import run_workflow_graph
 from workflows.runtime import wf
 
 
+def _paid_llm_step(func):
+    """Register a paid model step without SDK-level replay retries."""
+    step = wf.step(func)
+    step.max_retries = 0
+    return step
+
+
 def _run_tool_sync(tool_name, arguments, settings):
     from runtime_context import use_run_settings
     from tools import execute_tool
@@ -71,7 +78,7 @@ async def step_run_boundary(run_id, deadline_epoch):
     }
 
 
-@wf.step
+@_paid_llm_step
 async def step_extract(resume_text, model, reasoning, deadline_epoch):
     return await _run_tool(
         "extract_resume_info", {"resume_text": resume_text},
@@ -79,14 +86,14 @@ async def step_extract(resume_text, model, reasoning, deadline_epoch):
     )
 
 
-@wf.step
+@_paid_llm_step
 async def step_analyze_jd(jd_text, model, reasoning, deadline_epoch):
     return await _run_tool(
         "analyze_jd", {"jd_text": jd_text}, model, reasoning, deadline_epoch,
     )
 
 
-@wf.step
+@_paid_llm_step
 async def step_match(resume_info, jd_analysis, model, reasoning, deadline_epoch):
     return await _run_tool(
         "calculate_match",
@@ -95,7 +102,7 @@ async def step_match(resume_info, jd_analysis, model, reasoning, deadline_epoch)
     )
 
 
-@wf.step
+@_paid_llm_step
 async def step_suggest(resume_info, jd_analysis, match_result, fix_instructions,
                        model, reasoning, deadline_epoch):
     arguments = {
@@ -110,7 +117,7 @@ async def step_suggest(resume_info, jd_analysis, match_result, fix_instructions,
     )
 
 
-@wf.step
+@_paid_llm_step
 async def step_verify(resume_info, jd_analysis, match_result, suggestions,
                       model, reasoning, deadline_epoch):
     return await _run_tool(

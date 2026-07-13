@@ -91,6 +91,8 @@ def _unresolved_fixes(state):
 def _error_category(result):
     if not isinstance(result, dict):
         return "invalid_result"
+    if result.get("error_category") == "timeout":
+        return "timeout"
     if getattr(result, "get", None) and result.get("error"):
         return "tool_error"
     return "unsuccessful"
@@ -99,6 +101,8 @@ def _error_category(result):
 def _category_from_exception(error):
     if getattr(error, "is_run_deadline", False):
         return "deadline"
+    if isinstance(error, TimeoutError):
+        return "timeout"
     return type(error).__name__
 
 

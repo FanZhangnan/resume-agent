@@ -11,6 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault("AGENT_MOCK", "1")
 
 import config
+import tools as tools_module
 from agent import ResumeAgent
 from llm_client import (
     CallDeadlineExceeded,
@@ -51,7 +52,7 @@ def test_exact_catalog_defaults_and_budgets():
     assert (config.MODEL_NAME, config.REASONING_EFFORT) == (
         "gpt-5.5", "xhigh"
     )
-    assert config.CALL_DEADLINE == 110
+    assert config.CALL_DEADLINE == 180
     assert config.RUN_TIMEOUT == 720
     assert config.WATCHDOG_GRACE == 15
     assert config.ASK_TIMEOUT == 45
@@ -295,6 +296,18 @@ def test_tool_call_deadline_is_not_misclassified_as_run_timeout():
     assert getattr(error, "is_run_deadline", False) is False
 
 
+def test_execute_tool_preserves_privacy_safe_timeout_category():
+    def timed_out(**arguments):
+        raise CallDeadlineExceeded("private upstream timeout detail")
+
+    with patch.object(tools_module, "get_tool_function", return_value=timed_out):
+        result = tools_module.execute_tool("calculate_match", {})
+
+    assert result["success"] is False
+    assert result["tool_name"] == "calculate_match"
+    assert result["error_category"] == "timeout"
+
+
 def test_shorter_bound_run_deadline_keeps_run_timeout_classification():
     original_client = common._client
     with patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False):
@@ -456,6 +469,7 @@ def main():
         test_resume_agent_owns_one_validated_run_context,
         test_resume_agent_run_binds_and_restores_its_context,
         test_tool_call_deadline_is_not_misclassified_as_run_timeout,
+        test_execute_tool_preserves_privacy_safe_timeout_category,
         test_shorter_bound_run_deadline_keeps_run_timeout_classification,
         test_equal_expired_deadlines_prefer_run_source_for_real_client,
         test_equal_expired_deadlines_prefer_run_source_for_mock_client,

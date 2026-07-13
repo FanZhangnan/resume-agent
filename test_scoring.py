@@ -1520,6 +1520,39 @@ def test_calculate_match_uses_local_score_instead_of_llm_score():
     assert "search_text" not in ask.call_args.args[0]
 
 
+def test_calculate_match_prompt_uses_normalized_inputs_without_raw_duplicates():
+    llm_result = {
+        "score": 0,
+        "requirement_evidence": [{
+            "requirement_id": "hard-001",
+            "status": "missing",
+            "evidence_ids": [],
+        }],
+    }
+    resume_marker = "RAW_RESUME_BLOCK_MUST_NOT_BE_DUPLICATED"
+    jd_marker = "RAW_JD_BLOCK_MUST_NOT_BE_DUPLICATED"
+    with patch("tools.analysis.ask_json", return_value=llm_result) as ask:
+        result = calculate_match(
+            {
+                "skills": ["Python"],
+                "private_debug_payload": resume_marker,
+            },
+            {
+                "hard_requirements": ["SQL"],
+                "private_debug_payload": jd_marker,
+            },
+        )
+
+    assert result["success"] is True
+    prompt = ask.call_args.args[0]
+    assert "标准化要求清单：" in prompt
+    assert "简历证据目录：" in prompt
+    assert "简历信息：" not in prompt
+    assert "JD分析：" not in prompt
+    assert resume_marker not in prompt
+    assert jd_marker not in prompt
+
+
 def test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries():
     jd_analysis = {
         "hard_requirements": [
@@ -1880,6 +1913,7 @@ def main():
         test_score_is_clamped_to_zero_and_one_hundred,
         test_met_without_real_evidence_is_downgraded_without_invented_id,
         test_calculate_match_uses_local_score_instead_of_llm_score,
+        test_calculate_match_prompt_uses_normalized_inputs_without_raw_duplicates,
         test_calculate_match_scores_uncapped_exhaustive_ledger_not_ui_summaries,
         test_calculate_match_rebuilds_visible_summaries_from_local_ledger,
         test_generate_suggestions_uses_strict_suggestion_validator,
