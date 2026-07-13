@@ -9,6 +9,7 @@ production uses durable Vercel steps while tests use fakes.
 
 import asyncio
 import os
+import re
 import time
 
 import config
@@ -75,6 +76,94 @@ def _required_fixes(verification):
         if text:
             fixes.append(text)
     return fixes
+
+
+_STAR_SECTION_RE = re.compile(
+    r"(?<![A-Z])STAR(?![A-Z])(?:法则)?(?:改写|辅助段落|段落|内容|条目|项)?(?:中|内|里)",
+    re.IGNORECASE,
+)
+_MAIN_RESUME_MARKERS = (
+    "简历", "优化稿", "最终稿", "交付稿", "交付内容", "履历", "正文", "结构化",
+    "技能", "工作", "项目", "教育", "证书", "语言", "基本信息", "个人信息",
+    "联系方式", "求职目标", "自我介绍", "摘要", "其他", "其余",
+    "DELIVERABLE", "RESUME", "CV", "OUTPUT", "SUMMARY", "SKILL",
+    "EXPERIENCE", "EDUCATION", "PROJECT",
+)
+_VERIFICATION_RISK_FIELDS = (
+    "overstatement_issues", "fabrication_risks", "logic_issues",
+    "match_authenticity_issues",
+)
+_STAR_FIX_TAIL_PREFIXES = ("只保留", "保留", "改为", "调整为")
+
+
+def _is_star_only_issue(value):
+    if not isinstance(value, str):
+        return False
+    text = str(value).strip()
+    upper = text.upper()
+    match = _STAR_SECTION_RE.search(text)
+    if not match or any(marker in upper for marker in _MAIN_RESUME_MARKERS):
+        return False
+    remainder = text[match.end():]
+    if any(scope_marker in remainder for scope_marker in ("中", "内", "里")):
+        return False
+    for separator in ("，", ",", "；", ";"):
+        if separator not in remainder:
+            continue
+        tail = remainder.split(separator, 1)[1].lstrip()
+        if not tail.startswith(_STAR_FIX_TAIL_PREFIXES):
+            return False
+    return True
+
+
+def _resolve_star_only_fixes(verification, suggestions):
+    """Remove an optional STAR section when it is the only remaining blocker."""
+    raw_fixes = (
+        verification.get("required_fixes")
+        if isinstance(verification, dict)
+        else None
+    )
+    if (
+        not isinstance(raw_fixes, list)
+        or not raw_fixes
+        or not all(isinstance(item, str) and item.strip() for item in raw_fixes)
+    ):
+        return verification, suggestions, []
+    fixes = _required_fixes(verification)
+    star_rows = (
+        suggestions.get("star_rewrites")
+        if isinstance(suggestions, dict)
+        else None
+    )
+    risk_rows = []
+    if isinstance(verification, dict):
+        for key in _VERIFICATION_RISK_FIELDS:
+            rows = verification.get(key) or []
+            if not isinstance(rows, list):
+                return verification, suggestions, []
+            risk_rows.extend(rows)
+    if (
+        not fixes
+        or not isinstance(star_rows, list)
+        or not star_rows
+        or not all(_is_star_only_issue(issue) for issue in fixes + risk_rows)
+    ):
+        return verification, suggestions, []
+
+    cleaned_suggestions = {**suggestions, "star_rewrites": []}
+    cleaned_verification = dict(verification or {})
+    cleaned_verification.update({
+        "passed": True,
+        "safe_to_deliver": True,
+        "required_fixes": [],
+        "overall_assessment": (
+            "最终复检仅发现可选STAR辅助段落存在推断；"
+            "系统已删除该段落，优化版简历正文保持不变。"
+        ),
+    })
+    for key in _VERIFICATION_RISK_FIELDS:
+        cleaned_verification[key] = []
+    return cleaned_verification, cleaned_suggestions, fixes
 
 
 def _unresolved_fixes(state):
@@ -321,6 +410,18 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     if s7 != "completed":
         return await _finalize(trace, state, "partial", model, reasoning)
     state["verification"] = v7
+    (
+        state["verification"], state["suggestions"], star_fixes,
+    ) = _resolve_star_only_fixes(
+        state["verification"], state["suggestions"],
+    )
+    if star_fixes:
+        state["correction_log"].append({
+            "round": 0,
+            "issues": star_fixes,
+            "resolved": True,
+            "resolution": "移除可选STAR改写段落",
+        })
 
     # One targeted repair round if the strict delivery gate is not yet met.
     if not delivery_is_complete(state["verification"], state["suggestions"]):
@@ -345,12 +446,27 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                 )
                 if r7s == "completed":
                     state["verification"] = r7v
+                    (
+                        state["verification"], state["suggestions"],
+                        residual_star_fixes,
+                    ) = _resolve_star_only_fixes(
+                        state["verification"], state["suggestions"],
+                    )
+                else:
+                    residual_star_fixes = []
                 resolved = delivery_is_complete(
                     state["verification"], state["suggestions"]
                 )
-                state["correction_log"].append(
-                    {"round": 1, "issues": fixes, "resolved": resolved}
-                )
+                correction = {
+                    "round": 1, "issues": fixes, "resolved": resolved,
+                }
+                if residual_star_fixes:
+                    correction["issues"] = fixes + [
+                        issue for issue in residual_star_fixes
+                        if issue not in fixes
+                    ]
+                    correction["resolution"] = "移除可选STAR改写段落"
+                state["correction_log"].append(correction)
 
     term = await boundary()
     return await _finalize(trace, state, term or "completed", model, reasoning)

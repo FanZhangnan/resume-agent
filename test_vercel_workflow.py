@@ -99,6 +99,18 @@ class FakeOps:
         return {"success": True, "verification": dict(result)}
 
 
+class StarSuggestionOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        result = await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+        result["suggestions"]["star_rewrites"] = [{
+            "original": "verified original",
+            "rewritten": "UNSAFE OPTIONAL STAR TEXT",
+        }]
+        return result
+
+
 def _payload(**kw):
     base = {"resume_text": "张三 后端工程师", "jd_text": "招后端工程师，需要 Python",
             "model": "gpt-5.5", "reasoning": "xhigh", "deadline_epoch": None,
@@ -238,6 +250,140 @@ def test_targeted_repair_runs_once_and_recovers():
     assert len(suggest_calls) == 2
     assert suggest_calls[1][1] == ("删除夸大表述",)     # repair passed the fixes
     assert ops.calls.count("verify") == 2
+
+
+def test_star_only_verification_removes_optional_section_without_paid_repair():
+    star_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR改写中的推断场景"],
+        "fabrication_risks": ["STAR改写中包含未证实场景"],
+    }
+    ops, trace = StarSuggestionOps(verify_sequence=[star_issue]), FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert "UNSAFE OPTIONAL STAR TEXT" not in result["report"]
+    assert "未证实场景" not in result["report"]
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 1
+    assert ops.calls.count("verify") == 1
+    assert trace.statuses(7).count("completed") == 1
+
+
+def test_revision_star_only_residual_is_removed_without_third_llm_call():
+    final_star_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [
+            "删除STAR中的推断背景",
+            "中性改写STAR中的未证实任务",
+        ],
+    }
+    ops = StarSuggestionOps(verify_sequence=[_VERIFY_BAD, final_star_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert "UNSAFE OPTIONAL STAR TEXT" not in result["report"]
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 2
+    assert ops.calls.count("verify") == 2
+
+
+def test_star_named_fix_does_not_hide_non_star_risk_rows():
+    mixed_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR改写中的推断场景"],
+        "fabrication_risks": ["优化版简历正文新增了未证实技能"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 2
+
+
+def test_start_prefix_is_not_treated_as_star_section():
+    start_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["修正START日期字段"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[start_issue, start_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_star_and_main_resume_fix_is_not_auto_resolved():
+    mixed_fix = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR改写及优化版简历正文中的虚构内容"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_star_and_optimized_draft_fix_is_not_auto_resolved():
+    mixed_fix = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR改写和优化稿中的虚构内容"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_star_and_other_section_fix_is_not_auto_resolved():
+    mixed_fix = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR中的推断和其他段落的虚构内容"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_star_and_second_scoped_draft_fix_is_not_auto_resolved():
+    mixed_fix = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["删除STAR中的推断和改后文案中的未证实内容"],
+    }
+    ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_structured_star_fix_cannot_hide_main_draft_issue():
+    structured_fix = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [{
+            "fix": "删除STAR中的推断",
+            "issue": "优化稿正文也含虚构内容",
+        }],
+    }
+    ops = StarSuggestionOps(verify_sequence=[structured_fix, structured_fix])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
 
 
 def test_cancellation_after_repair_skips_second_verification():
