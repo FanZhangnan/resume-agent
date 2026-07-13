@@ -4,6 +4,9 @@
 .claude/
 venv/
 .venv312/
+node_modules/
+package.json
+package-lock.json
 .playwright-cli/
 
 # Caches and OS cruft

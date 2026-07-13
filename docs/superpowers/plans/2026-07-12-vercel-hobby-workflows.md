@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deploy an invite-only, observable resume optimization workflow on Vercel Hobby that supports exactly four model/effort combinations and reaches an application terminal state within 780 seconds.
+**Goal:** Deploy a quota-controlled, observable resume optimization workflow on Vercel Hobby that supports exactly four model/effort combinations and reaches an application terminal state within 780 seconds.
 
 **Architecture:** A dedicated FastAPI serverless entrypoint parses uploads and starts a durable Python Workflow. Top-level workflow steps execute the deterministic eight-stage graph, use strict typed contracts, and write privacy-safe stage status to Private Vercel Blob. The existing local subprocess/SSE server remains available, while the same frontend switches to signed-token polling on Vercel.
 
@@ -19,7 +19,7 @@
 - `tools/job_sources.py`: normalized, source-verified recruiting connectors.
 - `tools/recommendation.py`: live discovery and local ranking orchestration.
 - `report_renderer.py`: pure deterministic final and partial report rendering.
-- `run_security.py`: invite verification and stateless signed run tokens.
+- `run_security.py`: legacy stateless signed run-token helpers.
 - `vercel_trace.py`: Private Blob stage status, cancellation, and cleanup.
 - `workflows/runtime.py`: one shared `Workflows` registry.
 - `workflows/resume_workflow.py`: top-level workflow and durable steps.
@@ -367,7 +367,7 @@ Expected: FAIL because both modules are absent.
 
 - [ ] **Step 3: Implement stateless run tokens**
 
-Create `run_security.py` with URL-safe base64 payloads containing `run_id` and `exp`, signed with HMAC-SHA256 from `AGENT_RUN_SIGNING_KEY`. Verify signatures with `hmac.compare_digest`, reject expired tokens, and never log token contents. Implement `verify_invite()` against `AGENT_INVITE_CODE` with the same constant-time comparison.
+Create `run_security.py` with URL-safe base64 payloads containing `run_id` and `exp`, signed with HMAC-SHA256 from `AGENT_RUN_SIGNING_KEY`. Verify signatures with `hmac.compare_digest`, reject expired tokens, and never log token contents. This legacy token design is superseded by Cookie session ownership.
 
 - [ ] **Step 4: Implement Private Blob stage documents**
 
@@ -488,7 +488,7 @@ git commit -m "实现Vercel八阶段持久工作流"
 
 - [ ] **Step 1: Write failing API contract tests**
 
-Create `test_vercel_api.py` using FastAPI `TestClient` and injected fake workflow/trace dependencies. Cover `/api/config`, upload type and 4 MB limits, scanned/empty file rejection, missing no-JD preferences, invite rejection, exact model validation, signed start response, status polling, final result retrieval only after completion, cooperative cancellation, trace deletion, and cron authorization.
+Create `test_vercel_api.py` using FastAPI `TestClient` and injected fake workflow/trace dependencies. Cover `/api/config`, upload type and 4 MB limits, scanned/empty file rejection, missing no-JD preferences, quota and session rejection, exact model validation, start response, status polling, final result retrieval only after completion, cooperative cancellation, trace deletion, and cron authorization.
 
 Assert that `/api/config` returns only:
 
@@ -614,7 +614,7 @@ git commit -m "增加Vercel轮询界面并收紧前端安全"
 
 - [ ] **Step 1: Document deployment and privacy behavior**
 
-Document Private Blob creation, environment variable names, one-day Workflow retention, 24-48 hour trace cleanup, invite-only preview, exact model combinations, 4 MB upload limit, cooperative cancellation, and the absence of mid-run questions. State that previously shared credentials must be rotated before Production.
+Document Private Blob creation, environment variable names, one-day Workflow retention, 24-48 hour trace cleanup, quota-controlled public preview, exact model combinations, 4 MB upload limit, cooperative cancellation, and the absence of mid-run questions. State that previously shared credentials must be rotated before Production.
 
 - [ ] **Step 2: Run the complete offline suite under Python 3.12**
 
@@ -648,7 +648,7 @@ Run tracked-file scans for API-key patterns, `.env`, resume/JD fixture leakage b
 
 - [ ] **Step 4: Build and deploy a Vercel Preview**
 
-Use `npx vercel@latest whoami`, link or import the GitHub repository, create and connect one Private Blob store, and configure Preview environment values: rotated gateway key, fixed `AGENT_BASE_URL`, `AGENT_INVITE_CODE`, `AGENT_RUN_SIGNING_KEY`, `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`, `AGENT_DEFAULT_MODEL=gpt-5.5`, and `AGENT_REASONING=xhigh`. Do not configure Sol or `max`.
+Use `npx vercel@latest whoami`, link or import the GitHub repository, create and connect one Private Blob store, and configure Preview environment values: rotated gateway key, fixed `AGENT_BASE_URL`, `AGENT_RUN_SIGNING_KEY`, `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`, `AGENT_DEFAULT_MODEL=gpt-5.5`, and `AGENT_REASONING=xhigh`. Do not configure Sol or `max`.
 
 Run `npx vercel@latest deploy` and record the Preview URL. Verify `/api/config` before starting paid gateway calls.
 
@@ -664,7 +664,7 @@ If any combination fails, block Production promotion, reproduce the cause with a
 
 - [ ] **Step 7: Promote the tested commit and verify Production**
 
-Deploy the exact tested commit with `npx vercel@latest --prod`. Recheck `/api/config`, one invite-protected mock run, one live GPT-5.5/xhigh supplied-JD run, Blob trace deletion, and Vercel Logs redaction. Report the Production URL and any remaining Hobby quota constraints.
+Deploy the exact tested commit with `npx vercel@latest --prod`. Recheck `/api/config`, one Cookie-scoped mock run, one live GPT-5.5/xhigh supplied-JD run, Blob trace deletion, and Vercel Logs redaction. Report the Production URL and any remaining Hobby quota constraints.
 
 - [ ] **Step 8: Commit documentation and final verification record**
 

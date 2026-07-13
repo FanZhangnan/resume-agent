@@ -78,10 +78,14 @@ class LLMClient:
         )
         return CallDeadlineExceeded(message)
 
-    def __init__(self, model=None, reasoning=None):
+    def __init__(self, model=None, reasoning=None, api_key=None, mock=None):
         active = current_settings()
         selected_model = active.model if model is None else model
         selected_reasoning = active.reasoning if reasoning is None else reasoning
+        selected_api_key = active.api_key if api_key is None else str(api_key).strip()
+        selected_mock = active.mock if mock is None else mock
+        if selected_mock is not None and not isinstance(selected_mock, bool):
+            raise TypeError("mock 必须是 bool 或 None")
         self.model, self.reasoning = config.validate_model_reasoning(
             selected_model,
             selected_reasoning,
@@ -90,7 +94,11 @@ class LLMClient:
         self.last_finish_reason = None
         # 只暴露运行指标，不保存prompt或模型原文。
         self.last_call_metrics = {}
-        self.mock_mode = os.environ.get("AGENT_MOCK", "") == "1"
+        self.mock_mode = (
+            os.environ.get("AGENT_MOCK", "") == "1"
+            if selected_mock is None
+            else selected_mock
+        )
         self.streaming = config.STREAMING
         if self.mock_mode:
             from mock_data import reset_mock_counters
@@ -99,7 +107,10 @@ class LLMClient:
             print("🧪 [Mock模式] 当前使用离线演示数据，不会真正调用API")
             return
 
-        if not config.API_KEY:
+        effective_api_key = (
+            config.API_KEY if selected_api_key is None else selected_api_key
+        )
+        if not effective_api_key:
             raise ValueError(
                 "未检测到API密钥！请先在终端执行：\n"
                 "export OPENAI_API_KEY=你的得否网关密钥\n"
@@ -107,7 +118,7 @@ class LLMClient:
             )
         self.client = OpenAI(
             base_url=config.API_BASE_URL,
-            api_key=config.API_KEY,
+            api_key=effective_api_key,
             default_headers={"User-Agent": "curl/8.7.1"},
             timeout=min(config.REQUEST_TIMEOUT, config.CALL_DEADLINE),
             max_retries=0,

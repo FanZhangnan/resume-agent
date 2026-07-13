@@ -117,7 +117,7 @@ class TraceStore:
         except (ValueError, TypeError):
             return None
 
-    async def _list(self, prefix):
+    async def _list(self, prefix, *, raise_errors=False):
         blobs = []
         cursor = None
         seen_cursors = set()
@@ -125,6 +125,8 @@ class TraceStore:
             try:
                 result = await self._client.list_objects(prefix=prefix, cursor=cursor)
             except Exception:
+                if raise_errors:
+                    raise
                 return blobs
             blobs.extend(list(getattr(result, "blobs", []) or []))
             next_cursor = getattr(result, "cursor", None)
@@ -168,20 +170,28 @@ class TraceStore:
         await self._put_json(self._cancel_path(run_id), {"status": "cancelled"})
 
     async def is_cancelled(self, run_id) -> bool:
-        return bool(await self._list(self._cancel_path(run_id)))
+        return bool(await self._list(self._cancel_path(run_id), raise_errors=True))
 
     async def delete_run(self, run_id):
-        refs = [self._ref(b) for b in await self._list(self._run_root(run_id) + "/")]
+        refs = [
+            self._ref(b)
+            for b in await self._list(
+                self._run_root(run_id) + "/", raise_errors=True,
+            )
+        ]
         refs = [ref for ref in refs if ref]
         if refs:
             try:
                 await self._client.delete(refs)
             except Exception:
+                item_errors = []
                 for ref in refs:
                     try:
                         await self._client.delete(ref)
-                    except Exception:
-                        pass
+                    except Exception as item_error:
+                        item_errors.append(item_error)
+                if item_errors:
+                    raise item_errors[-1]
 
     async def cleanup_before(self, epoch):
         """Delete every run whose most recent document predates ``epoch``."""

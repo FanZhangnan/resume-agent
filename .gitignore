@@ -12,6 +12,7 @@ webui/runs/
 # ===== 环境与缓存 =====
 venv/
 .venv312/
+node_modules/
 .playwright-cli/
 __pycache__/
 *.pyc

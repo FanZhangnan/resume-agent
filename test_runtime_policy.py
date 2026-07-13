@@ -115,6 +115,100 @@ def test_runtime_budget_converts_epoch_to_monotonic_time():
         assert monotonic_deadline() == 90.0
 
 
+def test_run_settings_normalize_api_key_and_keep_it_out_of_repr():
+    secret = "runtime-secret-should-never-leak"
+    settings = RunSettings(
+        "gpt-5.5",
+        "xhigh",
+        api_key=f"  {secret}  ",
+        mock=False,
+    )
+
+    assert settings.api_key == secret
+    assert settings.mock is False
+    assert secret not in repr(settings)
+    assert RunSettings("gpt-5.5", "xhigh", api_key=" \t ").api_key is None
+    assert RunSettings("gpt-5.5", "xhigh").mock is None
+
+
+def test_client_explicit_byok_and_real_mode_override_bound_and_global_policy():
+    gateway = "https://fixed-gateway.example/v1"
+    bound = RunSettings(
+        "gpt-5.5",
+        "xhigh",
+        api_key="bound-runtime-key",
+        mock=True,
+    )
+    with (
+        use_run_settings(bound),
+        patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False),
+        patch.object(config, "API_KEY", "site-funded-key"),
+        patch.object(config, "API_BASE_URL", gateway),
+        patch("llm_client.OpenAI") as openai,
+    ):
+        client = LLMClient(
+            api_key="  explicit-runtime-key  ",
+            mock=False,
+        )
+
+    assert client.mock_mode is False
+    assert openai.call_args.kwargs["api_key"] == "explicit-runtime-key"
+    assert openai.call_args.kwargs["base_url"] == gateway
+
+
+def test_client_uses_bound_byok_and_mock_policy_when_arguments_are_omitted():
+    settings = RunSettings(
+        "gpt-5.6-terra",
+        "high",
+        api_key="bound-byok-key",
+        mock=False,
+    )
+    with (
+        use_run_settings(settings),
+        patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False),
+        patch.object(config, "API_KEY", "site-funded-key"),
+        patch("llm_client.OpenAI") as openai,
+    ):
+        client = LLMClient()
+
+    assert client.mock_mode is False
+    assert openai.call_args.kwargs["api_key"] == "bound-byok-key"
+
+
+def test_explicit_mock_true_skips_openai_even_when_environment_is_real():
+    with (
+        patch.dict(os.environ, {"AGENT_MOCK": "0"}, clear=False),
+        patch.object(config, "API_KEY", "site-funded-key"),
+        patch("llm_client.OpenAI") as openai,
+    ):
+        client = LLMClient(mock=True)
+
+    assert client.mock_mode is True
+    openai.assert_not_called()
+
+
+def test_real_client_without_byok_uses_site_funded_key_and_preserves_key_error():
+    with (
+        patch.dict(os.environ, {"AGENT_MOCK": "0"}, clear=False),
+        patch.object(config, "API_KEY", "site-funded-key"),
+        patch("llm_client.OpenAI") as openai,
+    ):
+        client = LLMClient(mock=False)
+
+    assert client.mock_mode is False
+    assert openai.call_args.kwargs["api_key"] == "site-funded-key"
+
+    with (
+        patch.dict(os.environ, {"AGENT_MOCK": "1"}, clear=False),
+        patch.object(config, "API_KEY", ""),
+        patch("llm_client.OpenAI") as missing_key_openai,
+    ):
+        error = _assert_raises(ValueError, lambda: LLMClient(mock=False))
+
+    assert "未检测到API密钥" in str(error)
+    missing_key_openai.assert_not_called()
+
+
 def test_client_uses_instance_model_and_reasoning_for_request_and_trace():
     traces = []
     calls = []
@@ -178,8 +272,13 @@ def test_tool_clients_are_cached_by_active_model_pair():
     common._thread_clients = threading.local()
     created = []
 
-    def factory(model=None, reasoning=None):
-        client = SimpleNamespace(model=model, reasoning=reasoning)
+    def factory(model=None, reasoning=None, api_key=None, mock=None):
+        client = SimpleNamespace(
+            model=model,
+            reasoning=reasoning,
+            api_key=api_key,
+            mock=mock,
+        )
         created.append(client)
         return client
 
@@ -203,6 +302,75 @@ def test_tool_clients_are_cached_by_active_model_pair():
         ("gpt-5.5", "high"),
         ("gpt-5.6-terra", "xhigh"),
     ]
+    assert [(item.api_key, item.mock) for item in created] == [
+        (None, None),
+        (None, None),
+    ]
+
+
+def test_tool_client_cache_never_retains_byok_clients_or_raw_keys():
+    original_client = common._client
+    original_thread_clients = common._thread_clients
+    common._client = None
+    common._thread_clients = threading.local()
+    created = []
+    first_secret = "sk-runtime-alpha-SUPER-SECRET"
+    second_secret = "sk-runtime-beta-SUPER-SECRET"
+
+    def factory(model=None, reasoning=None, api_key=None, mock=None):
+        client = SimpleNamespace(
+            model=model,
+            reasoning=reasoning,
+            api_key=api_key,
+            mock=mock,
+        )
+        created.append(client)
+        return client
+
+    first_settings = RunSettings(
+        "gpt-5.5", "xhigh", api_key=first_secret, mock=False,
+    )
+    second_settings = RunSettings(
+        "gpt-5.5", "xhigh", api_key=second_secret, mock=False,
+    )
+    mock_settings = RunSettings(
+        "gpt-5.5", "xhigh", api_key=second_secret, mock=True,
+    )
+    try:
+        with patch.object(common, "LLMClient", side_effect=factory):
+            with use_run_settings(first_settings):
+                first = common.get_client()
+                first_again = common.get_client()
+            with use_run_settings(second_settings):
+                second = common.get_client()
+            with use_run_settings(mock_settings):
+                mock_client = common.get_client()
+                assert common.get_client() is mock_client
+            with use_run_settings(RunSettings("gpt-5.5", "xhigh")):
+                site_client = common.get_client()
+                assert common.get_client() is site_client
+        cache_keys = tuple(common._thread_clients.clients)
+        cached_clients = tuple(common._thread_clients.clients.values())
+    finally:
+        common._client = original_client
+        common._thread_clients = original_thread_clients
+
+    assert first_again is not first
+    assert second is not first
+    assert mock_client is not second
+    assert len(created) == 5
+    assert [(item.api_key, item.mock) for item in created] == [
+        (first_secret, False),
+        (first_secret, False),
+        (second_secret, False),
+        (None, True),
+        (None, None),
+    ]
+    assert cached_clients == (mock_client, site_client)
+    cache_text = repr(cache_keys)
+    assert first_secret not in cache_text
+    assert second_secret not in cache_text
+    assert "SUPER-SECRET" not in cache_text
 
 
 def test_pipeline_worker_binds_agent_run_settings():
@@ -247,6 +415,38 @@ def test_resume_agent_owns_one_validated_run_context():
         "gpt-5.6-terra",
         "high",
     )
+
+
+def test_resume_agent_preserves_bound_byok_and_mock_for_tool_workers():
+    secret = "sk-bound-agent-runtime-secret"
+    bound = RunSettings(
+        "gpt-5.5",
+        "xhigh",
+        deadline_epoch=2000.0,
+        api_key=secret,
+        mock=False,
+    )
+    with use_run_settings(bound):
+        agent = ResumeAgent("private resume", "private JD")
+
+    assert agent.settings == bound
+    assert agent.client.mock_mode is False
+    assert secret not in repr(agent.settings)
+    assert secret not in repr(agent.client)
+
+    observed = []
+
+    def execute(_tool_name, _arguments):
+        observed.append(current_settings())
+        return {"success": True}
+
+    with patch("pipeline.execute_tool", side_effect=execute):
+        outcome = DeterministicPipeline(agent)._call_tool(
+            "extract_resume_info", {}, "stage-2", 2,
+        )
+
+    assert outcome["error"] is None
+    assert observed == [bound]
 
 
 def test_resume_agent_run_binds_and_restores_its_context():
@@ -461,12 +661,19 @@ def main():
         test_invalid_model_reasoning_pairs_are_rejected,
         test_run_settings_are_immutable_and_nested_contexts_restore,
         test_runtime_budget_converts_epoch_to_monotonic_time,
+        test_run_settings_normalize_api_key_and_keep_it_out_of_repr,
+        test_client_explicit_byok_and_real_mode_override_bound_and_global_policy,
+        test_client_uses_bound_byok_and_mock_policy_when_arguments_are_omitted,
+        test_explicit_mock_true_skips_openai_even_when_environment_is_real,
+        test_real_client_without_byok_uses_site_funded_key_and_preserves_key_error,
         test_client_uses_instance_model_and_reasoning_for_request_and_trace,
         test_client_rejects_invalid_pair_even_in_mock_mode,
         test_mock_client_trace_keeps_instance_policy,
         test_tool_clients_are_cached_by_active_model_pair,
+        test_tool_client_cache_never_retains_byok_clients_or_raw_keys,
         test_pipeline_worker_binds_agent_run_settings,
         test_resume_agent_owns_one_validated_run_context,
+        test_resume_agent_preserves_bound_byok_and_mock_for_tool_workers,
         test_resume_agent_run_binds_and_restores_its_context,
         test_tool_call_deadline_is_not_misclassified_as_run_timeout,
         test_execute_tool_preserves_privacy_safe_timeout_category,

@@ -63,7 +63,7 @@ python webui/server.py                 # 打开 http://127.0.0.1:7860
 
 > **Vercel Hobby（免费版，小范围公开测试）**：无需长驻进程，用 FastAPI + Vercel Python Workflows 承载长运行。
 > 完整环境变量、Private Blob、构建与验收步骤见 **[docs/deployment-vercel.md](docs/deployment-vercel.md)**。
-> 该路径当前仅开放「粘贴 JD」流程，密钥只进 Vercel 环境变量、不下发浏览器。
+> 该路径当前仅开放「粘贴 JD」流程，支持每 IP 每日 2 次站点免费额度、Mock 和固定得否网关的 BYOK。会话由 HttpOnly Cookie 隔离，Key 不下发也不在浏览器持久化。
 
 本地默认是"个人模式"。设置 `AGENT_PUBLIC=1` 即切换为**公网多人模式**，专为"站长API资源有限"设计：
 
@@ -83,6 +83,7 @@ python webui/server.py
 - **限流**：每IP每小时最多6次启动（`AGENT_RUNS_PER_HOUR`）、Mock演示20次（`AGENT_MOCK_PER_HOUR`）、
   全局并发3个任务（`AGENT_MAX_CONCURRENT`）、每IP同时只能跑1个
 - **会话隔离**：基于Cookie，访客只能看到/操作自己的任务和报告，历史报告互不可见
+- **Vercel 运行安全**：BYOK 仅以 AES-GCM 密文临时存入 Redis，在运行终态删除，并由 15 分钟 TTL 兜底；浏览器不保存 Key 或运行令牌
 - **用后即焚**：上传的简历/JD与生成的报告文件在运行结束后立即从磁盘删除；
   报告只保留在该访客会话的内存里（最多5份、24小时过期），请访客及时下载
 

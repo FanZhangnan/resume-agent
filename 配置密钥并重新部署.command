@@ -36,8 +36,6 @@ for environment in preview production; do
   set_env OPENAI_API_KEY "$API_KEY_VALUE" "$environment"
   set_env AGENT_BASE_URL "$BASE_URL_VALUE" "$environment"
 
-  # 邀请码已下线，顺手清掉（不存在也无妨）
-  $VERCEL env rm AGENT_INVITE_CODE "$environment" --yes >/dev/null 2>&1 || true
 done
 
 echo ""

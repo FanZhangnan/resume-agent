@@ -6,6 +6,8 @@
   · 格式错误 → 附加纠错提示重试
   · 重试仍失败返回None（工具据此返回success=False，Agent可感知并重试）
 """
+import hashlib
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -56,19 +58,53 @@ def _validation_errors(error):
     return details
 
 
+def _api_key_fingerprint(api_key):
+    """Return a stable cache discriminator without retaining the raw key."""
+    normalized = "" if api_key is None else str(api_key).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _mock_cache_key(mock):
+    if mock is None:
+        return ("environment", os.environ.get("AGENT_MOCK", "") == "1")
+    return ("explicit", mock)
+
+
 def get_client():
     """获取当前线程的客户端；显式_client注入保留给现有离线测试。"""
     if _client is not None:
         return _client
     settings = current_settings()
-    key = (settings.model, settings.reasoning)
+    mock_key = _mock_cache_key(settings.mock)
+    effective_mock = mock_key[1]
+    if settings.api_key is not None and not effective_mock:
+        # BYOK clients must remain run-scoped; a thread cache would retain raw
+        # user credentials for the lifetime of a warm serverless worker.
+        return LLMClient(
+            model=settings.model,
+            reasoning=settings.reasoning,
+            api_key=settings.api_key,
+            mock=settings.mock,
+        )
+    effective_api_key = None if effective_mock else config.API_KEY
+    key = (
+        settings.model,
+        settings.reasoning,
+        mock_key,
+        _api_key_fingerprint(effective_api_key),
+    )
     clients = getattr(_thread_clients, "clients", None)
     if clients is None:
         clients = {}
         _thread_clients.clients = clients
     client = clients.get(key)
     if client is None:
-        client = LLMClient(model=settings.model, reasoning=settings.reasoning)
+        client = LLMClient(
+            model=settings.model,
+            reasoning=settings.reasoning,
+            api_key=None,
+            mock=settings.mock,
+        )
         clients[key] = client
     return client
 

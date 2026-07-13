@@ -3,7 +3,7 @@
 ## Goal
 
 Publish the repository to GitHub and operate the resume agent on Vercel Hobby
-for a small public test without an invite code. Restore the original public-mode
+for a small public test without an access code. Restore the original public-mode
 controls on the serverless path: two site-funded runs per IP per day, hourly
 rate limits, global and per-IP concurrency limits, BYOK on the configured
 gateway, and session-isolated run/report history.
@@ -60,12 +60,14 @@ admission atomically:
 
 BYOK and Mock never consume the daily site-funded quota. BYOK still consumes
 the real hourly allowance and all runs consume concurrency. A validation,
-upload-parse, credential-storage, or workflow-start failure releases the lease
-and refunds both applicable daily free counters. The hourly counter is never
-refunded, preventing malformed requests from bypassing rate limits. Once a
-workflow starts, completed, partial, failed, cancelled, and deadline outcomes
-count as usage. The workflow releases its lease in a durable terminal `finally`
-step; TTL is the crash fallback.
+upload-parse, credential-storage, or pre-binding workflow-start failure
+releases the lease and refunds both applicable daily free counters. The hourly
+counter is never refunded, preventing malformed requests from bypassing rate
+limits. Once a workflow starts, completed, partial, failed, cancelled, and
+deadline outcomes count as usage. The workflow first waits for its API-side
+ownership binding, then releases its lease in explicit durable terminal
+success/error branches; SDK suspension must not execute finalization. TTL is
+the crash fallback.
 
 The API returns stable error codes for `free_quota_exhausted`,
 `site_quota_exhausted`, `hourly_limit`, `ip_concurrent`, `global_concurrent`,
@@ -92,9 +94,10 @@ cancellation, start failure, or TTL expiry. Runs without BYOK read the site's
 `POST /api/runs` performs, in order: session issuance, request size/extension
 and model/input validation, IP normalization and HMAC hashing, atomic admission,
 optional BYOK encryption, upload parsing, Workflow start, run/session binding,
-and stage-one trace write. Failures after admission release the lease, delete
-any temporary credential, and refund applicable daily counters while retaining
-the hourly counter.
+and a best-effort stage-one trace write. Pre-binding failures after admission
+release the lease, delete any temporary credential, and refund applicable daily
+counters while retaining the hourly counter. Once ownership is bound, trace
+degradation cannot refund or release a possibly running workflow.
 
 The Workflow payload contains the admission ID, credential reference, session
 hash, Mock flag, model, reasoning, deadline, resume text, and JD text. Each tool
@@ -132,12 +135,12 @@ AGENT_BASE_URL=https://api.wangdefou.studio/v1
 - `AGENT_SESSION_REPORT_CAP=5`
 - `AGENT_ADMISSION_TTL=900`
 
-`AGENT_INVITE_CODE` is removed from code, tests, documentation, and Vercel.
+The retired access-code setting is absent from code, tests, documentation, and Vercel.
 Upstash is installed with the free plan, `primaryRegion=iad1`, and
 `autoUpgrade=false` so the resource cannot silently switch to paid usage.
-Python dependencies add `upstash-redis` for the REST Redis client and
-`cryptography` for AES-GCM; both are pinned consistently in the project lock
-and Vercel requirements.
+The Redis client uses Upstash's HTTP command protocol through the existing
+`httpx` dependency. Python dependencies add `cryptography` for AES-GCM and pin
+it consistently in the project lock and Vercel requirements.
 
 ## Security and Privacy
 

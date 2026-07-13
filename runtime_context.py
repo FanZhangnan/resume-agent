@@ -3,7 +3,7 @@
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import config
@@ -14,6 +14,8 @@ class RunSettings:
     model: str
     reasoning: str
     deadline_epoch: Optional[float] = None
+    api_key: Optional[str] = field(default=None, repr=False)
+    mock: Optional[bool] = None
 
     def __post_init__(self):
         model, reasoning = config.validate_model_reasoning(
@@ -24,6 +26,10 @@ class RunSettings:
         object.__setattr__(self, "reasoning", reasoning)
         if self.deadline_epoch is not None:
             object.__setattr__(self, "deadline_epoch", float(self.deadline_epoch))
+        api_key = None if self.api_key is None else str(self.api_key).strip()
+        object.__setattr__(self, "api_key", api_key or None)
+        if self.mock is not None and not isinstance(self.mock, bool):
+            raise TypeError("mock 必须是 bool 或 None")
 
 
 _RUN_SETTINGS = ContextVar("run_settings", default=None)

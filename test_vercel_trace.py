@@ -108,6 +108,23 @@ def test_cancel_marker_roundtrip():
     run(scenario())
 
 
+def test_cancel_check_propagates_blob_list_failure():
+    class FailingListClient(FakeBlobClient):
+        async def list_objects(self, **_kwargs):
+            raise RuntimeError("blob unavailable")
+
+    async def scenario():
+        store = TraceStore(client=FailingListClient())
+        try:
+            await store.is_cancelled("run-outage")
+        except RuntimeError as error:
+            assert "blob unavailable" in str(error)
+        else:
+            raise AssertionError("cancel check must fail closed on Blob outage")
+
+    run(scenario())
+
+
 def test_meta_roundtrip_is_sanitized():
     async def scenario():
         client = FakeBlobClient()
@@ -129,6 +146,26 @@ def test_delete_run_removes_all_paths():
         await store.write_meta("run-f", {"model": "gpt-5.5"})
         await store.delete_run("run-f")
         assert not [p for p in client.objects if p.startswith("runs/run-f/")]
+    run(scenario())
+
+
+def test_delete_run_propagates_blob_failures():
+    class FailingDeleteClient(FakeBlobClient):
+        async def delete(self, _url_or_path):
+            raise RuntimeError("blob delete unavailable")
+
+    async def scenario():
+        client = FailingDeleteClient()
+        store = TraceStore(client=client)
+        await store.write_stage("run-delete-outage", 2, {"status": "completed"})
+        try:
+            await store.delete_run("run-delete-outage")
+        except RuntimeError as error:
+            assert "blob delete unavailable" in str(error)
+        else:
+            raise AssertionError("Blob deletion failure was reported as success")
+        assert client.objects
+
     run(scenario())
 
 

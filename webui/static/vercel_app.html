@@ -23,6 +23,7 @@ header{display:flex;align-items:center;gap:12px;padding-bottom:18px;border-botto
 .mark{width:10px;height:10px;background:var(--ink)}
 h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.02em}
 .tag{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
+.quota-text{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--sub);white-space:nowrap}
 .grid{display:grid;grid-template-columns:1fr;gap:20px}
 @media(min-width:760px){.grid{grid-template-columns:360px 1fr}}
 label{display:block;font-size:12px;color:var(--sub);margin:14px 0 6px}
@@ -36,6 +37,20 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
 .btn-primary{width:100%;margin-top:18px;background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:600}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed}
 .btn-ghost{width:100%;margin-top:8px;background:transparent;color:var(--sub)}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-top:12px;min-height:30px}
+.toggle-row label{margin:0;color:var(--ink);cursor:pointer}
+.toggle-row input{width:16px;height:16px;margin:0;accent-color:var(--signal)}
+.recent-section{margin-top:22px;padding-top:16px;border-top:1px solid var(--hair)}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.section-head h2{font-size:12px;font-weight:600;color:var(--sub);margin:0}
+.history-list{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:7px;overflow:hidden}
+.history-item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;border-bottom:1px solid var(--hair)}
+.history-item:last-child{border-bottom:none}
+.history-open{min-width:0;border:0;border-radius:0;padding:9px 10px;text-align:left;background:transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-meta{font-family:var(--mono);font-size:10px;color:var(--faint);padding-right:8px;white-space:nowrap}
+.history-delete{border:0;border-left:1px solid var(--hair);border-radius:0;padding:9px 10px;color:var(--faint);background:transparent}
+.history-delete:disabled{opacity:.45;cursor:not-allowed}
+.history-empty{display:block;padding:10px;color:var(--faint);font-size:11.5px}
 .hidden{display:none}
 .note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.5}
 .stages{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:9px;overflow:hidden}
@@ -65,6 +80,7 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
   <header>
     <span class="mark"></span>
     <div><h1>简历优化 Agent</h1><div class="tag">Preview</div></div>
+    <div class="quota-text" id="quotaText">免费额度 --/--</div>
   </header>
 
   <div class="grid">
@@ -86,10 +102,23 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
         </div>
       </div>
 
+      <label for="apiKey">自有 API Key（可选）</label>
+      <input type="password" id="apiKey" autocomplete="off" spellcheck="false">
+
+      <div class="toggle-row">
+        <input type="checkbox" id="mockMode">
+        <label for="mockMode">Mock 模式</label>
+      </div>
+
       <button class="btn-primary" id="startBtn">开始分析</button>
       <button class="btn-ghost hidden" id="cancelBtn">取消本次运行</button>
-      <div class="note">简历文本会在一天内保留于 Vercel 工作流状态用于本次运行，结束后可删除。密钥仅在服务端，不会下发浏览器。当前预览仅支持粘贴 JD 的流程。</div>
+      <div class="note">简历文本会在一天内保留于 Vercel 工作流状态用于本次运行，结束后可删除。自有密钥仅用于本次提交，不会保存在浏览器中。</div>
       <div class="banner bad hidden" id="errBanner"></div>
+
+      <div class="recent-section">
+        <div class="section-head"><h2>最近任务</h2></div>
+        <ul class="history-list" id="recentRuns"><li class="history-empty">暂无任务</li></ul>
+      </div>
     </section>
 
     <section id="runPane">
@@ -112,14 +141,22 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
   </div>
 </div>
 
+<script nonce="__CSP_NONCE__" src="/_vercel/insights/script.js" defer></script>
+<script nonce="__CSP_NONCE__" src="/_vercel/speed-insights/script.js" defer></script>
 <script nonce="__CSP_NONCE__">
 "use strict";
 (function(){
   var POLL_MS = 2000;
-  var RUN_KEY = "resume_run";
   var STATE_LABEL = {pending:"待运行", running:"进行中", completed:"完成",
                      failed:"失败", skipped:"跳过", cancelled:"已取消"};
   var pollTimer = null;
+  var pollInFlight = false;
+  var pollGeneration = 0;
+  var historyRequestId = 0;
+  var navigationGeneration = 0;
+  var activeRunId = "";
+  var activeRunTerminal = false;
+  var freePerDay = null;
 
   function $(id){ return document.getElementById(id); }
 
@@ -190,16 +227,19 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     if(box){ box.classList.toggle("hidden"); }
   }
 
-  function currentRun(){
-    try{ return JSON.parse(sessionStorage.getItem(RUN_KEY) || "null"); }
-    catch(e){ return null; }
+  function updateQuota(freeLeft, total){
+    if(total != null && Number.isFinite(Number(total))){ freePerDay = Number(total); }
+    if(freeLeft == null){ return; }
+    var left = Math.max(0, Number(freeLeft) || 0);
+    $("quotaText").textContent = freePerDay == null
+      ? "免费额度 " + left
+      : "免费额度 " + left + "/" + freePerDay;
   }
 
-  function saveRun(run){ sessionStorage.setItem(RUN_KEY, JSON.stringify(run)); }
-  function clearRun(){ sessionStorage.removeItem(RUN_KEY); }
-
   async function loadConfig(){
-    var cfg = await (await fetch("/api/config")).json();
+    var response = await fetch("/api/config");
+    var cfg = await response.json();
+    if(!response.ok){ throw new Error(cfg.error || "config unavailable"); }
     var modelSel = $("modelSelect");
     modelSel.textContent = "";
     (cfg.model_options || []).forEach(function(m){
@@ -211,6 +251,7 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     });
     if(cfg.default_model){ modelSel.value = cfg.default_model; }
     syncReasoning();
+    updateQuota(cfg.free_left, cfg.free_per_day);
   }
 
   function syncReasoning(){
@@ -232,6 +273,18 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     return ["completed","partial","failed","cancelled","deadline_exceeded"].indexOf(status) !== -1;
   }
 
+  function resetRunView(){
+    $("report").classList.add("hidden");
+    $("partialBanner").classList.add("hidden");
+    $("downloadBtn").classList.add("hidden");
+    lastReportMarkdown = "";
+    for(var stage=1;stage<=8;stage++){
+      setStage(stage, "pending", "");
+      var box = $("std-"+stage);
+      if(box){ box.textContent = ""; box.classList.add("hidden"); }
+    }
+  }
+
   function applyStatus(data){
     (data.stages || []).forEach(function(s){
       var detail = s.duration_ms ? Math.round(s.duration_ms/1000)+"s" : "";
@@ -241,11 +294,13 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     var human = {running:"分析进行中……", completed:"分析完成", partial:"已完成（部分）",
                  failed:"运行失败", cancelled:"已取消", deadline_exceeded:"运行超时"};
     $("statusLine").textContent = human[data.status] || data.status || "";
+    activeRunTerminal = terminal(data.status);
     if(terminal(data.status)){
       stopPolling();
       $("cancelBtn").classList.add("hidden");
       $("startBtn").disabled = false;
       renderTerminal(data);
+      refreshPublicState();
     }
   }
 
@@ -283,26 +338,163 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
   }
 
   async function pollOnce(){
-    var run = currentRun();
-    if(!run){ stopPolling(); return; }
+    if(!activeRunId){ stopPolling(); return; }
+    if(pollInFlight){ return; }
+    pollInFlight = true;
+    var generation = pollGeneration;
+    var requestedRunId = activeRunId;
     try{
-      var resp = await fetch("/api/runs/" + encodeURIComponent(run.run_id), {
-        headers: { "Authorization": "Bearer " + run.token }
-      });
-      if(resp.status === 401){ stopPolling(); clearRun(); setError("会话令牌已失效，请重新开始。"); return; }
+      var resp = await fetch("/api/runs/" + encodeURIComponent(requestedRunId));
+      if(generation !== pollGeneration || requestedRunId !== activeRunId){ return; }
+      if(resp.status === 404){
+        stopPolling(); activeRunId = ""; activeRunTerminal = false;
+        setError("任务不存在或已过期。");
+        $("cancelBtn").classList.add("hidden");
+        $("startBtn").disabled = false;
+        refreshPublicState(); return;
+      }
       var data = await resp.json();
+      if(generation !== pollGeneration || requestedRunId !== activeRunId){ return; }
+      if(!resp.ok){ setError(data.error || "运行状态暂不可用"); return; }
+      setError("");
       applyStatus(data);
     }catch(e){ /* transient network error; keep polling */ }
+    finally{
+      if(generation === pollGeneration){ pollInFlight = false; }
+    }
   }
 
-  function startPolling(){
+  function startPolling(runId){
     stopPolling();
+    activeRunId = String(runId || "");
+    activeRunTerminal = false;
+    if(!activeRunId){ return; }
+    $("startBtn").disabled = true;
     $("cancelBtn").classList.remove("hidden");
     pollOnce();
     pollTimer = setInterval(pollOnce, POLL_MS);
   }
 
-  function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+  function stopPolling(){
+    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+    pollGeneration += 1;
+    pollInFlight = false;
+  }
+
+  function formatCreatedAt(value){
+    var timestamp = Number(value);
+    if(!Number.isFinite(timestamp)){ return ""; }
+    if(timestamp < 1000000000000){ timestamp *= 1000; }
+    try{ return new Date(timestamp).toLocaleString(); }
+    catch(e){ return ""; }
+  }
+
+  function renderHistory(runs){
+    var list = $("recentRuns");
+    list.textContent = "";
+    if(!runs.length){
+      var empty = document.createElement("li");
+      empty.className = "history-empty";
+      empty.textContent = "暂无任务";
+      list.appendChild(empty);
+      return;
+    }
+    runs.forEach(function(run){
+      var runId = String(run.run_id || "");
+      if(!runId){ return; }
+      var item = document.createElement("li");
+      item.className = "history-item";
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "history-open";
+      button.textContent = (run.model || "任务") + " · " + (STATE_LABEL[run.status] || run.status || "运行中");
+      button.addEventListener("click", function(){ openRun(runId); });
+      var meta = document.createElement("span");
+      meta.className = "history-meta";
+      meta.textContent = formatCreatedAt(run.created_at);
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "history-delete";
+      remove.textContent = "删除";
+      remove.setAttribute("aria-label", "删除任务");
+      var canDelete = terminal(run.status);
+      remove.disabled = !canDelete;
+      if(canDelete){
+        remove.addEventListener("click", function(){ deleteRun(runId); });
+      } else {
+        remove.title = "运行结束后可删除";
+      }
+      item.appendChild(button);
+      item.appendChild(meta);
+      item.appendChild(remove);
+      list.appendChild(item);
+    });
+  }
+
+  async function loadHistory(){
+    var requestId = ++historyRequestId;
+    var response, data;
+    try{
+      response = await fetch("/api/runs");
+      data = await response.json();
+    }catch(error){
+      if(requestId !== historyRequestId){ return null; }
+      throw error;
+    }
+    if(requestId !== historyRequestId){ return null; }
+    if(!response.ok){ throw new Error(data.error || "history unavailable"); }
+    var runs = Array.isArray(data.runs) ? data.runs : [];
+    updateQuota(data.free_left, null);
+    renderHistory(runs);
+    return runs;
+  }
+
+  function refreshPublicState(){
+    return loadHistory().catch(function(){ /* keep the current view */ });
+  }
+
+  function restoreStartButton(){
+    $("startBtn").disabled = Boolean(activeRunId && !activeRunTerminal);
+  }
+
+  async function recoverActiveRun(expectedGeneration){
+    var runs;
+    try{ runs = await loadHistory(); }
+    catch(e){ return false; }
+    if(expectedGeneration !== navigationGeneration){ return false; }
+    if(!Array.isArray(runs)){ return false; }
+    var active = runs.find(function(run){ return !terminal(run.status); });
+    if(!active || !active.run_id){ return false; }
+    resetRunView();
+    $("statusLine").textContent = "已从最近任务恢复运行";
+    startPolling(active.run_id);
+    return true;
+  }
+
+  function openRun(runId){
+    navigationGeneration += 1;
+    setError("");
+    resetRunView();
+    $("statusLine").textContent = "正在载入……";
+    startPolling(runId);
+  }
+
+  async function deleteRun(runId){
+    if(!window.confirm("删除这条任务记录？")){ return; }
+    navigationGeneration += 1;
+    try{
+      var response = await fetch("/api/runs/" + encodeURIComponent(runId), {method:"DELETE"});
+      var data = await response.json();
+      if(!response.ok){ setError(data.error || "删除失败"); return; }
+      if(activeRunId === runId){
+        stopPolling(); activeRunId = ""; activeRunTerminal = false; resetRunView();
+        $("cancelBtn").classList.add("hidden");
+        $("startBtn").disabled = false;
+        $("statusLine").textContent = "任务已删除";
+      }
+      await refreshPublicState();
+    }catch(e){ setError("删除失败，请稍后再试"); }
+  }
 
   async function onStart(){
     setError("");
@@ -310,57 +502,111 @@ button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 1
     var file = $("resumeFile").files[0];
     if(!file){ setError("请上传简历文件"); return; }
     if(!jd){ setError("请粘贴目标 JD"); return; }
+    navigationGeneration += 1;
+    var startGeneration = navigationGeneration;
 
     var fd = new FormData();
     fd.append("jd_text", jd);
     fd.append("model", $("modelSelect").value);
     fd.append("reasoning", $("reasoningSelect").value);
     fd.append("resume_file", file);
+    var mockEnabled = $("mockMode").checked;
+    fd.append("api_key", mockEnabled ? "" : $("apiKey").value.trim());
+    fd.append("mock", mockEnabled ? "1" : "0");
+    $("apiKey").value = "";
 
     $("startBtn").disabled = true;
-    $("report").classList.add("hidden");
-    $("partialBanner").classList.add("hidden");
-    $("downloadBtn").classList.add("hidden");
-    lastReportMarkdown = "";
-    for(var s=1;s<=8;s++){
-      setStage(s, "pending", "");
-      var box = $("std-"+s);
-      if(box){ box.textContent = ""; box.classList.add("hidden"); }
+    resetRunView();
+    var resp;
+    try{ resp = await fetch("/api/runs", { method:"POST", body: fd }); }
+    catch(e){
+      if(startGeneration !== navigationGeneration){
+        restoreStartButton(); refreshPublicState(); return;
+      }
+      $("startBtn").disabled = false;
+      setError("提交失败，请检查网络后重试");
+      return;
     }
-
-    var resp = await fetch("/api/runs", { method:"POST", body: fd });
+    if(startGeneration !== navigationGeneration){
+      restoreStartButton(); refreshPublicState(); return;
+    }
     if(!resp.ok){
       $("startBtn").disabled = false;
-      var msg = "提交失败";
-      try{ msg = (await resp.json()).error || msg; }catch(e){}
-      setError(msg);
+      var errorBody = {};
+      try{ errorBody = await resp.json(); }catch(e){}
+      if(startGeneration !== navigationGeneration){
+        restoreStartButton(); refreshPublicState(); return;
+      }
+      updateQuota(errorBody.free_left, null);
+      setError(errorBody.error || "提交失败");
+      if(errorBody.code === "run_start_uncertain"){
+        if(await recoverActiveRun(startGeneration)){
+          setError("运行已提交，已从最近任务恢复。");
+        }
+        return;
+      }
+      if(errorBody.code === "free_quota_exhausted" || errorBody.code === "site_quota_exhausted"){
+        $("mockMode").checked = false;
+        $("apiKey").disabled = false;
+        $("apiKey").focus();
+      }
       return;
     }
     var body = await resp.json();
-    saveRun({ run_id: body.run_id, token: body.token });
+    if(startGeneration !== navigationGeneration){
+      restoreStartButton(); refreshPublicState(); return;
+    }
+    body.status = body.status || "running";
+    activeRunId = body.run_id;
+    updateQuota(body.free_left, null);
     applyStatus(body);
-    startPolling();
+    startPolling(body.run_id);
+    await refreshPublicState();
   }
 
   async function onCancel(){
-    var run = currentRun();
-    if(!run){ return; }
+    if(!activeRunId){ return; }
+    var cancelRunId = activeRunId;
+    var cancelGeneration = navigationGeneration;
     try{
-      await fetch("/api/runs/" + encodeURIComponent(run.run_id) + "/cancel", {
-        method:"POST", headers:{ "Authorization":"Bearer " + run.token }
-      });
-    }catch(e){}
+      var response = await fetch(
+        "/api/runs/" + encodeURIComponent(cancelRunId) + "/cancel",
+        {method:"POST"}
+      );
+      var data = await response.json();
+      if(cancelRunId !== activeRunId || cancelGeneration !== navigationGeneration || activeRunTerminal){ return; }
+      if(!response.ok){ setError(data.error || "取消请求失败"); return; }
+      await refreshPublicState();
+      if(cancelRunId !== activeRunId || cancelGeneration !== navigationGeneration || activeRunTerminal){ return; }
+    }catch(e){
+      if(cancelRunId === activeRunId && cancelGeneration === navigationGeneration && !activeRunTerminal){
+        setError("取消请求失败，请稍后重试");
+      }
+      return;
+    }
     $("statusLine").textContent = "正在取消……";
   }
 
+  function syncMock(){
+    var enabled = $("mockMode").checked;
+    $("apiKey").disabled = enabled;
+    if(enabled){ $("apiKey").value = ""; }
+  }
+
   function boot(){
+    var bootGeneration = navigationGeneration;
     $("startBtn").addEventListener("click", onStart);
     $("cancelBtn").addEventListener("click", onCancel);
     $("downloadBtn").addEventListener("click", downloadReport);
     $("stages").addEventListener("click", toggleStageDetail);
     $("modelSelect").addEventListener("change", syncReasoning);
+    $("mockMode").addEventListener("change", syncMock);
     loadConfig().catch(function(){ setError("无法加载配置"); });
-    if(currentRun()){ startPolling(); }   // resume an active run after reload
+    loadHistory().then(function(runs){
+      if(!Array.isArray(runs) || bootGeneration !== navigationGeneration || activeRunId){ return; }
+      var active = runs.find(function(run){ return !terminal(run.status); });
+      if(active){ startPolling(active.run_id); }
+    }).catch(function(){ setError("无法加载最近任务"); });
   }
 
   if(document.readyState === "loading"){

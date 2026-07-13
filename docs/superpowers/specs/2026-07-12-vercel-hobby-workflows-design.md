@@ -2,7 +2,7 @@
 
 ## Goal and Success Criteria
 
-Deploy the resume agent on Vercel Hobby for invited testers without relying on a long-running FastAPI process. A run must expose useful progress, produce a grounded report or an explicit bounded failure, and reach an application terminal state within 780 seconds. The implementation target is 720 seconds, leaving a 60-second platform and network margin.
+Deploy the resume agent on Vercel Hobby for a small public test without relying on a long-running FastAPI process. A run must expose useful progress, produce a grounded report or an explicit bounded failure, and reach an application terminal state within 780 seconds. The implementation target is 720 seconds, leaving a 60-second platform and network margin.
 
 The public preview supports exactly these combinations:
 
@@ -25,7 +25,7 @@ The Python Workflow API is beta. This design pins `vercel==0.6.0`, targets Pytho
 
 The deployment has three explicit boundaries:
 
-1. `webui/vercel_server.py` is the FastAPI entrypoint. It validates the invite code and model policy, parses the upload, starts a workflow, and serves status, cancellation, and cleanup endpoints.
+1. `webui/vercel_server.py` is the FastAPI entrypoint. It validates quota, session ownership, and model policy, parses the upload, starts a workflow, and serves status, cancellation, and cleanup endpoints.
 2. `workflows/resume_workflow.py` registers top-level durable workflows and steps. Module paths and decorated function names remain stable because they form persisted workflow IDs.
 3. `vercel_trace.py` stores per-stage, privacy-safe status documents in a connected Private Vercel Blob store.
 
@@ -84,7 +84,7 @@ Completed reports stay in managed workflow output for Hobby's one-day retention 
 
 - Store a newly rotated gateway credential only in Vercel Environment Variables. Do not expose API keys or the gateway base URL to the browser.
 - Remove BYOK and arbitrary base-URL inputs from public mode. The configured gateway URL is server controlled.
-- Compare the preview invite code with `hmac.compare_digest`; protect run endpoints with expiring signed tokens and a separate signing key.
+- Protect run endpoints with signed HttpOnly Cookie sessions and a separate signing key.
 - Connect a Private Blob store and keep its read-write token server-side.
 - Sanitize rendered Markdown with DOMPurify, disable raw Markdown HTML, and apply a restrictive Content Security Policy.
 - Limit upload types, names, size, extracted-text size, and decompression work. Never trust a model-supplied file path.
@@ -103,13 +103,12 @@ The Vercel project requires these server-side values:
 
 - `OPENAI_API_KEY` or the existing gateway key variable, using a rotated value;
 - `AGENT_BASE_URL`, fixed by the operator;
-- `AGENT_INVITE_CODE`;
 - `AGENT_RUN_SIGNING_KEY`;
 - `BLOB_READ_WRITE_TOKEN`, created when the Private Blob store is connected;
 - `CRON_SECRET` for cleanup;
 - `AGENT_DEFAULT_MODEL=gpt-5.5` and `AGENT_REASONING=xhigh`.
 
-No Sol or `max` value may remain in Vercel environment settings. The deployment starts as a Vercel Preview deployment, runs the full acceptance matrix, and promotes the same tested commit to Production. Invite-only access remains enabled for the initial tester release to protect Hobby workflow, Function, gateway, and Blob quotas.
+No Sol or `max` value may remain in Vercel environment settings. The deployment starts as a Vercel Preview deployment, runs the full acceptance matrix, and promotes the same tested commit to Production. Cookie session ownership plus Redis-backed daily, hourly, and concurrency limits protect Hobby workflow, Function, gateway, and Blob quotas during the initial tester release.
 
 ## Verification and Acceptance
 

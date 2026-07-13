@@ -157,7 +157,8 @@ class ResumeAgent:
     """简历优化Agent：默认确定性流水线，保留ReAct诊断模式。"""
 
     def __init__(self, resume_input, jd_text=None, resume_is_file=False, output_dir=None,
-                 preferences=None, model=None, reasoning=None, deadline_epoch=None):
+                 preferences=None, model=None, reasoning=None, deadline_epoch=None,
+                 api_key=None, mock=None):
         """
         参数:
             resume_input: 简历文本或文件路径
@@ -167,6 +168,7 @@ class ResumeAgent:
             preferences: 岗位推荐模式下用户的求职偏好（如"在中国求职大厂实习"、"只考虑远程"）
             model/reasoning: 本次运行的精确模型策略
             deadline_epoch: 本次运行的绝对截止时间（Unix epoch）
+            api_key/mock: 本次运行的可选密钥与Mock策略；未传时继承当前运行上下文
         """
         active = current_settings()
         self.settings = RunSettings(
@@ -177,6 +179,8 @@ class ResumeAgent:
                 if deadline_epoch is None
                 else deadline_epoch
             ),
+            api_key=active.api_key if api_key is None else api_key,
+            mock=active.mock if mock is None else mock,
         )
         self.resume_input = resume_input
         self.jd_text = str(jd_text or "")
@@ -188,6 +192,8 @@ class ResumeAgent:
         self.client = LLMClient(
             model=self.settings.model,
             reasoning=self.settings.reasoning,
+            api_key=self.settings.api_key,
+            mock=self.settings.mock,
         )
         self.tool_definitions = get_tool_definitions()
         self.messages = []

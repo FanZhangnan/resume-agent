@@ -820,7 +820,7 @@ def test_tool_clients_are_thread_local_but_explicit_injection_still_wins():
     class FakeClient:
         pass
 
-    def factory(model=None, reasoning=None):
+    def factory(model=None, reasoning=None, api_key=None, mock=None):
         client = FakeClient()
         client.model = model
         client.reasoning = reasoning
