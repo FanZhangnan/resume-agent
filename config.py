@@ -24,11 +24,23 @@ def _load_env_file():
 
 _load_env_file()
 
-# ===== API配置（都可以用环境变量覆盖，不需要改代码）=====
-# 生产基线与实验引擎均通过明确 allowlist 开放；不根据模型名推断能力。
-API_BASE_URL = os.environ.get("AGENT_BASE_URL", "https://api.zenmux.ai/v1")
-# 密钥优先级：ZENMUX_API_KEY 优先，避免机器上残留的旧OPENAI_API_KEY静默覆盖
-API_KEY = os.environ.get("ZENMUX_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+# ===== API配置 =====
+# 生产基线与实验引擎共用唯一允许的得否网关。
+DEFOU_API_ORIGIN = "https://api.wangdefou.studio"
+DEFOU_API_BASE_URL = f"{DEFOU_API_ORIGIN}/v1"
+
+
+def normalize_gateway_base_url(value=None):
+    candidate = str(value or "").strip().rstrip("/")
+    if not candidate or candidate == DEFOU_API_ORIGIN:
+        return DEFOU_API_BASE_URL
+    if candidate == DEFOU_API_BASE_URL:
+        return DEFOU_API_BASE_URL
+    raise ValueError("API 网关仅支持 https://api.wangdefou.studio/v1")
+
+
+API_BASE_URL = normalize_gateway_base_url(os.environ.get("AGENT_BASE_URL"))
+API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 # status 表示质量/稳定性政策，tier 表示商业分档，两者不可混用。
 MODEL_OPTIONS = (

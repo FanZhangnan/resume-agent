@@ -32,6 +32,36 @@ def test_model_catalog():
     ]
 
 
+def test_gateway_policy_uses_defou_v1_only():
+    expected = "https://api.wangdefou.studio/v1"
+    assert config.DEFOU_API_BASE_URL == expected
+    assert config.normalize_gateway_base_url("") == expected
+    assert config.normalize_gateway_base_url("https://api.wangdefou.studio") == expected
+    assert config.normalize_gateway_base_url("https://api.wangdefou.studio/") == expected
+    assert config.normalize_gateway_base_url(expected + "/") == expected
+
+
+def test_gateway_policy_rejects_other_hosts_and_paths():
+    for value in (
+        "http://api.wangdefou.studio/v1",
+        "https://example.com/v1",
+        "https://api.wangdefou.studio/v2",
+        "https://api.wangdefou.studio/v1?debug=1",
+    ):
+        try:
+            config.normalize_gateway_base_url(value)
+        except ValueError:
+            continue
+        raise AssertionError(f"网关地址应被拒绝：{value}")
+
+
+def test_runtime_source_reads_only_the_generic_key():
+    source = (Path(__file__).parent / "config.py").read_text(encoding="utf-8")
+    obsolete_name = "ZEN" + "MUX_API_KEY"
+    assert 'os.environ.get("OPENAI_API_KEY", "")' in source
+    assert obsolete_name not in source
+
+
 def test_model_reasoning_resolution():
     assert server._resolve_model_reasoning("", "") == ("gpt-5.5", "xhigh")
     assert server._resolve_model_reasoning("gpt-5.5", "high") == ("gpt-5.5", "high")
@@ -103,6 +133,9 @@ def test_reasoning_level_is_never_silently_removed():
 
 def main():
     test_model_catalog()
+    test_gateway_policy_uses_defou_v1_only()
+    test_gateway_policy_rejects_other_hosts_and_paths()
+    test_runtime_source_reads_only_the_generic_key()
     test_model_reasoning_resolution()
     test_invalid_combinations_are_rejected()
     test_frontend_exposes_model_specific_reasoning()
