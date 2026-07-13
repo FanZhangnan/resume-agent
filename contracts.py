@@ -257,6 +257,7 @@ def _has_nested_semantic_content(value):
 
 
 class SuggestionResult(_StrictResult):
+    generation_mode: Literal["llm", "conservative_fallback"] = "llm"
     overall_strategy: str = ""
     rewrite_suggestions: list[Any] = Field(default_factory=list)
     star_rewrites: list[Any] = Field(default_factory=list)

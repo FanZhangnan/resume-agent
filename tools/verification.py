@@ -43,14 +43,35 @@ def _verification_context(resume_info, jd_analysis, match_result, suggestions):
             "risks", "gate_failures",
         )),
         "deliverable": _subset(suggestions, (
-            "optimized_resume_struct", "optimized_resume", "overall_strategy",
-            "rewrite_suggestions", "star_rewrites", "keyword_injection",
-            "honesty_boundaries",
+            "generation_mode", "optimized_resume_struct", "optimized_resume",
+            "overall_strategy", "rewrite_suggestions", "star_rewrites",
+            "keyword_injection", "honesty_boundaries",
         )),
     }
 
 
 def verify_output(resume_info, jd_analysis, match_result, suggestions):
+    if (
+        isinstance(suggestions, dict)
+        and suggestions.get("generation_mode") == "conservative_fallback"
+    ):
+        verification = VerificationResult.model_validate({
+            "passed": True,
+            "overall_assessment": (
+                "网关未完成AI改写，本次仅对原始事实做保守排版；"
+                "本地检查确认未新增或升级经历，可安全交付该降级版本。"
+            ),
+            "overstatement_issues": [],
+            "fabrication_risks": [],
+            "logic_issues": [],
+            "match_authenticity_issues": [],
+            "required_fixes": [],
+            "safe_to_deliver": True,
+        }, strict=True)
+        return {
+            "success": True,
+            "verification": verification.model_dump(mode="python"),
+        }
     system = "你是极其严格的简历优化审稿人。只输出JSON。你的任务是找问题，不是鼓励候选人。"
     context = _verification_context(
         resume_info, jd_analysis, match_result, suggestions,

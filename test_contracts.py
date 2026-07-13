@@ -159,6 +159,7 @@ def test_suggestion_result_requires_usable_text_or_struct():
         {"optimized_resume": "Candidate\nPython Engineer"}, strict=True
     )
     assert suggestions_are_usable(text_result) is True
+    assert text_result.generation_mode == "llm"
 
     struct_result = SuggestionResult.model_validate({
         "optimized_resume_struct": {
@@ -167,6 +168,18 @@ def test_suggestion_result_requires_usable_text_or_struct():
         },
     }, strict=True)
     assert suggestions_are_usable(struct_result) is True
+
+    fallback_result = SuggestionResult.model_validate({
+        "generation_mode": "conservative_fallback",
+        "optimized_resume": "Candidate\nPython Engineer",
+    }, strict=True)
+    assert suggestions_are_usable(fallback_result) is True
+    _assert_validation_error(
+        lambda: SuggestionResult.model_validate(
+            {"generation_mode": "unknown", "optimized_resume": "Candidate"},
+            strict=True,
+        )
+    )
 
 
 def test_suggestion_result_semantic_repair_reuses_one_deadline():

@@ -5,6 +5,7 @@ from contracts import (
     optimized_resume_struct_is_usable,
 )
 from tools.common import ask_json, get_client
+from trace_catalog import emit_trace
 from tools.scoring import (
     gates_from_jd,
     normalize_jd_requirements,
@@ -12,7 +13,13 @@ from tools.scoring import (
     requirement_ledger_from_match_result,
     score_requirements,
 )
-from utils import clip_text, compact_text, parse_resume_text_to_struct, to_pretty_json
+from utils import (
+    clip_text,
+    compact_text,
+    parse_resume_text_to_struct,
+    render_resume_text,
+    to_pretty_json,
+)
 
 _MATCH_SCHEMA = {
     "score": 0,
@@ -31,6 +38,7 @@ _MATCH_SCHEMA = {
 
 
 _SUGGESTION_SCHEMA = {
+    "generation_mode": "llm",
     "overall_strategy": "",
     "rewrite_suggestions": [],
     "star_rewrites": [],
@@ -39,6 +47,127 @@ _SUGGESTION_SCHEMA = {
     "optimized_resume": "",
     "optimized_resume_struct": {},
 }
+
+
+def _strings(value):
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = str(item.get("name") or item.get("details") or "").strip()
+        else:
+            text = ""
+        if text:
+            result.append(text)
+    return result
+
+
+def _conservative_resume_struct(resume_info):
+    """Map extracted facts to the rendering schema without rewriting claims."""
+    resume_info = resume_info if isinstance(resume_info, dict) else {}
+    basic = resume_info.get("basic_info")
+    basic = basic if isinstance(basic, dict) else {}
+    struct = {
+        "basic_info": {
+            key: str(basic.get(key) or "").strip()
+            for key in ("name", "phone", "email", "location", "target_role")
+        },
+        "summary": "",
+        "education": [],
+        "experience": [],
+        "projects": [],
+        "skills": [],
+        "extras": [],
+    }
+    for item in resume_info.get("education") or []:
+        if not isinstance(item, dict):
+            continue
+        details = str(item.get("details") or "").strip()
+        struct["education"].append({
+            "school": str(item.get("school") or "").strip(),
+            "degree": str(item.get("degree") or "").strip(),
+            "major": str(item.get("major") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "highlights": [details] if details else [],
+        })
+    experiences = (
+        resume_info.get("work_experience")
+        or resume_info.get("experience")
+        or []
+    )
+    for item in experiences:
+        if not isinstance(item, dict):
+            continue
+        bullets = (
+            _strings(item.get("responsibilities"))
+            + _strings(item.get("achievements"))
+        )
+        struct["experience"].append({
+            "company": str(item.get("company") or "").strip(),
+            "title": str(item.get("title") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "bullets": bullets,
+        })
+    for item in resume_info.get("projects") or []:
+        if not isinstance(item, dict):
+            continue
+        description = str(item.get("description") or "").strip()
+        bullets = (
+            ([description] if description else [])
+            + _strings(item.get("achievements"))
+        )
+        technologies = _strings(item.get("technologies"))
+        if technologies:
+            bullets.append("技术：" + "、".join(technologies))
+        struct["projects"].append({
+            "name": str(item.get("name") or "").strip(),
+            "role": str(item.get("role") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "bullets": bullets,
+        })
+    skills = _strings(resume_info.get("skills"))
+    if skills:
+        struct["skills"] = [{"group": "技能", "items": skills}]
+    struct["extras"] = (
+        _strings(resume_info.get("certificates"))
+        + _strings(resume_info.get("achievements"))
+    )
+    return struct
+
+
+def _conservative_suggestions(resume_info, reason):
+    struct = _conservative_resume_struct(resume_info)
+    result = {
+        "generation_mode": "conservative_fallback",
+        "overall_strategy": (
+            "模型生成未在时限内完成，本版仅对原始事实进行保守结构化排版；"
+            "未新增、扩写或升级任何经历。"
+        ),
+        "rewrite_suggestions": [],
+        "star_rewrites": [],
+        "keyword_injection": [],
+        "honesty_boundaries": [
+            "本次为可靠性降级结果，仅保留原简历已确认事实；建议稍后重试以获取完整AI改写。"
+        ],
+        "optimized_resume": render_resume_text(struct),
+        "optimized_resume_struct": struct,
+    }
+    validated = SuggestionResult.model_validate(result, strict=True)
+    emit_trace(
+        "suggestion.conservative_fallback",
+        level="warning",
+        data={"reason": reason},
+    )
+    return {
+        "success": True,
+        "suggestions": validated.model_dump(mode="python"),
+    }
 
 
 def _summary_rows_from_ledger(result, requirements, ledger):
@@ -183,20 +312,31 @@ JD分析：
 """
     label = "根据验证意见重新生成优化建议" if fix_instructions else "生成优化建议与优化版简历"
     # 完整简历仍是主要输出；建议项严格限量，避免高推理档在大预算下长时间展开。
-    result = ask_json(
-        prompt,
-        system,
-        _SUGGESTION_SCHEMA,
-        temperature=0.2,
-        label=label,
-        max_tokens=config.MAX_TOKENS,
-        retry_max_tokens=config.MAX_TOKENS,
-        validator=SuggestionResult,
-    )
-    if result is None:
-        return {"success": False, "error": "LLM未能返回合法JSON，请重试generate_suggestions"}
-    result = _ensure_struct(result)
-    validated = SuggestionResult.model_validate(result, strict=True)
+    try:
+        result = ask_json(
+            prompt,
+            system,
+            _SUGGESTION_SCHEMA,
+            temperature=0.2,
+            label=label,
+            max_tokens=config.MAX_TOKENS,
+            retry_max_tokens=config.MAX_TOKENS,
+            validator=SuggestionResult,
+        )
+        if result is None:
+            return _conservative_suggestions(
+                resume_info, "invalid_model_output",
+            )
+        result = dict(result)
+        result["generation_mode"] = "llm"
+        result = _ensure_struct(result)
+        validated = SuggestionResult.model_validate(result, strict=True)
+    except Exception as error:
+        if getattr(error, "is_run_deadline", False):
+            raise
+        return _conservative_suggestions(
+            resume_info, type(error).__name__,
+        )
     return {
         "success": True,
         "suggestions": validated.model_dump(mode="python"),

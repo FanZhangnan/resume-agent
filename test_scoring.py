@@ -1,6 +1,7 @@
 """Deterministic scoring and pure report rendering tests (offline only)."""
 
 import copy
+import json
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -1663,6 +1664,78 @@ def test_generate_suggestions_uses_bounded_compact_output_budget():
     assert "star_rewrites最多3项" in prompt
 
 
+def test_generate_suggestions_does_not_trust_model_fallback_marker():
+    untrusted = {
+        "generation_mode": "conservative_fallback",
+        "optimized_resume_struct": {
+            "basic_info": {"name": "Candidate"},
+            "experience": [{"company": "Example", "title": "Engineer"}],
+        },
+    }
+    with patch("tools.analysis.ask_json", return_value=untrusted):
+        result = generate_suggestions({}, {}, {})
+
+    assert result["success"] is True
+    assert result["suggestions"]["generation_mode"] == "llm"
+
+
+def test_generate_suggestions_falls_back_to_original_facts_on_gateway_failure():
+    with patch(
+        "tools.analysis.ask_json", side_effect=RuntimeError("gateway unavailable")
+    ):
+        result = generate_suggestions(
+            MOCK_RESUME_INFO, MOCK_JD_ANALYSIS, MOCK_MATCH,
+        )
+
+    assert result["success"] is True
+    suggestions = result["suggestions"]
+    assert suggestions["generation_mode"] == "conservative_fallback"
+    assert suggestions["optimized_resume_struct"]["basic_info"]["name"] == "李明"
+    bullets = suggestions["optimized_resume_struct"]["experience"][0]["bullets"]
+    assert "店铺日常活动配置" in bullets
+    serialized = json.dumps(suggestions, ensure_ascii=False)
+    assert "主导" not in serialized
+    assert "模型生成未在时限内完成" in suggestions["overall_strategy"]
+
+
+def test_generate_suggestions_never_swallows_run_deadline():
+    class RunDeadline(TimeoutError):
+        is_run_deadline = True
+
+    deadline = RunDeadline("run expired")
+    with patch("tools.analysis.ask_json", side_effect=deadline):
+        try:
+            generate_suggestions(MOCK_RESUME_INFO, MOCK_JD_ANALYSIS, MOCK_MATCH)
+        except RunDeadline as error:
+            assert error is deadline
+        else:
+            raise AssertionError("run deadline must propagate")
+
+
+def test_verify_output_locally_approves_conservative_fallback():
+    with patch(
+        "tools.analysis.ask_json", side_effect=RuntimeError("gateway unavailable")
+    ):
+        suggestions = generate_suggestions(
+            MOCK_RESUME_INFO, MOCK_JD_ANALYSIS, MOCK_MATCH,
+        )["suggestions"]
+
+    with patch(
+        "tools.verification.ask_json",
+        side_effect=AssertionError("fallback verification must stay local"),
+    ):
+        result = verify_output(
+            MOCK_RESUME_INFO, MOCK_JD_ANALYSIS, MOCK_MATCH, suggestions,
+        )
+
+    assert result["success"] is True
+    verification = result["verification"]
+    assert verification["passed"] is True
+    assert verification["safe_to_deliver"] is True
+    assert verification["required_fixes"] == []
+    assert "保守排版" in verification["overall_assessment"]
+
+
 def test_verify_output_uses_compact_deliverable_only_contract():
     valid = {
         "passed": True,
@@ -1988,6 +2061,10 @@ def main():
         test_calculate_match_rebuilds_visible_summaries_from_local_ledger,
         test_generate_suggestions_uses_strict_suggestion_validator,
         test_generate_suggestions_uses_bounded_compact_output_budget,
+        test_generate_suggestions_does_not_trust_model_fallback_marker,
+        test_generate_suggestions_falls_back_to_original_facts_on_gateway_failure,
+        test_generate_suggestions_never_swallows_run_deadline,
+        test_verify_output_locally_approves_conservative_fallback,
         test_verify_output_uses_compact_deliverable_only_contract,
         test_analyze_jd_uses_strict_explicit_gate_contract,
         test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate,
