@@ -79,6 +79,7 @@ npx vercel@latest login          # 或 whoami 确认已登录
 npx vercel@latest link           # 关联/新建项目
 # 在控制台或 CLI 配置好 §4 的环境变量（Preview 环境）
 npx vercel@latest build          # 本地构建：应识别 FastAPI 入口 + workflow worker(__wkf_*)
+.venv312/bin/python test_vercel_build_output.py  # 审计 web/worker 产物与敏感文件排除
 npx vercel@latest deploy         # 产出 Preview URL
 ```
 

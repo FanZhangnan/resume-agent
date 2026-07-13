@@ -228,6 +228,8 @@ AGENT_MOCK=1 .venv312/bin/python test_vercel_trace.py     # 私有 Blob 轨迹�
 AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_workflow.py  # 八阶段工作流图
 AGENT_WORKFLOW_TEST=1 .venv312/bin/python test_vercel_api.py                    # FastAPI 契约
 AGENT_WORKFLOW_TEST=1 .venv312/bin/python test_vercel_deploy_contract.py        # Vercel 构建/沙箱契约
+# 执行 `vercel build` 后：
+.venv312/bin/python test_vercel_build_output.py                                 # 产物路由/敏感文件审计
 AGENT_MOCK=1 .venv312/bin/python test_vercel_ui.py        # 前端源契约 + CSP + node --check
 ```
 

@@ -19,6 +19,21 @@ def test_vercel_config_does_not_mix_services_and_functions():
     assert not (
         "experimentalServices" in config and "functions" in config
     ), "Vercel rejects experimentalServices together with functions"
+    services = config.get("experimentalServices") or {}
+    web = services.get("web") or {}
+    assert web.get("type") == "web"
+    assert web.get("entrypoint") == "webui/vercel_server.py"
+    assert web.get("mount") == "/"
+    worker = services.get("resume_workflow") or {}
+    assert worker.get("type") == "worker"
+    assert worker.get("entrypoint") == "workflows/resume_workflow.py"
+    required_excludes = ("env", ".claude", ".playwright-cli", "output", "test_")
+    for name, service in (("web", web), ("resume_workflow", worker)):
+        excluded = service.get("excludeFiles")
+        assert isinstance(excluded, str), (
+            name, "@vercel/python only applies excludeFiles when it is a string"
+        )
+        assert all(token in excluded for token in required_excludes), (name, excluded)
 
 
 def test_pyproject_declares_all_runtime_dependencies():
