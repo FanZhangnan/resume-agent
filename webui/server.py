@@ -62,7 +62,6 @@ PROCESS_TERMINATE_TIMEOUT = float(
 
 ALLOWED_RESUME_EXT = {".pdf", ".docx", ".doc", ".txt", ".md", ".markdown"}
 REPORT_NAME_RE = re.compile(r"^resume_report_\d{8}_\d{6}\.md$")
-BASE_URL_RE = re.compile(r"^https?://[\w\-.:/]+$")
 ANSWER_PROMPT = "请输入回答"
 
 app = FastAPI(title="简历优化Agent UI")
@@ -84,6 +83,14 @@ def _resolve_model_reasoning(model, reasoning):
         return agent_config.validate_model_reasoning(
             selected_model, selected_reasoning
         )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+def _resolve_gateway_base_url(value):
+    """规范化并校验本次运行的得否网关地址。"""
+    try:
+        return agent_config.normalize_gateway_base_url(value)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
 
@@ -531,14 +538,12 @@ def run(request: Request,
     ip = _client_ip(request)
     is_mock = mock == "1"
     api_key = api_key.strip()[:200]
-    base_url = base_url.strip()[:300]
+    base_url = _resolve_gateway_base_url(base_url.strip()[:300])
     model = model.strip()[:100]
     byok = bool(api_key)
     model, reasoning = _resolve_model_reasoning(model, reasoning)
     if len(resume_text) > 200_000 or len(jd_text) > 50_000:
         raise HTTPException(400, "文本过长，请精简后重试")
-    if base_url and not BASE_URL_RE.match(base_url):
-        raise HTTPException(400, "Base URL格式不正确（需以http(s)://开头）")
     quota_used = False
     if PUBLIC:
         _rate_check(ip, is_mock)
@@ -587,10 +592,8 @@ def run(request: Request,
         env.pop("AGENT_MOCK", None)
         if byok:
             # BYOK：仅本次子进程使用，不落盘不记录
-            env.pop("ZENMUX_API_KEY", None)     # ZENMUX优先级更高，必须清掉
             env["OPENAI_API_KEY"] = api_key
-            if base_url:
-                env["AGENT_BASE_URL"] = base_url
+            env["AGENT_BASE_URL"] = base_url
         elif not agent_config.API_KEY:
             raise HTTPException(400, "未检测到API密钥：请在「高级设置」填写你的API Key，或勾选Mock演示模式")
 

@@ -62,6 +62,22 @@ def test_runtime_source_reads_only_the_generic_key():
     assert obsolete_name not in source
 
 
+def test_web_gateway_resolution_normalizes_defou_root():
+    expected = config.DEFOU_API_BASE_URL
+    assert server._resolve_gateway_base_url("") == expected
+    assert server._resolve_gateway_base_url("https://api.wangdefou.studio") == expected
+    assert server._resolve_gateway_base_url(expected) == expected
+
+
+def test_web_gateway_resolution_rejects_other_hosts():
+    try:
+        server._resolve_gateway_base_url("https://example.com/v1")
+    except HTTPException as error:
+        assert error.status_code == 400
+        return
+    raise AssertionError("非得否网关应被拒绝")
+
+
 def test_model_reasoning_resolution():
     assert server._resolve_model_reasoning("", "") == ("gpt-5.5", "xhigh")
     assert server._resolve_model_reasoning("gpt-5.5", "high") == ("gpt-5.5", "high")
@@ -94,6 +110,8 @@ def test_frontend_exposes_model_specific_reasoning():
     assert 'fd.append("model", selectedModel)' in html
     assert "renderEffortOptions" in html
     assert 'id="byok-model"' not in html
+    assert 'placeholder="https://api.wangdefou.studio/v1"' in html
+    assert "任意 OpenAI 兼容网关" not in html
 
 
 def test_reasoning_level_is_never_silently_removed():
@@ -136,6 +154,8 @@ def main():
     test_gateway_policy_uses_defou_v1_only()
     test_gateway_policy_rejects_other_hosts_and_paths()
     test_runtime_source_reads_only_the_generic_key()
+    test_web_gateway_resolution_normalizes_defou_root()
+    test_web_gateway_resolution_rejects_other_hosts()
     test_model_reasoning_resolution()
     test_invalid_combinations_are_rejected()
     test_frontend_exposes_model_specific_reasoning()
