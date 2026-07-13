@@ -9,29 +9,66 @@ same control flow is unit-tested without a Vercel replay context.
 """
 
 import asyncio
+import time
 
 from vercel.workflow import get_step_metadata
 
-from runtime_context import RunSettings, use_run_settings
-from tools import execute_tool
 from vercel_trace import TraceStore
 from workflows.graph import run_workflow_graph
 from workflows.runtime import wf
 
 
 def _run_tool_sync(tool_name, arguments, settings):
+    from runtime_context import use_run_settings
+    from tools import execute_tool
+
     with use_run_settings(settings):
         return execute_tool(tool_name, arguments)
 
 
 async def _run_tool(tool_name, arguments, model, reasoning, deadline_epoch):
+    from runtime_context import RunSettings
+
     settings = RunSettings(model, reasoning, deadline_epoch)
-    return await asyncio.to_thread(_run_tool_sync, tool_name, arguments, settings)
+    started = time.monotonic()
+    result = await asyncio.to_thread(_run_tool_sync, tool_name, arguments, settings)
+    if isinstance(result, dict):
+        return {**result, "_duration_ms": max(0, int((time.monotonic() - started) * 1000))}
+    return result
 
 
 @wf.step
 async def step_run_id():
     return get_step_metadata().run_id
+
+
+@wf.step
+async def step_trace_stage(run_id, stage_id, status, data):
+    """Persist one redacted trace document outside the workflow sandbox."""
+    await TraceStore().write_stage(
+        run_id, stage_id, {"status": status, **dict(data or {})},
+    )
+    return True
+
+
+@wf.step
+async def step_trace_cancelled(run_id):
+    """Read the cooperative-cancellation marker outside the workflow sandbox."""
+    return await TraceStore().is_cancelled(run_id)
+
+
+@wf.step
+async def step_run_boundary(run_id, deadline_epoch):
+    """Evaluate cancellation and wall-clock deadline outside the sandbox."""
+    if await TraceStore().is_cancelled(run_id):
+        return {"status": "cancelled", "remaining_seconds": 0.0}
+    if deadline_epoch is None:
+        return {"status": None, "remaining_seconds": None}
+    remaining = float(deadline_epoch) - time.time()
+    return {
+        "status": "deadline_exceeded" if remaining <= 0 else None,
+        "remaining_seconds": max(0.0, remaining),
+    }
 
 
 @wf.step
@@ -123,33 +160,36 @@ class VercelOperations:
 class RunTrace:
     """Bridge the graph's trace surface onto the Private Blob store.
 
-    Observability writes are best-effort: a Blob hiccup must never crash a run
-    or make the workflow non-deterministic, so every call swallows errors.
+    Stage-status writes are best-effort. Boundary checks are fail-closed because
+    silently losing cancellation or deadline state could start more paid work.
     """
 
-    def __init__(self, store, run_id):
-        self._store = store
+    def __init__(self, run_id):
         self._run_id = run_id
 
     async def stage(self, stage_id, status, **data):
         try:
-            await self._store.write_stage(
-                self._run_id, stage_id, {"status": status, **data},
-            )
+            await step_trace_stage(self._run_id, stage_id, status, data)
         except Exception:
             pass
 
     async def cancelled(self):
         try:
-            return await self._store.is_cancelled(self._run_id)
+            return bool(await step_trace_cancelled(self._run_id))
         except Exception:
             return False
+
+    async def check_boundary(self, deadline_epoch):
+        result = await step_run_boundary(self._run_id, deadline_epoch)
+        if not isinstance(result, dict):
+            raise RuntimeError("workflow boundary step returned an invalid result")
+        return result
 
 
 @wf.workflow
 async def resume_workflow(payload):
     run_id = await step_run_id()
-    trace = RunTrace(TraceStore(), run_id)
+    trace = RunTrace(run_id)
     operations = VercelOperations(
         payload.get("model"), payload.get("reasoning"), payload.get("deadline_epoch"),
     )

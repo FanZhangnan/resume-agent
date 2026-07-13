@@ -16,7 +16,7 @@
 | 访问控制 | `run_security.py` | 常量时间邀请码校验 + HMAC-SHA256 签名运行令牌 |
 | 前端 | `webui/static/vercel_app.html` | 无 BYOK 的轮询界面，`escapeHtml` 先转义再渲染 Markdown，逐响应 CSP nonce |
 
-- 单步函数上限 **60s**（`vercel.json`）；整次运行由工作流承载，应用侧目标 **720s**、硬顶 **780s**。
+- API 请求只负责解析与启动；LLM 调用在 Workflow worker 的 durable step 内执行。整次运行应用侧目标 **720s**、验收硬顶 **780s**。
 - 本地 SSE 版 `webui/server.py`（`127.0.0.1:7860`）保持不变，仅用于本地开发。
 
 ---
@@ -67,6 +67,7 @@ for t in test_tools test_agent test_model_policy test_runtime_policy \
 done
 AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_workflow.py
 AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_api.py
+AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_deploy_contract.py
 
 .venv312/bin/python -m compileall -q . && git diff --check
 ```

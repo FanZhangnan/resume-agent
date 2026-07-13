@@ -7,11 +7,14 @@ workflow, and serves signed-token status, cancellation, deletion, and cron
 cleanup endpoints. The gateway key and base URL are never exposed to the browser.
 """
 
+import asyncio
 import hmac
+import io
 import os
 import secrets
 import tempfile
 import time
+import zipfile
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -23,6 +26,10 @@ from vercel_trace import TraceStore
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".md", ".text"}
 MAX_RESUME_CHARS = 60_000
+MAX_JD_CHARS = 60_000
+MAX_DOCX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
+MAX_DOCX_ENTRIES = 2_000
+PARSE_TIMEOUT_SECONDS = 20.0
 RUN_TOKEN_TTL = int(os.environ.get("AGENT_RUN_TOKEN_TTL", str(int(config.RUN_TIMEOUT) + 900)))
 TRACE_RETENTION_SECONDS = 24 * 3600
 
@@ -119,6 +126,17 @@ def _stage_rows(stage_docs):
     return rows
 
 
+def _docx_archive_is_safe(data):
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_DOCX_ENTRIES:
+                return False
+            return sum(item.file_size for item in entries) <= MAX_DOCX_UNCOMPRESSED_BYTES
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
 async def _extract_resume(resume_file, resume_text):
     """Return (text, error_response). error_response is a JSONResponse or None."""
     if resume_file is not None and resume_file.filename:
@@ -133,6 +151,10 @@ async def _extract_resume(resume_file, resume_text):
             return None, JSONResponse(
                 {"error": "简历文件超过 4MB 上限"}, status_code=413,
             )
+        if ext == ".docx" and not _docx_archive_is_safe(data):
+            return None, JSONResponse(
+                {"error": "DOCX 文件展开后过大或格式无效"}, status_code=413,
+            )
         from tools.file_parser import parse_resume_file
 
         tmp_path = None
@@ -140,7 +162,16 @@ async def _extract_resume(resume_file, resume_text):
             fd, tmp_path = tempfile.mkstemp(suffix=ext)
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
-            parsed = parse_resume_file(tmp_path)
+            try:
+                parsed = await asyncio.wait_for(
+                    asyncio.to_thread(parse_resume_file, tmp_path),
+                    timeout=PARSE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                return None, JSONResponse(
+                    {"error": "简历文件解析超时，请改用可复制文本的版本"},
+                    status_code=408,
+                )
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
@@ -160,7 +191,11 @@ async def _extract_resume(resume_file, resume_text):
             {"error": "未从简历中提取到文本；扫描件或图片型 PDF 请改用可复制文本的版本"},
             status_code=422,
         )
-    return text[:MAX_RESUME_CHARS], None
+    if len(text) > MAX_RESUME_CHARS:
+        return None, JSONResponse(
+            {"error": "简历文本超过 60000 字符上限"}, status_code=413,
+        )
+    return text, None
 
 
 # ---------------------------------------------------------------------- routes
@@ -237,6 +272,10 @@ async def create_run(
         return JSONResponse(
             {"error": "当前预览仅支持粘贴目标 JD 的流程；请提供职位描述"},
             status_code=422,
+        )
+    if len(jd_text) > MAX_JD_CHARS:
+        return JSONResponse(
+            {"error": "职位描述超过 60000 字符上限"}, status_code=413,
         )
 
     text, error_response = await _extract_resume(resume_file, resume_text)

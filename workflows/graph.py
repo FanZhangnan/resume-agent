@@ -18,8 +18,6 @@ from contracts import (
     verification_is_deliverable,
 )
 from report_renderer import render_report
-from runtime_context import RunSettings, use_run_settings
-from tools import execute_tool
 from utils import parse_resume_text_to_struct
 
 # UI stage identifiers (stage 1 parse happens in the API before start).
@@ -107,7 +105,7 @@ def _category_from_exception(error):
 async def _run_stage(trace, stage_id, op, args, key, clock, revision_round=None):
     """Execute one stage operation and record its trace. Never raises for
     ordinary tool failures; returns ('completed'|'failed', value)."""
-    started = clock()
+    started = clock() if clock is not None else None
     running = {}
     if revision_round is not None:
         running["revision_round"] = revision_round
@@ -120,19 +118,28 @@ async def _run_stage(trace, stage_id, op, args, key, clock, revision_round=None)
             data["revision_round"] = revision_round
         await trace.stage(stage_id, "failed", **data)
         return "failed", None
-    duration_ms = max(0, int((clock() - started) * 1000))
+    if clock is not None:
+        duration_ms = max(0, int((clock() - started) * 1000))
+    elif isinstance(result, dict) and isinstance(result.get("_duration_ms"), (int, float)):
+        duration_ms = max(0, int(result["_duration_ms"]))
+    else:
+        duration_ms = None
     ok = (
         isinstance(result, dict)
         and result.get("success") is True
         and result.get(key) is not None
     )
     if not ok:
-        data = {"error_category": _error_category(result), "duration_ms": duration_ms}
+        data = {"error_category": _error_category(result)}
+        if duration_ms is not None:
+            data["duration_ms"] = duration_ms
         if revision_round is not None:
             data["revision_round"] = revision_round
         await trace.stage(stage_id, "failed", **data)
         return "failed", None
-    data = {"duration_ms": duration_ms}
+    data = {}
+    if duration_ms is not None:
+        data["duration_ms"] = duration_ms
     if revision_round is not None:
         data["revision_round"] = revision_round
     await trace.stage(stage_id, "completed", **data)
@@ -181,7 +188,9 @@ async def _finalize(trace, state, raw_status, model, reasoning):
 
 async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel=None):
     """Run the supplied-JD eight-stage graph to a bounded terminal state."""
-    clock = clock or time.time
+    durable_boundaries = clock is None and hasattr(trace, "check_boundary")
+    if clock is None and not durable_boundaries:
+        clock = time.time
     model, reasoning = config.validate_model_reasoning(
         payload.get("model"), payload.get("reasoning")
     )
@@ -196,13 +205,26 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     def remaining():
         if deadline_epoch is None:
             return float("inf")
+        if clock is None:
+            return float("inf")
         return float(deadline_epoch) - clock()
+
+    last_remaining = remaining()
 
     async def boundary():
         """Return a terminal status if the run must stop before the next stage."""
+        nonlocal last_remaining
+        if durable_boundaries:
+            result = await trace.check_boundary(deadline_epoch)
+            if not isinstance(result, dict):
+                raise RuntimeError("workflow boundary returned an invalid result")
+            value = result.get("remaining_seconds")
+            last_remaining = float("inf") if value is None else float(value)
+            return result.get("status")
         if await trace.cancelled():
             return "cancelled"
-        if remaining() <= 0:
+        last_remaining = remaining()
+        if last_remaining <= 0:
             return "deadline_exceeded"
         return None
 
@@ -284,7 +306,7 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     # One targeted repair round if the strict delivery gate is not yet met.
     if not delivery_is_complete(state["verification"], state["suggestions"]):
         term = await boundary()
-        if term is None and remaining() > _REPAIR_MIN_SECONDS:
+        if term is None and last_remaining > _REPAIR_MIN_SECONDS:
             fixes = _required_fixes(state["verification"])
             r6s, r6v = await _run_stage(
                 trace, STAGE_SUGGEST, operations.suggest,
@@ -293,6 +315,9 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
             )
             if r6s == "completed":
                 state["suggestions"] = _with_struct_fallback(r6v)
+                term = await boundary()
+                if term:
+                    return await _finalize(trace, state, term, model, reasoning)
                 r7s, r7v = await _run_stage(
                     trace, STAGE_VERIFY, operations.verify,
                     (state["resume_info"], state["jd_analysis"], state["match_result"],
@@ -308,7 +333,8 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                     {"round": 1, "issues": fixes, "resolved": resolved}
                 )
 
-    return await _finalize(trace, state, "completed", model, reasoning)
+    term = await boundary()
+    return await _finalize(trace, state, term or "completed", model, reasoning)
 
 
 class ToolOperations:
@@ -319,12 +345,17 @@ class ToolOperations:
     """
 
     def __init__(self, model, reasoning, deadline_epoch=None):
+        from runtime_context import RunSettings
+
         self._settings = RunSettings(model, reasoning, deadline_epoch)
 
     async def _run(self, tool_name, arguments):
         settings = self._settings
 
         def call():
+            from runtime_context import use_run_settings
+            from tools import execute_tool
+
             with use_run_settings(settings):
                 return execute_tool(tool_name, arguments)
 

@@ -1,6 +1,9 @@
 """API contract tests for the Vercel FastAPI entrypoint with injected fakes."""
 
+import io
 import os
+import time
+import zipfile
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 os.environ["AGENT_INVITE_CODE"] = "let-me-in"
@@ -98,11 +101,69 @@ def test_missing_jd_is_rejected_in_preview():
     assert resp.status_code == 422
 
 
+def test_oversize_jd_is_rejected_before_workflow_start():
+    client, backend, _ = _client()
+    resp = _start_ok(client, data={"jd_text": "x" * (server.MAX_JD_CHARS + 1)})
+    assert resp.status_code == 413
+    assert backend.started == []
+
+
 def test_oversize_upload_rejected():
     client, _, _ = _client()
     big = b"a" * (4 * 1024 * 1024 + 1)
     resp = _start_ok(client, files={"resume_file": ("r.txt", big, "text/plain")})
     assert resp.status_code == 413
+
+
+def test_extracted_resume_text_limit_is_rejected():
+    client, backend, _ = _client()
+    text = ("简历内容\n" * (server.MAX_RESUME_CHARS // 4 + 1)).encode("utf-8")
+    resp = _start_ok(client, files={"resume_file": ("r.txt", text, "text/plain")})
+    assert resp.status_code == 413
+    assert backend.started == []
+
+
+def test_docx_expansion_limit_is_rejected():
+    client, backend, _ = _client()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", "x" * 2048)
+    original = server.MAX_DOCX_UNCOMPRESSED_BYTES
+    server.MAX_DOCX_UNCOMPRESSED_BYTES = 1024
+    try:
+        resp = _start_ok(
+            client,
+            files={"resume_file": (
+                "resume.docx", buffer.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )},
+        )
+    finally:
+        server.MAX_DOCX_UNCOMPRESSED_BYTES = original
+    assert resp.status_code == 413
+    assert backend.started == []
+
+
+def test_file_parse_timeout_is_bounded():
+    from tools import file_parser
+
+    client, backend, _ = _client()
+    original_parser = file_parser.parse_resume_file
+    original_timeout = server.PARSE_TIMEOUT_SECONDS
+
+    def slow_parser(_path):
+        time.sleep(0.05)
+        return {"success": True, "text": "late"}
+
+    file_parser.parse_resume_file = slow_parser
+    server.PARSE_TIMEOUT_SECONDS = 0.01
+    try:
+        resp = _start_ok(client)
+    finally:
+        file_parser.parse_resume_file = original_parser
+        server.PARSE_TIMEOUT_SECONDS = original_timeout
+    assert resp.status_code == 408
+    assert backend.started == []
 
 
 def test_unsupported_type_rejected():

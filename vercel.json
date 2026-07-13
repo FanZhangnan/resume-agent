@@ -7,11 +7,6 @@
       "topics": ["__wkf_*"]
     }
   },
-  "functions": {
-    "webui/vercel_server.py": {
-      "maxDuration": 60
-    }
-  },
   "crons": [
     {
       "path": "/api/maintenance/cleanup",

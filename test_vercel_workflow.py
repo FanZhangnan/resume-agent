@@ -6,6 +6,7 @@ case runs the graph against the real tool adapters under AGENT_MOCK=1.
 """
 
 import asyncio
+import importlib
 import os
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
@@ -50,6 +51,13 @@ class FakeTrace:
         if self._cancel_after is not None and self._checks > self._cancel_after:
             return True
         return False
+
+    async def check_boundary(self, deadline_epoch):
+        cancelled = await self.cancelled()
+        return {
+            "status": "cancelled" if cancelled else None,
+            "remaining_seconds": None,
+        }
 
     def statuses(self, stage_id):
         return [s for sid, s in self.writes if sid == stage_id]
@@ -118,6 +126,20 @@ def test_supplied_jd_happy_path_completes():
     assert "completed" in trace.statuses(8)
 
 
+def test_graph_runs_inside_real_workflow_sandbox():
+    from vercel._internal.workflow.py_sandbox import workflow_sandbox
+
+    async def scenario():
+        with workflow_sandbox(random_seed="graph-sandbox"):
+            sandboxed_graph = importlib.import_module("workflows.graph")
+            return await sandboxed_graph.run_workflow_graph(
+                _payload(), FakeOps(), FakeTrace()
+            )
+
+    result = run(scenario())
+    assert result["status"] == "completed"
+
+
 def test_missing_time_returns_deadline_without_invoking_tools():
     ops, trace = FakeOps(), FakeTrace()
     # Deadline already in the past.
@@ -147,6 +169,21 @@ def test_cancellation_stops_at_next_boundary():
     assert "match" not in names       # stopped before match ran
 
 
+def test_boundary_failure_stops_before_paid_operations():
+    class BrokenBoundaryTrace(FakeTrace):
+        async def check_boundary(self, deadline_epoch):
+            raise RuntimeError("boundary step failed after retries")
+
+    ops = FakeOps()
+    try:
+        run(run_workflow_graph(_payload(), ops, BrokenBoundaryTrace()))
+    except RuntimeError as error:
+        assert "boundary step failed" in str(error)
+    else:
+        raise AssertionError("boundary failure was silently ignored")
+    assert ops.calls == []
+
+
 def test_targeted_repair_runs_once_and_recovers():
     ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_OK])
     trace = FakeTrace()
@@ -157,6 +194,15 @@ def test_targeted_repair_runs_once_and_recovers():
     assert len(suggest_calls) == 2
     assert suggest_calls[1][1] == ("删除夸大表述",)     # repair passed the fixes
     assert ops.calls.count("verify") == 2
+
+
+def test_cancellation_after_repair_skips_second_verification():
+    ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_OK])
+    # Checks occur before initial work, match, suggest, verify repair, then re-verify.
+    trace = FakeTrace(cancel_after=4)
+    result = run(run_workflow_graph(_payload(), ops, trace))
+    assert result["status"] == "cancelled"
+    assert ops.calls.count("verify") == 1
 
 
 def test_unrecovered_verification_is_partial_with_fixes():
@@ -192,6 +238,8 @@ def test_integration_real_tools_under_mock():
         def __init__(self): self.writes = []
         async def stage(self, stage_id, status, **data): self.writes.append((stage_id, status))
         async def cancelled(self): return False
+        async def check_boundary(self, deadline_epoch):
+            return {"status": None, "remaining_seconds": None}
 
     ops = ToolOperations("gpt-5.5", "xhigh")
     trace = MemTrace()

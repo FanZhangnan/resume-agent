@@ -118,11 +118,21 @@ class TraceStore:
             return None
 
     async def _list(self, prefix):
-        try:
-            result = await self._client.list_objects(prefix=prefix)
-        except Exception:
-            return []
-        return list(getattr(result, "blobs", []) or [])
+        blobs = []
+        cursor = None
+        seen_cursors = set()
+        while True:
+            try:
+                result = await self._client.list_objects(prefix=prefix, cursor=cursor)
+            except Exception:
+                return blobs
+            blobs.extend(list(getattr(result, "blobs", []) or []))
+            next_cursor = getattr(result, "cursor", None)
+            has_more = bool(getattr(result, "has_more", False))
+            if not has_more or not next_cursor or next_cursor in seen_cursors:
+                return blobs
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
     @staticmethod
     def _ref(blob):

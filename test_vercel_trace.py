@@ -7,10 +7,12 @@ import json
 class FakeBlobClient:
     """Minimal in-memory stand-in for vercel.blob.AsyncBlobClient."""
 
-    def __init__(self):
+    def __init__(self, page_size=None):
         self.objects = {}  # pathname -> (bytes, access)
         self.put_calls = []
         self.get_calls = []
+        self.page_size = page_size
+        self.list_calls = []
 
     async def put(self, path, body, *, access="public", content_type=None,
                   add_random_suffix=False, overwrite=False, **kwargs):
@@ -32,13 +34,19 @@ class FakeBlobClient:
                                       "url": f"blob://{path}"})()
 
     async def list_objects(self, *, prefix=None, limit=None, cursor=None, mode=None):
+        self.list_calls.append((prefix, cursor))
         blobs = []
         for path in sorted(self.objects):
             if prefix and not path.startswith(prefix):
                 continue
             blobs.append(type("Item", (), {"pathname": path, "url": f"blob://{path}"})())
-        return type("ListResult", (), {"blobs": blobs, "cursor": None,
-                                       "has_more": False, "folders": []})()
+        start = int(cursor or 0)
+        page_size = self.page_size or len(blobs) or 1
+        page = blobs[start:start + page_size]
+        next_cursor = str(start + page_size) if start + page_size < len(blobs) else None
+        return type("ListResult", (), {"blobs": page, "cursor": next_cursor,
+                                       "has_more": next_cursor is not None,
+                                       "folders": []})()
 
     async def delete(self, url_or_path):
         targets = [url_or_path] if isinstance(url_or_path, str) else list(url_or_path)
@@ -146,6 +154,26 @@ def test_cleanup_before_deletes_only_old_runs():
         assert "new-run" not in deleted
         assert not [p for p in client.objects if p.startswith("runs/old-run/")]
         assert [p for p in client.objects if p.startswith("runs/new-run/")]
+    run(scenario())
+
+
+def test_list_paginates_for_reads_and_cleanup():
+    async def scenario():
+        client = FakeBlobClient(page_size=2)
+        store = TraceStore(client=client)
+        for stage_id in range(1, 6):
+            await store.write_stage(
+                "paged-run", stage_id, {"status": "completed"}, created_epoch=1000.0,
+            )
+        stages = await store.read_stages("paged-run")
+        assert sorted(stages) == [1, 2, 3, 4, 5]
+        assert len(client.list_calls) >= 3
+
+        client.list_calls.clear()
+        deleted = await store.cleanup_before(2000.0)
+        assert deleted == ["paged-run"]
+        assert not client.objects
+        assert len(client.list_calls) >= 3
     run(scenario())
 
 
