@@ -102,9 +102,8 @@ class LLMClient:
         if not config.API_KEY:
             raise ValueError(
                 "未检测到API密钥！请先在终端执行：\n"
-                "export ZENMUX_API_KEY=你的密钥\n"
-                "（ZENMUX_API_KEY优先生效；也兼容OPENAI_API_KEY。"
-                "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo）"
+                "export OPENAI_API_KEY=你的得否网关密钥\n"
+                "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo"
             )
         self.client = OpenAI(
             base_url=config.API_BASE_URL,

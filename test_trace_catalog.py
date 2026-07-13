@@ -44,7 +44,7 @@ def _assert_raises(expected, function):
 
 def test_trace_catalog_writes_ordered_redacted_events():
     secret = "sk-live-never-write-this"
-    non_sk_secret = "zenmux-live-secret-without-known-prefix"
+    non_sk_secret = "gateway-live-secret-without-known-prefix"
     resume = "姓名：李明\n电话：13800000000"
     with tempfile.TemporaryDirectory() as temp_dir:
         output = io.StringIO()
