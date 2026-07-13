@@ -129,12 +129,13 @@ def test_trace_catalog_writes_ordered_redacted_events():
 def test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable():
     secret = "sk-live-must-never-reach-stdout"
     private_prompt = "private resume prompt must stay private"
-    failure_targets = (
-        "trace_catalog.Path.mkdir",
-        "trace_catalog.os.open",
+    failure_cases = (
+        ("trace_catalog.Path.mkdir", PermissionError("read-only filesystem")),
+        ("trace_catalog.Path.mkdir", RuntimeError("restricted operation")),
+        ("trace_catalog.os.open", PermissionError("read-only filesystem")),
     )
 
-    for index, failure_target in enumerate(failure_targets, start=1):
+    for index, (failure_target, failure) in enumerate(failure_cases, start=1):
         output = io.StringIO()
         with (
             patch.dict(
@@ -145,7 +146,7 @@ def test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable():
                 },
                 clear=False,
             ),
-            patch(failure_target, side_effect=PermissionError("read-only filesystem")),
+            patch(failure_target, side_effect=failure),
             redirect_stdout(output),
         ):
             _reset_trace_catalog_for_tests()
@@ -175,6 +176,82 @@ def test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable():
         }
         assert secret not in output.getvalue()
         assert private_prompt not in output.getvalue()
+
+
+def test_emit_trace_falls_back_when_append_or_summary_raises_runtime_error():
+    secret = "sk-live-must-never-reach-stdout"
+    private_prompt = "private resume prompt must stay private"
+
+    for failure_stage in ("append", "summary"):
+        with tempfile.TemporaryDirectory() as trace_dir, patch.dict(
+            os.environ,
+            {
+                "AGENT_RUN_ID": f"stdout-{failure_stage}-fallback",
+                "AGENT_TRACE_DIR": trace_dir,
+            },
+            clear=False,
+        ):
+            _reset_trace_catalog_for_tests()
+            catalog = TraceCatalog()
+            output = io.StringIO()
+            target = (
+                patch(
+                    "trace_catalog.Path.open",
+                    side_effect=RuntimeError("restricted append operation"),
+                )
+                if failure_stage == "append"
+                else patch.object(
+                    catalog,
+                    "_write_summary",
+                    side_effect=RuntimeError("restricted summary operation"),
+                )
+            )
+            with target, redirect_stdout(output):
+                record = catalog.emit(
+                    "run.completed" if failure_stage == "summary" else "llm.call.started",
+                    span="run" if failure_stage == "summary" else "llm:test",
+                    data={
+                        "api_key": secret,
+                        "prompt": private_prompt,
+                        "status": "ok",
+                    },
+                )
+
+        trace_lines = [
+            line for line in output.getvalue().splitlines()
+            if line.startswith(TRACE_PREFIX)
+        ]
+        assert len(trace_lines) == 1
+        mirrored = json.loads(trace_lines[0][len(TRACE_PREFIX):])
+        assert record == mirrored
+        assert mirrored["data"]["api_key"] == "[REDACTED]"
+        assert mirrored["data"]["prompt"] == "[REDACTED]"
+        assert secret not in output.getvalue()
+        assert private_prompt not in output.getvalue()
+
+
+def test_trace_storage_fallback_preserves_deadline_and_base_exception_semantics():
+    class StorageDeadline(RuntimeError):
+        is_run_deadline = True
+
+    for expected, failure in (
+        (StorageDeadline, StorageDeadline("run deadline")),
+        (KeyboardInterrupt, KeyboardInterrupt()),
+    ):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AGENT_RUN_ID": "storage-exception-contract",
+                    "AGENT_TRACE_DIR": "/var/task/output/traces",
+                },
+                clear=False,
+            ),
+            patch("trace_catalog.Path.mkdir", side_effect=failure),
+        ):
+            _reset_trace_catalog_for_tests()
+            _assert_raises(expected, lambda: emit_trace("run.started"))
+        _reset_trace_catalog_for_tests()
 
 
 class _FailingCompletions:
@@ -1349,6 +1426,8 @@ def test_cli_client_construction_failure_emits_terminal_error():
 def main():
     test_trace_catalog_writes_ordered_redacted_events()
     test_emit_trace_falls_back_to_redacted_stdout_when_storage_is_unavailable()
+    test_emit_trace_falls_back_when_append_or_summary_raises_runtime_error()
+    test_trace_storage_fallback_preserves_deadline_and_base_exception_semantics()
     test_llm_owns_exactly_two_attempts_and_disables_sdk_retries()
     test_llm_completion_trace_includes_usage_and_finish_reason()
     test_stream_consumption_honors_call_deadline()

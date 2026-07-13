@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import tomllib
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
@@ -123,6 +124,166 @@ def test_ga_worker_adapter_registers_workflow_subscriptions():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_worker_guard_serializes_post_callbacks_with_asyncio_context():
+    import sniffio
+    from workflows import vercel_worker as worker
+
+    active = 0
+    max_active = 0
+    libraries = []
+    state_lock = threading.Lock()
+
+    async def inner_app(_scope, _receive, _send):
+        nonlocal active, max_active
+        try:
+            library = await asyncio.to_thread(sniffio.current_async_library)
+        except sniffio.AsyncLibraryNotFoundError:
+            library = None
+        libraries.append(library)
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.01)
+        finally:
+            with state_lock:
+                active -= 1
+
+    async def scenario():
+        guarded_app = worker._guard_worker_app(inner_app)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        scope = {"type": "http", "method": "POST", "path": "/"}
+        await asyncio.gather(
+            guarded_app(scope, receive, send),
+            guarded_app(scope, receive, send),
+        )
+
+    asyncio.run(scenario())
+    assert max_active == 1
+    assert libraries == ["asyncio", "asyncio"]
+
+
+def test_worker_guard_passes_non_post_requests_without_waiting():
+    from workflows import vercel_worker as worker
+
+    post_entered = asyncio.Event()
+    release_post = asyncio.Event()
+    get_completed = asyncio.Event()
+
+    async def inner_app(scope, _receive, _send):
+        if scope.get("method") == "POST":
+            post_entered.set()
+            await release_post.wait()
+        else:
+            get_completed.set()
+
+    async def scenario():
+        guarded_app = worker._guard_worker_app(inner_app)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        post_task = asyncio.create_task(
+            guarded_app({"type": "http", "method": "POST"}, receive, send)
+        )
+        await post_entered.wait()
+        try:
+            await asyncio.wait_for(
+                guarded_app({"type": "http", "method": "GET"}, receive, send),
+                timeout=0.1,
+            )
+            assert get_completed.is_set()
+        finally:
+            release_post.set()
+            await post_task
+
+    asyncio.run(scenario())
+
+
+def test_worker_guard_releases_post_lock_when_waiter_is_cancelled():
+    from workflows import vercel_worker as worker
+
+    class TrackingLock:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self.attempted_while_locked = threading.Event()
+            self.acquired_after_wait = threading.Event()
+
+        def acquire(self, blocking=True):
+            was_locked = self._lock.locked()
+            if was_locked:
+                self.attempted_while_locked.set()
+            acquired = self._lock.acquire(blocking=blocking)
+            if was_locked and acquired:
+                self.acquired_after_wait.set()
+            return acquired
+
+        def locked(self):
+            return self._lock.locked()
+
+        def release(self):
+            self._lock.release()
+
+    tracking_lock = TrackingLock()
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def inner_app(scope, _receive, _send):
+        if scope.get("request") == "first":
+            first_entered.set()
+            await release_first.wait()
+
+    async def scenario():
+        guarded_app = worker._guard_worker_app(inner_app)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        first_task = asyncio.create_task(
+            guarded_app({"method": "POST", "request": "first"}, receive, send)
+        )
+        await first_entered.wait()
+        waiting_task = asyncio.create_task(
+            guarded_app({"method": "POST", "request": "waiting"}, receive, send)
+        )
+        attempted = await asyncio.to_thread(
+            tracking_lock.attempted_while_locked.wait, 0.5
+        )
+        assert attempted
+
+        waiting_task.cancel()
+        try:
+            await waiting_task
+        except asyncio.CancelledError:
+            pass
+
+        release_first.set()
+        await first_task
+        await asyncio.to_thread(tracking_lock.acquired_after_wait.wait, 0.1)
+        assert not tracking_lock.locked()
+
+    original_lock = worker._post_lock
+    worker._post_lock = tracking_lock
+    try:
+        asyncio.run(scenario())
+    finally:
+        if tracking_lock.locked():
+            tracking_lock.release()
+        worker._post_lock = original_lock
 
 
 def test_boundary_step_failure_is_fail_closed():

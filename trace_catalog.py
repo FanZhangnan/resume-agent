@@ -76,6 +76,11 @@ def _sanitize(value, key=None):
     return text if len(text) <= 500 else text[:500] + "...(truncated)"
 
 
+def _raise_if_run_deadline(error):
+    if getattr(error, "is_run_deadline", False):
+        raise error
+
+
 class TraceCatalog:
     """为单次运行写 JSONL，并把同一事件镜像到 stdout。"""
 
@@ -96,7 +101,8 @@ class TraceCatalog:
         self.trace_path = self.trace_dir / "trace.jsonl"
         try:
             self._prepare_path()
-        except OSError:
+        except Exception as error:
+            _raise_if_run_deadline(error)
             self.trace_path = None
 
     def _prepare_path(self):
@@ -140,7 +146,8 @@ class TraceCatalog:
                     with self.trace_path.open("a", encoding="utf-8") as trace_file:
                         trace_file.write(serialized + "\n")
                         trace_file.flush()
-                except OSError:
+                except Exception as error:
+                    _raise_if_run_deadline(error)
                     self.trace_path = None
             print(TRACE_PREFIX + serialized, flush=True)
             if (
@@ -149,7 +156,8 @@ class TraceCatalog:
             ):
                 try:
                     self._write_summary(record)
-                except OSError:
+                except Exception as error:
+                    _raise_if_run_deadline(error)
                     self.trace_path = None
             return record
 
@@ -232,8 +240,7 @@ def emit_trace(event, **kwargs):
     try:
         return get_trace_catalog().emit(event, **kwargs)
     except Exception as error:
-        if getattr(error, "is_run_deadline", False):
-            raise
+        _raise_if_run_deadline(error)
         return None
 
 
