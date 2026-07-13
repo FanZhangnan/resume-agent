@@ -190,6 +190,11 @@ def test_csp_nonce_placeholder_present():
     assert 'nonce="__CSP_NONCE__"' in html
 
 
+def test_inline_favicon_avoids_missing_asset_request():
+    html = _html()
+    assert '<link rel="icon" href="data:,">' in html
+
+
 def test_speed_insights_and_analytics_scripts_are_preserved():
     html = _html()
     assert '/_vercel/insights/script.js' in html
