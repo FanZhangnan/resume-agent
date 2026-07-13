@@ -264,6 +264,15 @@ async def create_run(
     except ValueError as error:
         return JSONResponse({"error": str(error)}, status_code=400)
 
+    if os.environ.get("AGENT_MOCK", "") != "1" and not config.API_KEY.strip():
+        return JSONResponse(
+            {
+                "error": "模型网关尚未配置，请联系管理员后重试",
+                "code": "gateway_not_configured",
+            },
+            status_code=503,
+        )
+
     if not jd_text.strip():
         return JSONResponse(
             {"error": "当前预览仅支持粘贴目标 JD 的流程；请提供职位描述"},

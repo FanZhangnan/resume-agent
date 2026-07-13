@@ -166,16 +166,22 @@ async def _finalize(trace, state, raw_status, model, reasoning):
         "deadline_exceeded": "deadline",
     }.get(final_status, "partial")
 
-    await trace.stage(STAGE_REPORT, "running")
-    report = render_report(
-        _render_state(state, model, final_status == "cancelled"),
-        render_status,
-        unresolved or None,
-    )
-    await trace.stage(
-        STAGE_REPORT, "completed",
-        reason=final_status, safe_to_deliver=deliverable,
-    )
+    if final_status == "failed":
+        report = ""
+        await trace.stage(
+            STAGE_REPORT, "failed", reason=final_status, safe_to_deliver=False,
+        )
+    else:
+        await trace.stage(STAGE_REPORT, "running")
+        report = render_report(
+            _render_state(state, model, final_status == "cancelled"),
+            render_status,
+            unresolved or None,
+        )
+        await trace.stage(
+            STAGE_REPORT, "completed",
+            reason=final_status, safe_to_deliver=deliverable,
+        )
     return {
         "status": final_status,
         "safe_to_deliver": deliverable,
@@ -265,7 +271,10 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
     if s4 == "completed":
         state["jd_analysis"] = v4
     if s2 != "completed" or s4 != "completed":
-        return await _finalize(trace, state, "partial", model, reasoning)
+        state["_extra_fix"] = "基础分析未完成，请稍后重试；如持续失败请联系管理员。"
+        for stage_id in (STAGE_MATCH, STAGE_SUGGEST, STAGE_VERIFY):
+            await trace.stage(stage_id, "skipped", reason="upstream_failed")
+        return await _finalize(trace, state, "failed", model, reasoning)
 
     term = await boundary()
     if term:

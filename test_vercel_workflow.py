@@ -159,6 +159,19 @@ def test_provider_failure_produces_partial_not_exception():
     assert "本报告不完整" in result["report"]
 
 
+def test_foundation_failure_is_failed_without_empty_report():
+    ops = FakeOps(fail={"extract", "analyze_jd"})
+    trace = FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "failed"
+    assert result["safe_to_deliver"] is False
+    assert result["report"] == ""
+    for stage_id in (5, 6, 7):
+        assert trace.statuses(stage_id) == ["skipped"]
+    assert trace.statuses(8) == ["failed"]
+
+
 def test_cancellation_stops_at_next_boundary():
     ops = FakeOps()
     # Allow the first two boundary checks, cancel before stage 5 (match).

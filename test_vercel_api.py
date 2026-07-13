@@ -15,6 +15,9 @@ from test_vercel_trace import FakeBlobClient  # noqa: E402
 from vercel_trace import TraceStore  # noqa: E402
 import webui.vercel_server as server  # noqa: E402
 
+# API contract tests use an injected backend and never contact the gateway.
+server.config.API_KEY = "unit-test-gateway-key"
+
 
 class FakeBackend:
     def __init__(self):
@@ -89,6 +92,26 @@ def test_missing_jd_is_rejected_in_preview():
     client, _, _ = _client()
     resp = _start_ok(client, data={"jd_text": "   "})
     assert resp.status_code == 422
+
+
+def test_missing_gateway_key_rejected_before_workflow_start():
+    client, backend, _ = _client()
+    original_key = server.config.API_KEY
+    original_mock = os.environ.get("AGENT_MOCK")
+    server.config.API_KEY = ""
+    os.environ["AGENT_MOCK"] = "0"
+    try:
+        resp = _start_ok(client)
+    finally:
+        server.config.API_KEY = original_key
+        if original_mock is None:
+            os.environ.pop("AGENT_MOCK", None)
+        else:
+            os.environ["AGENT_MOCK"] = original_mock
+
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "gateway_not_configured"
+    assert backend.started == []
 
 
 def test_oversize_jd_is_rejected_before_workflow_start():
