@@ -8,6 +8,7 @@ from mock_data import MOCK_JD_ANALYSIS, MOCK_MATCH, MOCK_RESUME_INFO
 from report_renderer import render_report
 from tools.analysis import calculate_match, generate_suggestions
 from tools.resume_tools import analyze_jd, extract_resume_info
+from tools.verification import verify_output
 from tools.scoring import (
     normalize_jd_requirements,
     normalize_resume_evidence,
@@ -1662,6 +1663,57 @@ def test_generate_suggestions_uses_bounded_compact_output_budget():
     assert "star_rewrites最多3项" in prompt
 
 
+def test_verify_output_uses_compact_deliverable_only_contract():
+    valid = {
+        "passed": True,
+        "safe_to_deliver": True,
+        "required_fixes": [],
+    }
+    resume_info = {
+        "basic_info": {"name": "Candidate"},
+        "work_experience": [{
+            "company": "ORIGINAL COMPANY",
+            "details": "LONG ORIGINAL FACT " * 2000,
+        }],
+    }
+    jd_analysis = {
+        "hard_requirements": ["REQUIRED PYTHON"],
+        "raw_summary": "DROP RAW JD SUMMARY",
+    }
+    match_result = {
+        "score": 80,
+        "missing_requirements": ["MISSING SQL"],
+        "requirement_evidence": ["DROP VERBOSE EVIDENCE"],
+        "requirement_scores": ["DROP VERBOSE SCORES"],
+    }
+    suggestions = {
+        "optimized_resume": "",
+        "optimized_resume_struct": {
+            "basic_info": {"name": "Candidate"},
+            "experience": [{"company": "OPTIMIZED COMPANY"}],
+        },
+        "rewrite_suggestions": [],
+    }
+    with patch("tools.verification.ask_json", return_value=valid) as ask:
+        result = verify_output(
+            resume_info, jd_analysis, match_result, suggestions,
+        )
+
+    assert result["success"] is True
+    assert ask.call_args.kwargs["max_tokens"] == 2048
+    assert ask.call_args.kwargs["retry_max_tokens"] == 2048
+    prompt = ask.call_args.args[0]
+    assert "ORIGINAL COMPANY" in prompt
+    assert "REQUIRED PYTHON" in prompt
+    assert "MISSING SQL" in prompt
+    assert "OPTIMIZED COMPANY" in prompt
+    assert "DROP RAW JD SUMMARY" not in prompt
+    assert "DROP VERBOSE EVIDENCE" not in prompt
+    assert "DROP VERBOSE SCORES" not in prompt
+    assert "optimized_resume为空是允许的" in prompt
+    assert "匹配评分是只读背景" in prompt
+
+
 def _empty_match_result():
     return {
         "score": 0,
@@ -1936,6 +1988,7 @@ def main():
         test_calculate_match_rebuilds_visible_summaries_from_local_ledger,
         test_generate_suggestions_uses_strict_suggestion_validator,
         test_generate_suggestions_uses_bounded_compact_output_budget,
+        test_verify_output_uses_compact_deliverable_only_contract,
         test_analyze_jd_uses_strict_explicit_gate_contract,
         test_calculate_match_fails_explicit_brisbane_only_gate_for_sydney_candidate,
         test_calculate_match_fails_explicit_work_authorization_gate_when_not_met,

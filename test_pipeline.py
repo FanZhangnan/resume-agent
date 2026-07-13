@@ -413,6 +413,26 @@ def test_parallel_watchdog_does_not_wait_for_blocked_worker_before_partial_repor
     assert [event for event in next_events if event["event"] == "run.completed"][-1]["data"]["status"] == "completed"
 
 
+def test_terminal_trace_deadline_does_not_discard_saved_report():
+    import agent as agent_module
+
+    original_emit = agent_module.emit_trace
+
+    def emit_then_timeout(event, **kwargs):
+        record = original_emit(event, **kwargs)
+        if event == "run.completed":
+            raise agent_module.RunDeadlineExceeded(
+                "deadline fired while final trace summary was being replaced"
+            )
+        return record
+
+    with patch.object(agent_module, "emit_trace", side_effect=emit_then_timeout):
+        _, report, events = _run_agent(RecordingExecutor())
+
+    assert "# 简历优化报告" in report
+    assert [event for event in events if event["event"] == "run.completed"]
+
+
 def test_tool_json_calls_receive_external_run_deadline():
     from tools import common
 
@@ -850,6 +870,7 @@ def main():
         test_supplied_jd_extract_and_analysis_overlap_on_distinct_threads,
         test_inverse_worker_completion_still_routes_parallel_observations_to_steps,
         test_parallel_watchdog_does_not_wait_for_blocked_worker_before_partial_report,
+        test_terminal_trace_deadline_does_not_discard_saved_report,
         test_tool_json_calls_receive_external_run_deadline,
         test_llm_client_rejects_an_already_expired_external_run_deadline,
         test_job_search_discovers_only_without_jd_and_prefers_description,

@@ -12,7 +12,7 @@ import os
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 os.environ.setdefault("AGENT_MOCK", "1")
 
-from workflows.graph import run_workflow_graph  # noqa: E402
+from workflows.graph import _required_fixes, run_workflow_graph  # noqa: E402
 
 
 def run(coro):
@@ -291,6 +291,21 @@ def test_integration_real_tools_under_mock():
     assert result["status"] in {"completed", "partial"}
     assert "# 简历优化报告" in result["report"]
     assert result["model"] == "gpt-5.5"
+
+
+def test_required_fixes_extracts_action_text_from_structured_items():
+    verification = {
+        "required_fixes": [
+            {"priority": "high", "fix": "Remove unsupported claim"},
+            "Keep the date factual",
+            {"issue": "Fallback item"},
+        ],
+    }
+    assert _required_fixes(verification) == [
+        "Remove unsupported claim",
+        "Keep the date factual",
+        "Fallback item",
+    ]
 
 
 if __name__ == "__main__":

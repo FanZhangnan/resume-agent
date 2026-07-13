@@ -144,6 +144,15 @@ def _run_timeout(seconds):
             signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
 
 
+def _disarm_run_timeout_alarm():
+    """Stop this run's one-shot alarm after a deadline was already observed."""
+    if (
+        hasattr(signal, "setitimer")
+        and threading.current_thread() is threading.main_thread()
+    ):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 class ResumeAgent:
     """简历优化Agent：默认确定性流水线，保留ReAct诊断模式。"""
 
@@ -305,6 +314,7 @@ class ResumeAgent:
                     self._loop()
             except Exception as error:
                 if getattr(error, "is_run_deadline", False):
+                    _disarm_run_timeout_alarm()
                     has_deadline_results = (
                         bool(pipeline and pipeline.completed_stages)
                         or any(self.state[key] for key in (
@@ -388,24 +398,31 @@ class ResumeAgent:
                 output_path = self._save_report(final_report)
                 if output_path:
                     print(f"\n💾 报告已保存：{output_path}")
-            emit_trace(
-                "run.completed", span="run",
-                data={
-                    "status": (
-                        "completed"
-                        if (
-                            pipeline.terminal_status()
-                            if pipeline is not None
-                            else self._report_terminal_status()
-                        ) == "completed"
-                        else "partial"
-                    ),
-                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
-                    "steps": self.step_count,
-                    "revision_rounds": self.revision_rounds,
-                    "report_available": bool(output_path),
-                },
-            )
+            try:
+                emit_trace(
+                    "run.completed", span="run",
+                    data={
+                        "status": (
+                            "completed"
+                            if (
+                                pipeline.terminal_status()
+                                if pipeline is not None
+                                else self._report_terminal_status()
+                            ) == "completed"
+                            else "partial"
+                        ),
+                        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                        "steps": self.step_count,
+                        "revision_rounds": self.revision_rounds,
+                        "report_available": bool(output_path),
+                    },
+                )
+            except Exception as error:
+                # The JSONL event is written before the optional summary file.
+                # A one-shot watchdog may fire during that final atomic replace;
+                # the already-saved report remains the authoritative result.
+                if not getattr(error, "is_run_deadline", False):
+                    raise
             return final_report
         except Exception as error:
             emit_trace(

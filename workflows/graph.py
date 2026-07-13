@@ -67,7 +67,13 @@ def _with_struct_fallback(suggestions):
 
 def _required_fixes(verification):
     verification = verification or {}
-    fixes = [str(item) for item in (verification.get("required_fixes") or []) if str(item).strip()]
+    fixes = []
+    for item in verification.get("required_fixes") or []:
+        if isinstance(item, dict):
+            item = item.get("fix") or item.get("issue") or item.get("suggestion") or ""
+        text = str(item).strip()
+        if text:
+            fixes.append(text)
     return fixes
 
 
