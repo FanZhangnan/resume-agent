@@ -1,20 +1,33 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "experimentalServices": {
+  "services": {
     "web": {
-      "type": "web",
+      "root": ".",
       "entrypoint": "webui/vercel_server.py",
       "framework": "fastapi",
-      "mount": "/",
-      "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
+      "functions": {
+        "webui/vercel_server.py": {
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
+        }
+      }
     },
     "resume_workflow": {
-      "type": "worker",
-      "entrypoint": "workflows/resume_workflow.py",
-      "topics": ["__wkf_*"],
-      "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
+      "root": ".",
+      "entrypoint": "workflows/vercel_worker.py",
+      "framework": "fastapi",
+      "functions": {
+        "workflows/vercel_worker.py": {
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}",
+          "experimentalTriggers": [
+            { "type": "queue/v2beta", "topic": "__wkf_*" }
+          ]
+        }
+      }
     }
   },
+  "rewrites": [
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ],
   "crons": [
     {
       "path": "/api/maintenance/cleanup",

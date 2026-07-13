@@ -29,7 +29,7 @@ The deployment has three explicit boundaries:
 2. `workflows/resume_workflow.py` registers top-level durable workflows and steps. Module paths and decorated function names remain stable because they form persisted workflow IDs.
 3. `vercel_trace.py` stores per-stage, privacy-safe status documents in a connected Private Vercel Blob store.
 
-`pyproject.toml` selects Python 3.12 and points `[tool.vercel] entrypoint` at `webui.vercel_server:app`. `vercel.json` registers `workflows/resume_workflow.py` as an `experimentalServices` worker for `__wkf_*` topics and configures a daily cleanup route. The existing `webui/server.py` remains the local development server at `127.0.0.1:7860`; shared validation and pipeline code is imported by both entrypoints.
+`pyproject.toml` selects Python 3.12. `vercel.json` uses GA `services`: the public rewrite targets `webui/vercel_server.py`, while a private `queue/v2beta` trigger targets `workflows/vercel_worker.py` for `__wkf_*` topics. The adapter imports the durable registry before exporting the queue ASGI app. The existing `webui/server.py` remains the local development server at `127.0.0.1:7860`; shared validation and pipeline code is imported by both entrypoints.
 
 ## Request and State Flow
 
