@@ -94,6 +94,53 @@ _VERIFICATION_RISK_FIELDS = (
     "match_authenticity_issues",
 )
 _STAR_FIX_TAIL_PREFIXES = ("只保留", "保留", "改为", "调整为")
+_REWRITE_SECTION_RE = re.compile(
+    r"(?<![A-Z0-9_])REWRITE_SUGGESTIONS(?![A-Z0-9_])", re.IGNORECASE,
+)
+_STAR_OTHER_DELIVERABLE_FIELDS = (
+    "REWRITE_SUGGESTIONS", "KEYWORD_INJECTION", "HONESTY_BOUNDARIES",
+    "OVERALL_STRATEGY", "OPTIMIZED_RESUME",
+)
+_REWRITE_OTHER_DELIVERABLE_FIELDS = (
+    "STAR", "KEYWORD_INJECTION", "HONESTY_BOUNDARIES", "OVERALL_STRATEGY",
+    "OPTIMIZED_RESUME",
+)
+_STAR_OTHER_SECTION_MARKERS = (
+    "逐段修改建议", "逐段建议", "优化建议", "总体策略", "关键词", "诚实边界",
+)
+_REWRITE_OTHER_SECTION_MARKERS = ("总体策略", "关键词", "诚实边界")
+_MAIN_RESUME_ASSESSMENT_RISK_RE = re.compile(
+    r"(?:优化版简历|简历正文|优化稿|结构化(?:简历|内容)?)"
+    r".{0,24}(?:仍|也|存在|包含|含有|新增|虚构|夸大|未证实|不忠实|错误|问题|风险)"
+    r"|(?:虚构|夸大|未证实|不忠实|错误|问题|风险)"
+    r".{0,24}(?:优化版简历|简历正文|优化稿|结构化(?:简历|内容)?)",
+    re.IGNORECASE,
+)
+
+
+def _strict_verification_issues(verification):
+    if not isinstance(verification, dict):
+        return None
+    raw_fixes = verification.get("required_fixes")
+    if (
+        not isinstance(raw_fixes, list)
+        or not raw_fixes
+        or not all(isinstance(item, str) and item.strip() for item in raw_fixes)
+    ):
+        return None
+    assessment = str(verification.get("overall_assessment") or "")
+    if _MAIN_RESUME_ASSESSMENT_RISK_RE.search(assessment):
+        return None
+    risk_rows = []
+    for key in _VERIFICATION_RISK_FIELDS:
+        rows = verification.get(key) or []
+        if (
+            not isinstance(rows, list)
+            or not all(isinstance(item, str) and item.strip() for item in rows)
+        ):
+            return None
+        risk_rows.extend(rows)
+    return [item.strip() for item in raw_fixes], risk_rows
 
 
 def _is_star_only_issue(value):
@@ -102,7 +149,12 @@ def _is_star_only_issue(value):
     text = str(value).strip()
     upper = text.upper()
     match = _STAR_SECTION_RE.search(text)
-    if not match or any(marker in upper for marker in _MAIN_RESUME_MARKERS):
+    if (
+        not match
+        or any(marker in upper for marker in _MAIN_RESUME_MARKERS)
+        or any(marker in upper for marker in _STAR_OTHER_DELIVERABLE_FIELDS)
+        or any(marker in upper for marker in _STAR_OTHER_SECTION_MARKERS)
+    ):
         return False
     remainder = text[match.end():]
     if any(scope_marker in remainder for scope_marker in ("中", "内", "里")):
@@ -116,32 +168,29 @@ def _is_star_only_issue(value):
     return True
 
 
+def _is_rewrite_suggestion_only_issue(value):
+    if not isinstance(value, str):
+        return False
+    upper = value.upper()
+    return (
+        bool(_REWRITE_SECTION_RE.search(value))
+        and not any(marker in upper for marker in _MAIN_RESUME_MARKERS)
+        and not any(marker in upper for marker in _REWRITE_OTHER_DELIVERABLE_FIELDS)
+        and not any(marker in upper for marker in _REWRITE_OTHER_SECTION_MARKERS)
+    )
+
+
 def _resolve_star_only_fixes(verification, suggestions):
     """Remove an optional STAR section when it is the only remaining blocker."""
-    raw_fixes = (
-        verification.get("required_fixes")
-        if isinstance(verification, dict)
-        else None
-    )
-    if (
-        not isinstance(raw_fixes, list)
-        or not raw_fixes
-        or not all(isinstance(item, str) and item.strip() for item in raw_fixes)
-    ):
+    issues = _strict_verification_issues(verification)
+    if issues is None:
         return verification, suggestions, []
-    fixes = _required_fixes(verification)
+    fixes, risk_rows = issues
     star_rows = (
         suggestions.get("star_rewrites")
         if isinstance(suggestions, dict)
         else None
     )
-    risk_rows = []
-    if isinstance(verification, dict):
-        for key in _VERIFICATION_RISK_FIELDS:
-            rows = verification.get(key) or []
-            if not isinstance(rows, list):
-                return verification, suggestions, []
-            risk_rows.extend(rows)
     if (
         not fixes
         or not isinstance(star_rows, list)
@@ -151,6 +200,8 @@ def _resolve_star_only_fixes(verification, suggestions):
         return verification, suggestions, []
 
     cleaned_suggestions = {**suggestions, "star_rewrites": []}
+    if not suggestions_are_usable(cleaned_suggestions):
+        return verification, suggestions, []
     cleaned_verification = dict(verification or {})
     cleaned_verification.update({
         "passed": True,
@@ -159,6 +210,45 @@ def _resolve_star_only_fixes(verification, suggestions):
         "overall_assessment": (
             "最终复检仅发现可选STAR辅助段落存在推断；"
             "系统已删除该段落，优化版简历正文保持不变。"
+        ),
+    })
+    for key in _VERIFICATION_RISK_FIELDS:
+        cleaned_verification[key] = []
+    return cleaned_verification, cleaned_suggestions, fixes
+
+
+def _resolve_rewrite_suggestion_only_fixes(verification, suggestions):
+    """Drop optional rewrite guidance when it is the sole verification blocker."""
+    issues = _strict_verification_issues(verification)
+    if issues is None:
+        return verification, suggestions, []
+    fixes, risk_rows = issues
+    rewrite_rows = (
+        suggestions.get("rewrite_suggestions")
+        if isinstance(suggestions, dict)
+        else None
+    )
+    if (
+        not isinstance(rewrite_rows, list)
+        or not rewrite_rows
+        or not all(
+            _is_rewrite_suggestion_only_issue(issue)
+            for issue in fixes + risk_rows
+        )
+    ):
+        return verification, suggestions, []
+
+    cleaned_suggestions = {**suggestions, "rewrite_suggestions": []}
+    if not suggestions_are_usable(cleaned_suggestions):
+        return verification, suggestions, []
+    cleaned_verification = dict(verification)
+    cleaned_verification.update({
+        "passed": True,
+        "safe_to_deliver": True,
+        "required_fixes": [],
+        "overall_assessment": (
+            "最终复检仅发现可选逐段修改建议存在不准确表述；"
+            "系统已删除该辅助列表，优化版简历正文保持不变。"
         ),
     })
     for key in _VERIFICATION_RISK_FIELDS:
@@ -422,6 +512,18 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
             "resolved": True,
             "resolution": "移除可选STAR改写段落",
         })
+    (
+        state["verification"], state["suggestions"], rewrite_fixes,
+    ) = _resolve_rewrite_suggestion_only_fixes(
+        state["verification"], state["suggestions"],
+    )
+    if rewrite_fixes:
+        state["correction_log"].append({
+            "round": 0,
+            "issues": rewrite_fixes,
+            "resolved": True,
+            "resolution": "移除可选逐段修改建议",
+        })
 
     # One targeted repair round if the strict delivery gate is not yet met.
     if not delivery_is_complete(state["verification"], state["suggestions"]):
@@ -452,8 +554,15 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                     ) = _resolve_star_only_fixes(
                         state["verification"], state["suggestions"],
                     )
+                    (
+                        state["verification"], state["suggestions"],
+                        residual_rewrite_fixes,
+                    ) = _resolve_rewrite_suggestion_only_fixes(
+                        state["verification"], state["suggestions"],
+                    )
                 else:
                     residual_star_fixes = []
+                    residual_rewrite_fixes = []
                 resolved = delivery_is_complete(
                     state["verification"], state["suggestions"]
                 )
@@ -466,6 +575,12 @@ async def run_workflow_graph(payload, operations, trace, *, clock=None, parallel
                         if issue not in fixes
                     ]
                     correction["resolution"] = "移除可选STAR改写段落"
+                if residual_rewrite_fixes:
+                    correction["issues"] = correction["issues"] + [
+                        issue for issue in residual_rewrite_fixes
+                        if issue not in correction["issues"]
+                    ]
+                    correction["resolution"] = "移除可选逐段修改建议"
                 state["correction_log"].append(correction)
 
     term = await boundary()

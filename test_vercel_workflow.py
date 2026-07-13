@@ -111,6 +111,19 @@ class StarSuggestionOps(FakeOps):
         return result
 
 
+class RewriteSuggestionOps(FakeOps):
+    async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
+        result = await super().suggest(
+            resume_info, jd_analysis, match_result, fix_instructions,
+        )
+        result["suggestions"]["rewrite_suggestions"] = [{
+            "section": "个人简介",
+            "before": "UNSAFE OPTIONAL REWRITE TEXT",
+            "after": "verified rewrite",
+        }]
+        return result
+
+
 def _payload(**kw):
     base = {"resume_text": "张三 后端工程师", "jd_text": "招后端工程师，需要 Python",
             "model": "gpt-5.5", "reasoning": "xhigh", "deadline_epoch": None,
@@ -290,6 +303,202 @@ def test_revision_star_only_residual_is_removed_without_third_llm_call():
     assert ops.calls.count("verify") == 2
 
 
+def test_rewrite_suggestion_only_verification_removes_optional_section():
+    rewrite_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [
+            "将rewrite_suggestions第1项before中的“负责店铺运营”"
+            "改为原始范围内的活动配置、商品上下架、数据整理。",
+            "将rewrite_suggestions第3项before/problem改为保留“协助优化”"
+            "及原有12%点击率成果，避免称其未量化。",
+        ],
+        "overstatement_issues": [
+            "rewrite_suggestions第1项before范围过宽。",
+            "rewrite_suggestions第3项problem弱化了原始参与边界。",
+        ],
+    }
+    ops, trace = RewriteSuggestionOps(verify_sequence=[rewrite_issue]), FakeTrace()
+    result = run(run_workflow_graph(_payload(), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert "UNSAFE OPTIONAL REWRITE TEXT" not in result["report"]
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 1
+    assert ops.calls.count("verify") == 1
+    assert trace.statuses(7).count("completed") == 1
+
+
+def test_revision_rewrite_suggestion_residual_avoids_third_llm_call():
+    final_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["rewrite_suggestions第1项before中仍有夸大表述。"],
+        "overstatement_issues": ["rewrite_suggestions第1项before范围过宽。"],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[_VERIFY_BAD, final_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert "UNSAFE OPTIONAL REWRITE TEXT" not in result["report"]
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 2
+    assert ops.calls.count("verify") == 2
+
+
+def test_rewrite_suggestion_fix_cannot_hide_main_resume_issue():
+    mixed_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [
+            "删除rewrite_suggestions和优化版简历正文中的夸大表述。",
+        ],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_fix_cannot_hide_non_rewrite_risk_row():
+    mixed_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["rewrite_suggestions第1项before中有夸大表述。"],
+        "fabrication_risks": ["优化版简历正文新增了未证实技能。"],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_fix_cannot_override_main_resume_assessment():
+    conflicting_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "overall_assessment": (
+            "优化版简历正文仍有未证实内容，rewrite_suggestions也需修正。"
+        ),
+        "required_fixes": ["rewrite_suggestions第1项before中有夸大表述。"],
+        "overstatement_issues": ["rewrite_suggestions第1项before范围过宽。"],
+    }
+    ops = RewriteSuggestionOps(
+        verify_sequence=[conflicting_issue, conflicting_issue],
+    )
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_structured_rewrite_suggestion_risk_is_not_auto_resolved():
+    structured_risk = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["rewrite_suggestions第1项before中有夸大表述。"],
+        "overstatement_issues": [{
+            "section": "rewrite_suggestions",
+            "issue": "before范围过宽",
+        }],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[structured_risk, structured_risk])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_fix_requires_nonempty_optional_section():
+    rewrite_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["rewrite_suggestions第1项before中有夸大表述。"],
+    }
+    ops = FakeOps(verify_sequence=[rewrite_issue, rewrite_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_field_name_must_match_exactly():
+    backup_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["rewrite_suggestions_backup中有夸大表述。"],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[backup_issue, backup_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_alias_is_not_auto_resolved():
+    alias_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": ["逐段修改建议中有夸大表述。"],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[alias_issue, alias_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_fix_cannot_include_other_optional_section():
+    mixed_optional_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [
+            "rewrite_suggestions和star_rewrites中都有夸大表述。",
+        ],
+    }
+    ops = RewriteSuggestionOps(
+        verify_sequence=[mixed_optional_issue, mixed_optional_issue],
+    )
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
+def test_rewrite_suggestion_fix_cannot_include_chinese_optional_sections():
+    for section in ("关键词补充", "诚实边界", "总体策略"):
+        mixed_issue = {
+            "passed": False,
+            "safe_to_deliver": False,
+            "required_fixes": [
+                f"rewrite_suggestions和{section}中都有夸大表述。",
+            ],
+        }
+        ops = RewriteSuggestionOps(verify_sequence=[mixed_issue, mixed_issue])
+        result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+        assert result["status"] == "partial", section
+        assert result["safe_to_deliver"] is False, section
+
+
+def test_structured_rewrite_suggestion_fix_is_not_auto_resolved():
+    structured_issue = {
+        "passed": False,
+        "safe_to_deliver": False,
+        "required_fixes": [{
+            "fix": "删除rewrite_suggestions第1项的夸大表述。",
+            "issue": "优化稿正文也含虚构内容。",
+        }],
+    }
+    ops = RewriteSuggestionOps(verify_sequence=[structured_issue, structured_issue])
+    result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+    assert result["status"] == "partial"
+    assert result["safe_to_deliver"] is False
+
+
 def test_star_named_fix_does_not_hide_non_star_risk_rows():
     mixed_issue = {
         "passed": False,
@@ -329,6 +538,22 @@ def test_star_and_main_resume_fix_is_not_auto_resolved():
 
     assert result["status"] == "partial"
     assert result["safe_to_deliver"] is False
+
+
+def test_star_fix_cannot_include_rewrite_suggestion_section():
+    for section in ("rewrite_suggestions", "逐段修改建议"):
+        mixed_fix = {
+            "passed": False,
+            "safe_to_deliver": False,
+            "required_fixes": [
+                f"删除STAR中的推断和{section}的夸大表述。",
+            ],
+        }
+        ops = StarSuggestionOps(verify_sequence=[mixed_fix, mixed_fix])
+        result = run(run_workflow_graph(_payload(), ops, FakeTrace()))
+
+        assert result["status"] == "partial", section
+        assert result["safe_to_deliver"] is False, section
 
 
 def test_star_and_optimized_draft_fix_is_not_auto_resolved():
