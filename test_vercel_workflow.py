@@ -72,11 +72,17 @@ class FakeTrace:
 class DeadlineBeforeFallbackTrace(FakeTrace):
     async def check_boundary(self, deadline_epoch):
         self._checks += 1
-        expired = self._checks >= 7
+        expired = self._checks >= 6
         return {
             "status": "deadline_exceeded" if expired else None,
             "remaining_seconds": 0 if expired else 60,
         }
+
+
+class LimitedRepairBudgetTrace(FakeTrace):
+    async def check_boundary(self, deadline_epoch):
+        self._checks += 1
+        return {"status": None, "remaining_seconds": 200}
 
 
 class FakeOps:
@@ -381,6 +387,22 @@ def test_repair_legacy_conservative_marker_uses_original_resume_fallback():
     _, _, verify_data = trace.last_event(7)
     assert verify_data["duration_ms"] == 333
     assert verify_data["validation_status"] == "rejected_ai_draft"
+
+
+def test_repair_is_skipped_when_two_calls_do_not_fit_remaining_time():
+    ops = FakeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    trace = LimitedRepairBudgetTrace()
+    result = run(run_workflow_graph(_payload(deadline_epoch=1000), ops, trace))
+
+    assert result["status"] == "completed"
+    assert result["safe_to_deliver"] is True
+    assert len([call for call in ops.calls if isinstance(call, tuple)]) == 1
+    assert ops.calls.count("verify") == 1
+    assert all(
+        data.get("revision_round") != 1
+        for _, _, data in trace.events
+    )
+    assert trace.last_event(6)[2]["reason"] == "fact_only_fallback"
 
 
 def test_missing_time_returns_deadline_without_invoking_tools():

@@ -30,8 +30,11 @@ STAGE_SUGGEST = 6
 STAGE_VERIFY = 7
 STAGE_REPORT = 8
 
-# Minimum wall-clock seconds required to attempt one targeted repair round.
-_REPAIR_MIN_SECONDS = 20.0
+# A repair needs both regeneration and strict re-verification. Keep enough
+# wall-clock budget for two bounded LLM calls plus workflow/report finalization.
+_REPAIR_MIN_SECONDS = (
+    2.0 * float(config.CALL_DEADLINE) + float(config.WATCHDOG_GRACE)
+)
 
 _STATE_KEYS = (
     "resume_info", "jd_analysis", "match_result", "suggestions", "verification",
