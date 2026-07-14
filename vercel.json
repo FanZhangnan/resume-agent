@@ -28,12 +28,6 @@
   "rewrites": [
     { "source": "/(.*)", "destination": { "service": "web" } }
   ],
-  "crons": [
-    {
-      "path": "/api/maintenance/cleanup",
-      "schedule": "0 3 * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",

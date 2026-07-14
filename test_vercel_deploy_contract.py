@@ -9,12 +9,28 @@ import subprocess
 import sys
 import threading
 import tomllib
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def test_application_runtime_has_no_blob_dependency():
+    sources = [
+        Path(ROOT, "webui", "vercel_server.py"),
+        Path(ROOT, "workflows", "resume_workflow.py"),
+        Path(ROOT, "run_trace_store.py"),
+        Path(ROOT, "quota_store.py"),
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in sources)
+    assert "vercel.blob" not in text
+    assert "BLOB_READ_WRITE_TOKEN" not in text
+    assert "list_objects(" not in text
+    config = json.loads(Path(ROOT, "vercel.json").read_text(encoding="utf-8"))
+    assert "crons" not in config
 
 
 def test_vercel_config_uses_ga_services_with_private_workflow_trigger():
