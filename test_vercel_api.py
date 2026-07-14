@@ -17,9 +17,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from public_security import hash_ip, issue_session  # noqa: E402
 from quota_store import QuotaStore  # noqa: E402
+from run_trace_store import MissingRun, TraceStore  # noqa: E402
 from test_quota_store import FailingExecutor, FakeRedisExecutor  # noqa: E402
-from test_vercel_trace import FakeBlobClient  # noqa: E402
-from vercel_trace import TraceStore  # noqa: E402
 import webui.vercel_server as server  # noqa: E402
 
 # API contract tests use an injected backend and never contact the gateway.
@@ -68,7 +67,6 @@ class FakeBackend:
 def _client(*, backend=None, trace=None, quota=None, quota_options=None,
             client_ip="203.0.113.10"):
     backend = backend or FakeBackend()
-    trace = trace or TraceStore(client=FakeBlobClient())
     if quota is None:
         redis = FakeRedisExecutor()
         quota = QuotaStore(
@@ -79,6 +77,7 @@ def _client(*, backend=None, trace=None, quota=None, quota_options=None,
         )
     else:
         redis = getattr(quota, "_executor", None)
+    trace = trace or TraceStore(quota)
     server.set_runtime(backend=backend, trace=trace, quota=quota)
     client = TestClient(
         server.app,
@@ -479,7 +478,7 @@ def test_unknown_bind_outcome_keeps_accounting_and_requests_cancel():
     backend = FakeBackend()
     redis = CommitThenGoOffline()
     quota = QuotaStore("https://redis.example", "redis-token", executor=redis)
-    client, _, trace, _, _ = _client(backend=backend, quota=quota)
+    client, _, _, _, _ = _client(backend=backend, quota=quota)
 
     failed = _start_ok(client, data={"api_key": "sk-uncertain-bind"})
     assert failed.status_code == 503
@@ -488,18 +487,16 @@ def test_unknown_bind_outcome_keeps_accounting_and_requests_cancel():
     assert len(redis.active) == 1
     assert "ra:run:run-1" in redis.runs
     assert redis.credentials
-    assert _run(trace.is_cancelled("run-1")) is True
 
 
 def test_trace_failure_after_bind_keeps_usage_and_admission_accounted():
     backend = FakeBackend()
-    trace = TraceStore(client=FakeBlobClient())
+    client, _, trace, _, redis = _client(backend=backend)
 
     async def fail_stage(*_args, **_kwargs):
         raise RuntimeError("private trace detail")
 
     trace.write_stage = fail_stage
-    client, _, _, _, redis = _client(backend=backend, trace=trace)
     started = _start_ok(client)
     assert started.status_code == 202
     assert started.json()["free_left"] == 1
@@ -786,23 +783,32 @@ def test_delete_removes_terminal_run_traces_and_history():
     })
     assert client.get(f"/api/runs/{run_id}").status_code == 200
     assert client.delete(f"/api/runs/{run_id}").status_code == 200
-    stages = _run(trace.read_stages(run_id))
-    assert stages == {}
+    try:
+        _run(trace.read_stages(run_id))
+    except MissingRun:
+        pass
+    else:
+        raise AssertionError("deleted run trace must not survive")
     assert client.get("/api/runs").json()["runs"] == []
 
 
-def test_blob_delete_failure_keeps_run_owner_for_retry():
-    class ToggleListFailureClient(FakeBlobClient):
-        fail_list = False
+def test_redis_delete_failure_keeps_run_owner_for_retry():
+    class ToggleDeleteFailureRedis(FakeRedisExecutor):
+        fail_delete = False
 
-        async def list_objects(self, **kwargs):
-            if self.fail_list:
-                raise RuntimeError("blob list unavailable")
-            return await super().list_objects(**kwargs)
+        async def __call__(self, command):
+            if (
+                self.fail_delete
+                and command[0] == "EVAL"
+                and "quota-delete-run-v1" in command[1]
+            ):
+                raise RuntimeError("redis delete unavailable")
+            return await super().__call__(command)
 
-    blob = ToggleListFailureClient()
-    trace = TraceStore(client=blob)
-    client, backend, _, quota, _ = _client(trace=trace)
+    redis = ToggleDeleteFailureRedis()
+    quota = QuotaStore("https://redis.example", "redis-token", executor=redis)
+    trace = TraceStore(quota)
+    client, backend, _, _, _ = _client(trace=trace, quota=quota)
     body = _start_ok(client).json()
     run_id = body["run_id"]
     session_hash = backend.started[0][1]["session_hash"]
@@ -812,11 +818,11 @@ def test_blob_delete_failure_keeps_run_owner_for_retry():
     })
     assert client.get(f"/api/runs/{run_id}").status_code == 200
 
-    blob.fail_list = True
+    redis.fail_delete = True
     failed = client.delete(f"/api/runs/{run_id}")
     assert failed.status_code == 503
     assert failed.json()["code"] == "delete_unavailable"
-    blob.fail_list = False
+    redis.fail_delete = False
     assert _run(quota.owns_run(run_id, session_hash)) is True
     assert client.get("/api/runs").json()["runs"][0]["run_id"] == run_id
 
@@ -824,14 +830,9 @@ def test_blob_delete_failure_keeps_run_owner_for_retry():
     assert _run(quota.owns_run(run_id, session_hash)) is False
 
 
-def test_cleanup_requires_cron_secret():
+def test_blob_cleanup_endpoint_is_removed():
     client, _, _, _, _ = _client()
-    assert client.get("/api/maintenance/cleanup").status_code in (401, 403)
-    assert client.get("/api/maintenance/cleanup",
-                      headers={"Authorization": "Bearer wrong"}).status_code in (401, 403)
-    ok = client.get("/api/maintenance/cleanup",
-                    headers={"Authorization": "Bearer cron-secret"})
-    assert ok.status_code == 200
+    assert client.get("/api/maintenance/cleanup").status_code == 404
 
 
 if __name__ == "__main__":

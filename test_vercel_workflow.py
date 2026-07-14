@@ -9,6 +9,7 @@ import asyncio
 import importlib
 import os
 import sys
+from pathlib import Path
 
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 os.environ.setdefault("AGENT_MOCK", "1")
@@ -1054,6 +1055,16 @@ def test_required_fixes_extracts_action_text_from_structured_items():
         "Keep the date factual",
         "Fallback item",
     ]
+
+
+def test_durable_runtime_uses_redis_trace_facade():
+    workflow_source = Path("workflows/resume_workflow.py").read_text(
+        encoding="utf-8"
+    )
+    api_source = Path("webui/vercel_server.py").read_text(encoding="utf-8")
+    assert "from run_trace_store import TraceStore" in workflow_source
+    assert "from run_trace_store import TraceStore" in api_source
+    assert "vercel_trace" not in workflow_source + api_source
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ import time
 
 from vercel.workflow import get_step_metadata
 
-from vercel_trace import TraceStore
+from run_trace_store import TraceStore
 from workflows.graph import run_workflow_graph
 from workflows.runtime import wf
 
@@ -315,7 +315,7 @@ class VercelOperations:
 
 
 class RunTrace:
-    """Bridge the graph's trace surface onto the Private Blob store.
+    """Bridge the graph's trace surface onto the Redis run hash.
 
     Stage-status writes are best-effort. Boundary checks are fail-closed because
     silently losing cancellation or deadline state could start more paid work.

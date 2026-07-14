@@ -4,12 +4,11 @@ This module has no sweeper threads, subprocesses, global job registry, or quota
 files. It validates the model policy, enforces Redis-backed public quotas and
 HMAC cookie ownership, stores BYOK credentials only as encrypted references,
 starts a durable workflow, and serves session-scoped status, cancellation,
-deletion, history, and cron cleanup endpoints. Gateway credentials and the base
+deletion and history endpoints. Gateway credentials and the base
 URL are never exposed to the browser.
 """
 
 import asyncio
-import hmac
 import io
 import os
 import secrets
@@ -29,7 +28,7 @@ from public_security import (
     verify_session,
 )
 from quota_store import AdmissionDenied, QuotaStore, QuotaUnavailable
-from vercel_trace import TraceStore
+from run_trace_store import TraceStore
 
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".md", ".text"}
@@ -39,7 +38,6 @@ MAX_API_KEY_CHARS = 200
 MAX_DOCX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 MAX_DOCX_ENTRIES = 2_000
 PARSE_TIMEOUT_SECONDS = 20.0
-TRACE_RETENTION_SECONDS = 24 * 3600
 SESSION_COOKIE_NAME = "agent_sid"
 MAX_SESSION_TTL_SECONDS = 86400
 _BIND_RETRY_DELAYS = (0.05, 0.15)
@@ -165,7 +163,7 @@ def _backend():
 def _trace():
     global _TRACE
     if _TRACE is None:
-        _TRACE = TraceStore()
+        _TRACE = TraceStore(_quota())
     return _TRACE
 
 
@@ -302,13 +300,6 @@ async def _request_cancel_best_effort(backend, trace, run_id):
             await operation(run_id)
         except Exception:
             pass
-
-
-def _bearer(request):
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[7:].strip()
-    return ""
 
 
 def _stage_rows(stage_docs):
@@ -784,13 +775,6 @@ async def delete_run(run_id: str, request: Request):
         )
 
     try:
-        await _trace().delete_run(run_id)
-    except Exception:
-        return JSONResponse(
-            {"error": "运行删除失败", "code": "delete_unavailable"},
-            status_code=503,
-        )
-    try:
         deleted = await quota.delete_run(run_id, session_hash)
     except QuotaUnavailable:
         deleted = False
@@ -800,15 +784,3 @@ async def delete_run(run_id: str, request: Request):
             status_code=503,
         )
     return JSONResponse({"run_id": run_id, "status": "deleted"}, status_code=200)
-
-
-@app.get("/api/maintenance/cleanup")
-async def cleanup(request: Request):
-    secret = os.environ.get("CRON_SECRET", "")
-    provided = _bearer(request) or request.query_params.get("secret", "")
-    if not provided:
-        return JSONResponse({"error": "缺少凭证"}, status_code=401)
-    if not secret or not hmac.compare_digest(provided, secret):
-        return JSONResponse({"error": "凭证无效"}, status_code=403)
-    deleted = await _trace().cleanup_before(time.time() - TRACE_RETENTION_SECONDS)
-    return JSONResponse({"deleted": deleted, "count": len(deleted)}, status_code=200)
