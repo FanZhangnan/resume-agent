@@ -1,6 +1,7 @@
 """Static deployment contracts that mirror Vercel's build/runtime boundaries."""
 
 import asyncio
+import ast
 import importlib
 import inspect
 import json
@@ -96,6 +97,33 @@ def test_workflow_body_has_no_blob_client_io():
         sandboxed_module = importlib.import_module("workflows.resume_workflow")
         trace = sandboxed_module.RunTrace("run-contract")
     assert trace._run_id == "run-contract"
+
+
+def test_workflow_module_defers_redis_http_imports_to_steps():
+    path = Path(ROOT, "workflows", "resume_workflow.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    forbidden = {"run_trace_store", "quota_store", "httpx"}
+    top_level_imports = {
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module in forbidden
+    }
+    top_level_imports.update(
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name in forbidden
+    )
+    assert top_level_imports == set()
+
+    functions = {
+        node.name: ast.get_source_segment(path.read_text(encoding="utf-8"), node)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for name in ("step_trace_stage", "step_trace_cancelled", "step_run_boundary"):
+        assert "from run_trace_store import TraceStore" in functions[name]
 
 
 def test_paid_llm_steps_disable_sdk_retries():

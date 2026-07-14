@@ -14,7 +14,6 @@ import time
 
 from vercel.workflow import get_step_metadata
 
-from run_trace_store import TraceStore
 from workflows.graph import run_workflow_graph
 from workflows.runtime import wf
 
@@ -101,6 +100,8 @@ async def step_run_id():
 @wf.step
 async def step_trace_stage(run_id, stage_id, status, data):
     """Persist one redacted trace document outside the workflow sandbox."""
+    from run_trace_store import TraceStore
+
     await TraceStore().write_stage(
         run_id, stage_id, {"status": status, **dict(data or {})},
     )
@@ -110,12 +111,16 @@ async def step_trace_stage(run_id, stage_id, status, data):
 @wf.step
 async def step_trace_cancelled(run_id):
     """Read the cooperative-cancellation marker outside the workflow sandbox."""
+    from run_trace_store import TraceStore
+
     return await TraceStore().is_cancelled(run_id)
 
 
 @wf.step
 async def step_run_boundary(run_id, deadline_epoch):
     """Evaluate cancellation and wall-clock deadline outside the sandbox."""
+    from run_trace_store import TraceStore
+
     if await TraceStore().is_cancelled(run_id):
         return {"status": "cancelled", "remaining_seconds": 0.0}
     if deadline_epoch is None:
