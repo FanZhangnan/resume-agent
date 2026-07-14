@@ -1002,6 +1002,33 @@ def test_fact_only_fallback_discards_model_generated_resume():
     assert "提升转化20%" not in optimized_resume
 
 
+def test_fact_only_fallback_keeps_struct_for_colon_section_headers():
+    original_resume = """\
+姓名：李明
+电话：13800000000
+邮箱：liming@example.com
+目标岗位：运营专员
+
+教育经历：
+2018.09-2022.06 江南大学 市场营销 本科
+
+工作经历：
+2022.07-2025.06 星河电商 运营助理
+- 负责店铺日常活动配置。
+
+技能：Excel、SQL基础
+"""
+    ops = UnsafeResumeOps(verify_sequence=[_VERIFY_BAD, _VERIFY_BAD])
+    result = run(run_workflow_graph(
+        _payload(resume_text=original_resume), ops, FakeTrace(),
+    ))
+
+    struct = result["optimized_resume_struct"]
+    assert struct["basic_info"]["name"] == "李明"
+    assert struct["experience"][0]["company"].startswith("星河电商")
+    assert struct["skills"][0]["items"] == ["Excel", "SQL基础"]
+
+
 def test_fact_only_fallback_failure_remains_partial():
     import workflows.graph as graph_module
 

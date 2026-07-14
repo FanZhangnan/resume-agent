@@ -101,6 +101,12 @@ def parse_resume_text_to_struct(text):
               "experience": [], "projects": [], "skills": [], "extras": []}
     lines = [line.strip() for line in text.splitlines()]
     section, head_done, entry = None, False, None
+    basic_fields = {
+        "姓名": "name", "电话": "phone", "手机": "phone",
+        "邮箱": "email", "邮件": "email", "所在地": "location",
+        "城市": "location", "目标岗位": "target_role",
+        "求职意向": "target_role",
+    }
 
     def _new_entry(line, keys):
         period = _PERIOD_RE.search(line)
@@ -116,13 +122,30 @@ def parse_resume_text_to_struct(text):
     for line in lines:
         if not line:
             continue
-        header = re.match(r"^【(.+?)】$", line) or (line in _SECTION_MAP and re.match(r"^(.+)$", line))
-        if header:
-            name = header.group(1)
-            if name in _SECTION_MAP:
-                section, entry = _SECTION_MAP[name], None
-                head_done = True
+        field_match = re.match(r"^([^:：]+)[:：]\s*(.*)$", line)
+        if section is None and field_match and field_match.group(1) in basic_fields:
+            struct["basic_info"][basic_fields[field_match.group(1)]] = (
+                field_match.group(2).strip()
+            )
+            continue
+
+        bracket_header = re.match(r"^【(.+?)】$", line)
+        section_name = bracket_header.group(1) if bracket_header else None
+        section_body = ""
+        if section_name is None and line in _SECTION_MAP:
+            section_name = line
+        elif section_name is None and field_match and field_match.group(1) in _SECTION_MAP:
+            section_name = field_match.group(1)
+            section_body = field_match.group(2).strip()
+        if section_name in _SECTION_MAP:
+            section, entry = _SECTION_MAP[section_name], None
+            head_done = True
+            if not section_body:
                 continue
+            line = (
+                f"{section_name}：{section_body}"
+                if section == "skills" else section_body
+            )
         if not head_done and section is None:
             basic = struct["basic_info"]
             if line.startswith("求职意向：") or line.startswith("目标岗位："):
