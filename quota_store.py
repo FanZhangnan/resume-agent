@@ -7,6 +7,7 @@ import httpx
 
 
 _DAILY_COUNTER_TTL = 86400
+_MAX_SESSION_TTL = 86400
 
 
 class QuotaUnavailable(RuntimeError):
@@ -152,14 +153,17 @@ redis.call(
     'status', 'running',
     'safe_to_deliver', '0'
 )
-redis.call('EXPIRE', KEYS[2], tonumber(ARGV[8]))
+local created_at = math.floor(tonumber(ARGV[7]))
+local expires_at = created_at + tonumber(ARGV[8])
+redis.call('EXPIREAT', KEYS[2], expires_at)
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', created_at - tonumber(ARGV[8]))
 redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
 local count = redis.call('ZCARD', KEYS[3])
 local cap = tonumber(ARGV[9])
 if count > cap then
     redis.call('ZREMRANGEBYRANK', KEYS[3], 0, count - cap - 1)
 end
-redis.call('EXPIRE', KEYS[3], tonumber(ARGV[8]))
+redis.call('EXPIREAT', KEYS[3], expires_at)
 return 1
 """
 
@@ -181,6 +185,26 @@ if redis.call('HGET', KEYS[1], 'session_hash') ~= ARGV[1] then
 end
 redis.call('DEL', KEYS[1])
 redis.call('ZREM', KEYS[2], ARGV[2])
+return 1
+"""
+
+
+_TRACE_WRITE_SCRIPT = r"""
+-- trace-write-v1
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    return 0
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 1
+"""
+
+
+_TRACE_CANCEL_SCRIPT = r"""
+-- trace-cancel-v1
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'trace:cancelled', '1')
 return 1
 """
 
@@ -213,7 +237,9 @@ class QuotaStore:
         self.runs_per_hour = self._non_negative_int(runs_per_hour, "runs_per_hour")
         self.mock_per_hour = self._non_negative_int(mock_per_hour, "mock_per_hour")
         self.max_concurrent = self._positive_int(max_concurrent, "max_concurrent")
-        self.session_ttl = self._positive_int(session_ttl, "session_ttl")
+        self.session_ttl = self._bounded_positive_int(
+            session_ttl, "session_ttl", _MAX_SESSION_TTL,
+        )
         self.history_cap = self._positive_int(history_cap, "history_cap")
         self.admission_ttl = self._positive_int(admission_ttl, "admission_ttl")
         self._executor = executor
@@ -319,11 +345,12 @@ class QuotaStore:
         admission_id = self._required_text(admission_id, "admission_id")
         run_id = self._required_text(run_id, "run_id")
         session_hash = self._required_text(session_hash, "session_hash")
-        created_text = self._required_text(created_at, "created_at")
+        self._required_text(created_at, "created_at")
         try:
             score = float(created_at)
         except (TypeError, ValueError):
             score = float(self._timestamp(None))
+        created_text = self._format_score(score)
         keys = [
             self._key("ra:quota:admission", admission_id),
             self._key("ra:run", run_id),
@@ -383,12 +410,18 @@ class QuotaStore:
             ])
             fields = self._decode_hash(raw_fields)
             if not fields or fields.get("session_hash") != session_hash:
+                await self._execute([
+                    "ZREM", self._key("ra:history", session_hash), run_id,
+                ])
                 continue
-            fields["run_id"] = run_id
-            fields["safe_to_deliver"] = fields.get("safe_to_deliver") == "1"
-            fields["created_at"] = self._parse_created_at(fields.get("created_at"))
-            fields.pop("session_hash", None)
-            runs.append(fields)
+            runs.append({
+                "run_id": run_id,
+                "model": fields.get("model", ""),
+                "reasoning": fields.get("reasoning", ""),
+                "created_at": self._parse_created_at(fields.get("created_at")),
+                "status": fields.get("status", "running"),
+                "safe_to_deliver": fields.get("safe_to_deliver") == "1",
+            })
         return runs
 
     async def update_run(self, run_id, status, safe_to_deliver):
@@ -422,6 +455,59 @@ class QuotaStore:
             run_id,
         ])
         return self._as_int(result) == 1
+
+    async def write_trace_field(self, run_id, field, value):
+        run_id = self._required_text(run_id, "run_id")
+        field = self._required_text(field, "field")
+        value = self._required_text(value, "value")
+        allowed = field == "trace:meta" or (
+            field.startswith("trace:stage:")
+            and field.removeprefix("trace:stage:").isdigit()
+            and 1 <= int(field.removeprefix("trace:stage:")) <= 8
+        )
+        if not allowed:
+            raise ValueError("invalid trace field")
+        result = await self._execute([
+            "EVAL",
+            _TRACE_WRITE_SCRIPT,
+            1,
+            self._key("ra:run", run_id),
+            field,
+            value,
+        ])
+        return self._as_int(result) == 1
+
+    async def read_trace_fields(self, run_id):
+        run_id = self._required_text(run_id, "run_id")
+        fields = self._decode_hash(await self._execute([
+            "HGETALL", self._key("ra:run", run_id),
+        ]))
+        if not fields:
+            return None
+        return {
+            key: value
+            for key, value in fields.items()
+            if key == "trace:meta" or key.startswith("trace:stage:")
+        }
+
+    async def write_cancel(self, run_id):
+        run_id = self._required_text(run_id, "run_id")
+        result = await self._execute([
+            "EVAL",
+            _TRACE_CANCEL_SCRIPT,
+            1,
+            self._key("ra:run", run_id),
+        ])
+        return self._as_int(result) == 1
+
+    async def read_cancel(self, run_id):
+        run_id = self._required_text(run_id, "run_id")
+        fields = self._decode_hash(await self._execute([
+            "HGETALL", self._key("ra:run", run_id),
+        ]))
+        if not fields:
+            return None
+        return fields.get("trace:cancelled") == "1"
 
     async def store_credential(self, encrypted_value):
         encrypted_value = self._required_text(encrypted_value, "encrypted_value")
@@ -519,6 +605,13 @@ class QuotaStore:
             raise ValueError(f"{name} must be a positive integer") from None
         if parsed <= 0:
             raise ValueError(f"{name} must be a positive integer")
+        return parsed
+
+    @classmethod
+    def _bounded_positive_int(cls, value, name, maximum):
+        parsed = cls._positive_int(value, name)
+        if parsed > maximum:
+            raise ValueError(f"{name} must not exceed {maximum}")
         return parsed
 
     @staticmethod

@@ -506,6 +506,10 @@ class QuotaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[-2:], ["86400", "5"])
         self.assertEqual(executor.expiries["ra:run:run-a"], 87600)
 
+    async def test_session_ttl_cannot_exceed_public_retention_limit(self):
+        with self.assertRaises(ValueError):
+            self.make_store(session_ttl=86401)
+
     async def test_encrypted_credential_reference_has_lease_ttl_and_can_be_deleted(self):
         executor = FakeRedisExecutor()
         store = self.make_store(executor=executor)
