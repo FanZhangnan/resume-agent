@@ -106,12 +106,12 @@ lease, and deletes credentials for every application terminal state.
 
 ## Frontend Behavior
 
-Remove the invite-code field. Keep the current visual system and eight stable
-stage rows. Add a Mock checkbox, an optional password field for the user's API
-key, a quota indicator, and a compact recent-runs list. The API key is never
-persisted by JavaScript. When free quota is exhausted, focus the BYOK field and
-show the server message. Refresh resumes the active session from the HttpOnly
-cookie and recent-run endpoint.
+Do not require an additional access gate. Keep the current visual system and
+eight stable stage rows. Add a Mock checkbox, an optional password field for
+the user's API key, a quota indicator, and a compact recent-runs list. The API
+key is never persisted by JavaScript. When free quota is exhausted, focus the
+BYOK field and show the server message. Refresh resumes the active session from
+the HttpOnly cookie and recent-run endpoint.
 
 ## Configuration and Infrastructure
 
@@ -163,7 +163,7 @@ BYOK exemptions, the global site-funded daily ceiling, atomic global/per-IP
 leases, daily-only rollback with retained hourly usage, TTL recovery, signed
 cookie rotation, cross-session denial, five-report cap, history expiry, BYOK
 round trip and deletion, missing-Redis fail-closed behavior, and absence of
-invite-code UI/API fields.
+extra access-gate UI/API fields.
 
 Run the full existing offline suite, clean Vercel build audit, and browser checks
 at desktop and mobile widths. Preview acceptance covers anonymous free, BYOK,
