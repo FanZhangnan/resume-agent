@@ -38,6 +38,10 @@ class FakeRedisExecutor:
                 return self._update_run(keys, args)
             if "quota-delete-run-v1" in script:
                 return self._delete_run(keys, args)
+            if "trace-write-v1" in script:
+                return self._trace_write(keys, args)
+            if "trace-cancel-v1" in script:
+                return self._trace_cancel(keys)
             raise AssertionError("unknown Lua contract")
         if operation == "GET":
             self._purge(self.now)
@@ -60,6 +64,9 @@ class FakeRedisExecutor:
             self.credentials.pop(key, None)
             self.expiries.pop(key, None)
             return int(existed)
+        if operation == "ZREM":
+            history = self.history.get(command[1], {})
+            return int(history.pop(command[2], None) is not None)
         if operation == "HGET":
             run = self.runs.get(command[1])
             return None if run is None else run.get(command[2])
@@ -97,6 +104,8 @@ class FakeRedisExecutor:
                 self.expiries.pop(key, None)
                 self.counts.pop(key, None)
                 self.credentials.pop(key, None)
+                self.runs.pop(key, None)
+                self.history.pop(key, None)
 
     def _acquire(self, keys, args):
         global_key, lease_key, hourly_key, daily_key, site_key, admission_key = keys
@@ -219,7 +228,7 @@ class FakeRedisExecutor:
         while len(values) > cap:
             oldest = min(values, key=lambda item: (values[item], item))
             del values[oldest]
-        self.expiries[run_key] = self.now + int(raw_ttl)
+        self.expiries[run_key] = int(float(created_at)) + int(raw_ttl)
         self.expiries[history_key] = self.now + int(raw_ttl)
         return 1
 
@@ -238,6 +247,22 @@ class FakeRedisExecutor:
             return 0
         del self.runs[run_key]
         self.history.get(history_key, {}).pop(run_id, None)
+        self.expiries.pop(run_key, None)
+        return 1
+
+    def _trace_write(self, keys, args):
+        run = self.runs.get(keys[0])
+        if run is None:
+            return 0
+        field, value = args
+        run[field] = value
+        return 1
+
+    def _trace_cancel(self, keys):
+        run = self.runs.get(keys[0])
+        if run is None:
+            return 0
+        run["trace:cancelled"] = "1"
         return 1
 
 
@@ -437,9 +462,17 @@ class QuotaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await store.owns_run("run-5", "session-b"))
 
         self.assertTrue(await store.update_run("run-5", "completed", True))
+        run_key = "ra:run:run-5"
+        store._executor.runs[run_key]["trace:stage:8"] = '{"status":"completed"}'
+        store._executor.runs[run_key]["optimized_resume_struct"] = "PRIVATE"
         updated = await store.list_runs("session-a")
         self.assertEqual(updated[0]["status"], "completed")
         self.assertIs(updated[0]["safe_to_deliver"], True)
+        self.assertEqual(set(updated[0]), {
+            "run_id", "model", "reasoning", "created_at", "status",
+            "safe_to_deliver",
+        })
+        self.assertNotIn("PRIVATE", repr(updated))
         self.assertFalse(await store.delete_run("run-5", "session-b"))
         self.assertTrue(await store.delete_run("run-5", "session-a"))
         self.assertFalse(await store.owns_run("run-5", "session-a"))
@@ -469,8 +502,9 @@ class QuotaStoreTests(unittest.IsolatedAsyncioTestCase):
         command = executor.commands[-1]
         self.assertEqual(command[0], "EVAL")
         self.assertIn("quota-bind-run-v1", command[1])
-        self.assertIn("EXPIRE", command[1])
+        self.assertIn("EXPIREAT", command[1])
         self.assertEqual(command[-2:], ["86400", "5"])
+        self.assertEqual(executor.expiries["ra:run:run-a"], 87600)
 
     async def test_encrypted_credential_reference_has_lease_ttl_and_can_be_deleted(self):
         executor = FakeRedisExecutor()

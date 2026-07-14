@@ -1,216 +1,153 @@
-"""Offline tests for the Private Blob stage trace store with an injected fake."""
+"""Offline contract tests for the Redis-backed Vercel stage trace store."""
 
 import asyncio
 import json
 
-
-class FakeBlobClient:
-    """Minimal in-memory stand-in for vercel.blob.AsyncBlobClient."""
-
-    def __init__(self, page_size=None):
-        self.objects = {}  # pathname -> (bytes, access)
-        self.put_calls = []
-        self.get_calls = []
-        self.page_size = page_size
-        self.list_calls = []
-
-    async def put(self, path, body, *, access="public", content_type=None,
-                  add_random_suffix=False, overwrite=False, **kwargs):
-        if path in self.objects and not overwrite:
-            raise RuntimeError("would overwrite without overwrite=True")
-        if isinstance(body, str):
-            body = body.encode("utf-8")
-        self.objects[path] = (body, access)
-        self.put_calls.append((path, access, overwrite))
-        return type("PutResult", (), {"pathname": path, "url": f"blob://{path}"})()
-
-    async def get(self, url_or_path, *, access="public", use_cache=True, **kwargs):
-        self.get_calls.append((url_or_path, use_cache))
-        path = url_or_path.replace("blob://", "")
-        if path not in self.objects:
-            raise FileNotFoundError(path)
-        body, _ = self.objects[path]
-        return type("GetResult", (), {"content": body, "pathname": path,
-                                      "url": f"blob://{path}"})()
-
-    async def list_objects(self, *, prefix=None, limit=None, cursor=None, mode=None):
-        self.list_calls.append((prefix, cursor))
-        blobs = []
-        for path in sorted(self.objects):
-            if prefix and not path.startswith(prefix):
-                continue
-            blobs.append(type("Item", (), {"pathname": path, "url": f"blob://{path}"})())
-        start = int(cursor or 0)
-        page_size = self.page_size or len(blobs) or 1
-        page = blobs[start:start + page_size]
-        next_cursor = str(start + page_size) if start + page_size < len(blobs) else None
-        return type("ListResult", (), {"blobs": page, "cursor": next_cursor,
-                                       "has_more": next_cursor is not None,
-                                       "folders": []})()
-
-    async def delete(self, url_or_path):
-        targets = [url_or_path] if isinstance(url_or_path, str) else list(url_or_path)
-        for target in targets:
-            self.objects.pop(target.replace("blob://", ""), None)
-
-
-from vercel_trace import TraceStore  # noqa: E402
+from quota_store import QuotaStore, QuotaUnavailable
+from run_trace_store import MissingRun, TraceStore
+from test_quota_store import FakeRedisExecutor, FailingExecutor
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-def test_stage_paths_are_isolated_and_redacted():
-    async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await store.write_stage("run-a", 2, {"status": "running", "resume": "secret-text"})
-        await store.write_stage("run-a", 4, {"status": "completed", "jd_text": "secret-jd"})
-        stages = await store.read_stages("run-a")
-        assert stages[2]["status"] == "running"
-        assert stages[4]["status"] == "completed"
-        # Forbidden content-bearing keys must be dropped by the sanitizer.
-        assert "secret-text" not in repr(stages)
-        assert "secret-jd" not in repr(stages)
-        assert "resume" not in stages[2]
-        assert "jd_text" not in stages[4]
-        # Writes must be private and overwrite-safe.
-        assert all(access == "private" for _, access, _ in client.put_calls)
-        assert all(overwrite for _, _, overwrite in client.put_calls)
-        # Reads must bypass cache.
-        assert all(use_cache is False for _, use_cache in client.get_calls)
-    run(scenario())
+async def bound_trace(run_id="run-a", *, created_at=1000, session_ttl=86400):
+    redis = FakeRedisExecutor()
+    quota = QuotaStore(
+        "https://redis.example",
+        "redis-token",
+        session_ttl=session_ttl,
+        executor=redis,
+    )
+    admission = await quota.acquire(
+        "ip-a", "session-a", funded=False, now=created_at,
+    )
+    await quota.bind_run(
+        admission["admission_id"],
+        run_id,
+        "session-a",
+        "gpt-5.5",
+        "xhigh",
+        created_at,
+    )
+    return TraceStore(quota), quota, redis
 
 
-def test_parallel_stages_use_distinct_paths():
+def test_stages_are_isolated_redacted_and_read_once():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await asyncio.gather(
-            store.write_stage("run-b", 2, {"status": "completed"}),
-            store.write_stage("run-b", 4, {"status": "completed"}),
+        trace, _, redis = await bound_trace()
+        await trace.write_stage(
+            "run-a", 2,
+            {"status": "running", "resume_text": "PRIVATE", "attempt": 1},
         )
-        paths = {path for path, _, _ in client.put_calls}
-        assert paths == {"runs/run-b/stage-2.json", "runs/run-b/stage-4.json"}
+        await trace.write_stage(
+            "run-a", 4,
+            {"status": "completed", "jd_text": "PRIVATE-JD"},
+        )
+        redis.commands.clear()
+        stages = await trace.read_stages("run-a")
+        assert stages == {
+            2: {"status": "running", "attempt": 1},
+            4: {"status": "completed"},
+        }
+        assert "PRIVATE" not in json.dumps(stages)
+        reads = [command for command in redis.commands if command[0] == "HGETALL"]
+        assert reads == [["HGETALL", "ra:run:run-a"]]
     run(scenario())
 
 
-def test_cancel_marker_roundtrip():
+def test_parallel_stages_update_distinct_hash_fields():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        assert await store.is_cancelled("run-c") is False
-        await store.write_cancel("run-c")
-        assert await store.is_cancelled("run-c") is True
-        # A different run is unaffected.
-        assert await store.is_cancelled("run-d") is False
-    run(scenario())
-
-
-def test_cancel_check_propagates_blob_list_failure():
-    class FailingListClient(FakeBlobClient):
-        async def list_objects(self, **_kwargs):
-            raise RuntimeError("blob unavailable")
-
-    async def scenario():
-        store = TraceStore(client=FailingListClient())
-        try:
-            await store.is_cancelled("run-outage")
-        except RuntimeError as error:
-            assert "blob unavailable" in str(error)
-        else:
-            raise AssertionError("cancel check must fail closed on Blob outage")
-
+        trace, _, redis = await bound_trace("parallel")
+        await asyncio.gather(
+            trace.write_stage("parallel", 2, {"status": "completed"}),
+            trace.write_stage("parallel", 4, {"status": "completed"}),
+        )
+        fields = redis.runs["ra:run:parallel"]
+        assert "trace:stage:2" in fields
+        assert "trace:stage:4" in fields
     run(scenario())
 
 
 def test_meta_roundtrip_is_sanitized():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await store.write_meta("run-e", {"model": "gpt-5.5", "reasoning": "xhigh",
-                                         "resume": "secret"})
-        meta = await store.read_meta("run-e")
-        assert meta["model"] == "gpt-5.5"
-        assert "resume" not in meta
+        trace, _, _ = await bound_trace("meta")
+        assert await trace.write_meta(
+            "meta",
+            {"model": "gpt-5.5", "reasoning": "xhigh", "resume": "PRIVATE"},
+        ) is True
+        meta = await trace.read_meta("meta")
+        assert meta == {"model": "gpt-5.5", "reasoning": "xhigh"}
     run(scenario())
 
 
-def test_delete_run_removes_all_paths():
+def test_cancel_marker_distinguishes_active_cancelled_and_missing_runs():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await store.write_stage("run-f", 2, {"status": "completed"})
-        await store.write_cancel("run-f")
-        await store.write_meta("run-f", {"model": "gpt-5.5"})
-        await store.delete_run("run-f")
-        assert not [p for p in client.objects if p.startswith("runs/run-f/")]
-    run(scenario())
-
-
-def test_delete_run_propagates_blob_failures():
-    class FailingDeleteClient(FakeBlobClient):
-        async def delete(self, _url_or_path):
-            raise RuntimeError("blob delete unavailable")
-
-    async def scenario():
-        client = FailingDeleteClient()
-        store = TraceStore(client=client)
-        await store.write_stage("run-delete-outage", 2, {"status": "completed"})
+        trace, _, _ = await bound_trace("cancel")
+        assert await trace.is_cancelled("cancel") is False
+        assert await trace.write_cancel("cancel") is True
+        assert await trace.is_cancelled("cancel") is True
         try:
-            await store.delete_run("run-delete-outage")
-        except RuntimeError as error:
-            assert "blob delete unavailable" in str(error)
+            await trace.is_cancelled("missing")
+        except MissingRun:
+            pass
         else:
-            raise AssertionError("Blob deletion failure was reported as success")
-        assert client.objects
-
+            raise AssertionError("missing run must fail closed")
     run(scenario())
 
 
-def test_run_id_is_path_sanitized():
+def test_cancel_backend_failure_is_not_treated_as_active():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await store.write_stage("../../etc/passwd", 2, {"status": "running"})
-        assert all(".." not in path for path in client.objects)
-        assert all(path.startswith("runs/") for path in client.objects)
+        quota = QuotaStore(
+            "https://redis.example", "redis-token", executor=FailingExecutor(),
+        )
+        trace = TraceStore(quota)
+        try:
+            await trace.is_cancelled("outage")
+        except QuotaUnavailable:
+            pass
+        else:
+            raise AssertionError("Redis outage must fail closed")
     run(scenario())
 
 
-def test_cleanup_before_deletes_only_old_runs():
+def test_trace_writes_do_not_extend_absolute_expiry():
     async def scenario():
-        client = FakeBlobClient()
-        store = TraceStore(client=client)
-        await store.write_meta("old-run", {"model": "gpt-5.5"}, created_epoch=1000.0)
-        await store.write_meta("new-run", {"model": "gpt-5.5"}, created_epoch=5000.0)
-        await store.write_stage("old-run", 2, {"status": "completed"}, created_epoch=1000.0)
-        deleted = await store.cleanup_before(4000.0)
-        assert "old-run" in deleted
-        assert "new-run" not in deleted
-        assert not [p for p in client.objects if p.startswith("runs/old-run/")]
-        assert [p for p in client.objects if p.startswith("runs/new-run/")]
+        trace, _, redis = await bound_trace(
+            "expiry", created_at=2000, session_ttl=3600,
+        )
+        run_key = "ra:run:expiry"
+        assert redis.expiries[run_key] == 5600
+        await trace.write_stage("expiry", 2, {"status": "completed"})
+        await trace.write_meta("expiry", {"status": "running"})
+        assert redis.expiries[run_key] == 5600
     run(scenario())
 
 
-def test_list_paginates_for_reads_and_cleanup():
+def test_deleted_run_cannot_be_recreated_by_late_trace_or_cancel_write():
     async def scenario():
-        client = FakeBlobClient(page_size=2)
-        store = TraceStore(client=client)
-        for stage_id in range(1, 6):
-            await store.write_stage(
-                "paged-run", stage_id, {"status": "completed"}, created_epoch=1000.0,
-            )
-        stages = await store.read_stages("paged-run")
-        assert sorted(stages) == [1, 2, 3, 4, 5]
-        assert len(client.list_calls) >= 3
+        trace, quota, redis = await bound_trace("deleted")
+        assert await quota.delete_run("deleted", "session-a") is True
+        assert await trace.write_stage(
+            "deleted", 2, {"status": "completed"},
+        ) is False
+        assert await trace.write_cancel("deleted") is False
+        assert "ra:run:deleted" not in redis.runs
+    run(scenario())
 
-        client.list_calls.clear()
-        deleted = await store.cleanup_before(2000.0)
-        assert deleted == ["paged-run"]
-        assert not client.objects
-        assert len(client.list_calls) >= 3
+
+def test_invalid_stage_id_is_rejected_before_redis_write():
+    async def scenario():
+        trace, _, redis = await bound_trace("stage-id")
+        redis.commands.clear()
+        try:
+            await trace.write_stage("stage-id", 9, {"status": "running"})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("stage id outside 1..8 must fail")
+        assert redis.commands == []
     run(scenario())
 
 
