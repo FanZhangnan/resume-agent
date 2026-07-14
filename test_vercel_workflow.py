@@ -7,6 +7,7 @@ case runs the graph against the real tool adapters under AGENT_MOCK=1.
 
 import asyncio
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -34,7 +35,25 @@ _JD = {"job_title": "后端工程师", "hard_requirements": ["Python"], "keyword
        "gates": {"location": {"required": False, "accepted_values": []},
                  "work_authorization": {"required": False, "accepted_values": []}}}
 _MATCH = {"score": 80, "high_matches": [{"requirement": "Python"}], "eligible": True}
-_SUGG_OK = {"overall_strategy": "s", "optimized_resume": "张三\n后端工程师\n带队交付，提升转化20%"}
+_SUGG_OK = {
+    "overall_strategy": "s",
+    "optimized_resume": "张三\n后端工程师\n带队交付，提升转化20%",
+    "optimized_resume_struct": {
+        "basic_info": {
+            "name": "张三", "phone": "", "email": "z@example.com",
+            "location": "", "target_role": "后端工程师",
+        },
+        "summary": "",
+        "education": [],
+        "experience": [{
+            "company": "A", "title": "工程师", "start": "", "end": "",
+            "bullets": ["带队交付，提升转化 20%"],
+        }],
+        "projects": [],
+        "skills": [{"group": "技能", "items": ["Python"]}],
+        "extras": [],
+    },
+}
 _VERIFY_OK = {"passed": True, "safe_to_deliver": True, "required_fixes": []}
 _VERIFY_BAD = {"passed": False, "safe_to_deliver": False, "required_fixes": ["删除夸大表述"]}
 
@@ -280,6 +299,7 @@ def test_supplied_jd_happy_path_completes():
     assert result["safe_to_deliver"] is True
     assert result["model"] == "gpt-5.5" and result["reasoning"] == "xhigh"
     assert "# 简历优化报告" in result["report"]
+    assert result["optimized_resume_struct"]["experience"][0]["company"] == "A"
     # Order: extract + analyze_jd before match/suggest/verify.
     names = [c if isinstance(c, str) else c[0] for c in ops.calls]
     assert names.index("extract") < names.index("match")
@@ -1065,6 +1085,47 @@ def test_durable_runtime_uses_redis_trace_facade():
     assert "from run_trace_store import TraceStore" in workflow_source
     assert "from run_trace_store import TraceStore" in api_source
     assert "vercel_trace" not in workflow_source + api_source
+
+
+def test_final_struct_falls_back_only_from_optimized_resume_text():
+    class InvalidStructOps(FakeOps):
+        async def suggest(
+            self, resume_info, jd_analysis, match_result, fix_instructions=None,
+        ):
+            result = await super().suggest(
+                resume_info, jd_analysis, match_result, fix_instructions,
+            )
+            result["suggestions"]["optimized_resume_struct"] = {
+                "basic_info": {},
+                "experience": [{"api_key": "PRIVATE"}],
+            }
+            result["suggestions"]["optimized_resume"] = (
+                "Candidate\n\n【工作经历】\nExample | Analyst\n- Verified evidence"
+            )
+            return result
+
+    result = run(run_workflow_graph(_payload(), InvalidStructOps(), FakeTrace()))
+    struct = result["optimized_resume_struct"]
+    assert struct["experience"][0]["company"] == "Example"
+    assert "PRIVATE" not in json.dumps(struct, ensure_ascii=False)
+
+
+def test_final_struct_is_none_when_suggestion_text_cannot_be_parsed():
+    class StructurelessOps(FakeOps):
+        async def suggest(
+            self, resume_info, jd_analysis, match_result, fix_instructions=None,
+        ):
+            result = await super().suggest(
+                resume_info, jd_analysis, match_result, fix_instructions,
+            )
+            result["suggestions"]["optimized_resume_struct"] = {
+                "experience": [{"prompt": "PRIVATE"}],
+            }
+            result["suggestions"]["optimized_resume"] = ""
+            return result
+
+    result = run(run_workflow_graph(_payload(), StructurelessOps(), FakeTrace()))
+    assert result["optimized_resume_struct"] is None
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
+from public_resume import normalize_public_resume
 from public_security import (
     encrypt_api_key,
     hash_ip,
@@ -42,6 +43,7 @@ SESSION_COOKIE_NAME = "agent_sid"
 MAX_SESSION_TTL_SECONDS = 86400
 _BIND_RETRY_DELAYS = (0.05, 0.15)
 _SDK_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+_PRIVATE_NO_STORE = {"Cache-Control": "private, no-store"}
 
 STAGE_ROWS = (
     (1, "简历解析"),
@@ -669,7 +671,10 @@ async def list_runs(request: Request):
         )
     except QuotaUnavailable:
         return _quota_unavailable_response()
-    return {"runs": runs, "free_left": free_left}
+    return JSONResponse(
+        {"runs": runs, "free_left": free_left},
+        headers=_PRIVATE_NO_STORE,
+    )
 
 
 @app.get("/api/runs/{run_id}")
@@ -714,6 +719,9 @@ async def get_run(run_id: str, request: Request):
         response["unresolved_fixes"] = result.get("unresolved_fixes", [])
         response["model"] = result.get("model", "")
         response["reasoning"] = result.get("reasoning", "")
+        response["optimized_resume_struct"] = normalize_public_resume(
+            result.get("optimized_resume_struct")
+        )
     terminal_statuses = {
         "completed", "partial", "failed", "cancelled", "deadline_exceeded",
     }
@@ -728,7 +736,7 @@ async def get_run(run_id: str, request: Request):
             return _quota_unavailable_response()
         if not updated:
             return _run_not_found_response()
-    return response
+    return JSONResponse(response, headers=_PRIVATE_NO_STORE)
 
 
 @app.post("/api/runs/{run_id}/cancel")

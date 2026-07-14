@@ -24,6 +24,22 @@ import webui.vercel_server as server  # noqa: E402
 # API contract tests use an injected backend and never contact the gateway.
 server.config.API_KEY = "unit-test-gateway-key"
 
+VALID_PUBLIC_RESUME = {
+    "basic_info": {
+        "name": "Candidate", "phone": "", "email": "c@example.com",
+        "location": "Brisbane", "target_role": "Analyst",
+    },
+    "summary": "Evidence-based analyst.",
+    "education": [],
+    "experience": [{
+        "company": "Example", "title": "Analyst", "start": "2024",
+        "end": "2026", "bullets": ["Improved reporting accuracy."],
+    }],
+    "projects": [],
+    "skills": [{"group": "Data", "items": ["Python"]}],
+    "extras": [],
+}
+
 
 def test_runtime_accepts_injected_quota_store():
     assert "quota" in inspect.signature(server.set_runtime).parameters
@@ -724,6 +740,33 @@ def test_cross_session_status_cancel_and_delete_all_return_not_found():
         f"/api/runs/{run_id}",
         headers={"Authorization": "Bearer anything"},
     ).status_code == 404
+    backend.complete(run_id, {
+        "status": "completed", "safe_to_deliver": True,
+        "report": "# private", "unresolved_fixes": [],
+        "optimized_resume_struct": VALID_PUBLIC_RESUME,
+    })
+    result_calls = backend.result_calls
+    assert other.get(f"/api/runs/{run_id}").status_code == 404
+    assert backend.result_calls == result_calls
+
+
+def test_terminal_resume_struct_is_projected_again_at_the_api_boundary():
+    client, backend, _, _, _ = _client()
+    run_id = _start_ok(client).json()["run_id"]
+    malicious = json.loads(json.dumps(VALID_PUBLIC_RESUME))
+    malicious["api_key"] = "PRIVATE-ROOT"
+    malicious["experience"][0]["prompt"] = "PRIVATE-NESTED"
+    backend.complete(run_id, {
+        "status": "completed", "safe_to_deliver": True,
+        "report": "# report", "unresolved_fixes": [],
+        "model": "gpt-5.5", "reasoning": "xhigh",
+        "optimized_resume_struct": malicious,
+        "gateway_secret": "PRIVATE-RESULT",
+    })
+    response = client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    assert response.json()["optimized_resume_struct"] == VALID_PUBLIC_RESUME
+    assert "PRIVATE" not in response.text
 
 
 def test_status_polling_and_result_only_after_completion():
@@ -731,23 +774,33 @@ def test_status_polling_and_result_only_after_completion():
     body = _start_ok(client).json()
     run_id = body["run_id"]
 
-    running = client.get(f"/api/runs/{run_id}").json()
+    running_response = client.get(f"/api/runs/{run_id}")
+    running = running_response.json()
     assert running["status"] == "running"
     assert running.get("report") in (None, "")
     assert backend.result_calls == 0        # never read return_value while running
     assert len(running["stages"]) == 8
+    assert "optimized_resume_struct" not in running
+    assert running_response.headers["cache-control"] == "private, no-store"
 
     backend.complete(run_id, {"status": "completed", "safe_to_deliver": True,
                               "report": "# 简历优化报告\n完成", "unresolved_fixes": [],
-                              "model": "gpt-5.5", "reasoning": "xhigh"})
-    done = client.get(f"/api/runs/{run_id}").json()
+                              "model": "gpt-5.5", "reasoning": "xhigh",
+                              "optimized_resume_struct": VALID_PUBLIC_RESUME})
+    done_response = client.get(f"/api/runs/{run_id}")
+    done = done_response.json()
     assert done["status"] == "completed"
     assert done["safe_to_deliver"] is True
     assert "简历优化报告" in done["report"]
-    history = client.get("/api/runs").json()["runs"]
+    assert done["optimized_resume_struct"] == VALID_PUBLIC_RESUME
+    assert done_response.headers["cache-control"] == "private, no-store"
+    history_response = client.get("/api/runs")
+    history = history_response.json()["runs"]
     assert history[0]["run_id"] == run_id
     assert history[0]["status"] == "completed"
     assert history[0]["safe_to_deliver"] is True
+    assert "optimized_resume_struct" not in history[0]
+    assert history_response.headers["cache-control"] == "private, no-store"
 
 
 def test_cancel_writes_marker():

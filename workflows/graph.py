@@ -18,6 +18,7 @@ from contracts import (
     suggestions_are_usable,
     verification_is_deliverable,
 )
+from public_resume import normalize_public_resume
 from report_renderer import render_report
 from utils import parse_resume_text_to_struct
 
@@ -384,6 +385,21 @@ def _render_state(state, analysis_engine, cancelled):
     return rendered
 
 
+def _final_resume_struct(state):
+    suggestions = state.get("suggestions")
+    if not isinstance(suggestions, dict):
+        return None
+    normalized = normalize_public_resume(
+        suggestions.get("optimized_resume_struct")
+    )
+    if normalized is not None:
+        return normalized
+    parsed = parse_resume_text_to_struct(
+        suggestions.get("optimized_resume") or ""
+    )
+    return normalize_public_resume(parsed)
+
+
 async def _finalize(trace, state, raw_status, model, reasoning):
     deliverable = delivery_is_complete(state.get("verification"), state.get("suggestions"))
     if raw_status == "completed":
@@ -419,6 +435,7 @@ async def _finalize(trace, state, raw_status, model, reasoning):
         "unresolved_fixes": unresolved,
         "model": model,
         "reasoning": reasoning,
+        "optimized_resume_struct": _final_resume_struct(state),
     }
 
 
