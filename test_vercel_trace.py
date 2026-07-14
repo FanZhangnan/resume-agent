@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 
 from quota_store import QuotaStore, QuotaUnavailable
 from run_trace_store import MissingRun, TraceStore
@@ -149,6 +150,19 @@ def test_invalid_stage_id_is_rejected_before_redis_write():
             raise AssertionError("stage id outside 1..8 must fail")
         assert redis.commands == []
     run(scenario())
+
+
+def test_trace_constructor_ignores_empty_session_ttl_environment():
+    previous = os.environ.get("AGENT_SESSION_TTL")
+    os.environ["AGENT_SESSION_TTL"] = ""
+    try:
+        trace = TraceStore()
+    finally:
+        if previous is None:
+            os.environ.pop("AGENT_SESSION_TTL", None)
+        else:
+            os.environ["AGENT_SESSION_TTL"] = previous
+    assert trace._quota.session_ttl == 86400
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 """Redis-backed, privacy-safe status trace for public Vercel runs."""
 
 import json
-import os
 
 from quota_store import QuotaStore
 
@@ -78,9 +77,7 @@ class TraceStore:
     """Expose the former trace contract over one Redis run hash."""
 
     def __init__(self, quota=None):
-        self._quota = quota or QuotaStore.from_env(
-            session_ttl=os.environ.get("AGENT_SESSION_TTL", "86400"),
-        )
+        self._quota = quota or QuotaStore.from_env()
 
     async def write_stage(
         self, run_id, stage_id, doc, *, created_epoch=None,
