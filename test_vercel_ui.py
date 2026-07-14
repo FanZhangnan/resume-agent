@@ -1,10 +1,6 @@
-"""Source and behavior contract for the self-contained Vercel polling UI.
+"""Source, security, and behavior contract for the Vercel workbench UI."""
 
-Validates cookie-owned polling, transient BYOK input, Mock mode, public quota,
-session history, safe rendering, eight stable stages, and CSP nonce handling.
-The inline application script is checked with `node --check` when available.
-"""
-
+import hashlib
 import os
 import re
 import shutil
@@ -15,6 +11,8 @@ os.environ.setdefault("AGENT_RUN_SIGNING_KEY", "unit-test-signing-key")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "webui", "static", "vercel_app.html")
+LOCAL_PAGE = os.path.join(HERE, "webui", "static", "index.html")
+LOCAL_PAGE_SHA256 = "b362337baff36daa051d675e0844d1ad55f2204c3c48d780bad7dfc95cde10ca"
 
 
 def _html():
@@ -22,220 +20,229 @@ def _html():
         return handle.read()
 
 
-def test_transient_byok_mock_and_quota_controls_present():
+def _script():
+    scripts = re.findall(
+        r'<script nonce="__CSP_NONCE__">(.*?)</script>', _html(), re.DOTALL,
+    )
+    assert len(scripts) == 1
+    return scripts[0]
+
+
+def test_local_workbench_remains_byte_for_byte_unchanged():
+    with open(LOCAL_PAGE, "rb") as handle:
+        assert hashlib.sha256(handle.read()).hexdigest() == LOCAL_PAGE_SHA256
+
+
+def test_full_workbench_surface_is_present():
     html = _html()
-    assert re.search(r'<input[^>]+type="password"[^>]+id="apiKey"', html)
+    for element_id in (
+        "app-shell", "formPane", "resume-drop", "resume-file", "resume-text",
+        "jdText", "model-seg", "effort-seg", "byok-key", "mockMode",
+        "startBtn", "cancelBtn", "quotaText", "run-meta", "pipe",
+        "tab-stream", "tab-report", "tab-layout", "tab-history",
+        "view-stream", "view-report", "view-layout", "view-history",
+        "swarm", "steps", "trace-drawer", "report-md", "recentRuns",
+        "resume-frame", "photo-file", "printResumeBtn", "downloadResumeBtn",
+    ):
+        assert f'id="{element_id}"' in html
+    assert set(re.findall(r'data-tpl="([a-z]+)"', html)) == {
+        "classic", "modern", "minimal",
+    }
+
+
+def test_required_jd_and_vercel_scope_are_explicit():
+    html = _html()
+    assert "目标岗位 JD" in html and "必填" in html
+    assert "留空 → 自动推荐" not in html
+    assert 'id="prefs"' not in html
+    assert 'id="ask"' not in html
+
+
+def test_transient_byok_mock_and_quota_controls_are_preserved():
+    html = _html()
+    assert re.search(r'<input[^>]+type="password"[^>]+id="byok-key"', html)
     assert 'id="mockMode"' in html and 'type="checkbox"' in html
     assert 'id="quotaText"' in html
-    assert 'id="recentRuns"' in html
     assert 'value="sk-' not in html
     assert "base_url" not in html.lower() and "baseurl" not in html.lower()
 
 
-def test_only_exact_models_and_efforts_referenced():
+def test_public_page_has_no_local_transport_or_credential_storage():
     html = _html()
+    for forbidden in (
+        "sessionStorage", "localStorage", "Bearer ", "EventSource",
+        "/api/events/", "/api/answer/", "onclick=", "onchange=",
+    ):
+        assert forbidden not in html, forbidden
+    assert "/api/runs" in html and "/api/config" in html
+    assert "addEventListener" in html
+
+
+def test_models_and_reasoning_are_loaded_from_public_config():
+    html = _html()
+    assert "model_options" in html
+    assert "default_reasoning" in html
+    assert "renderModelOptions" in html
+    assert "renderReasoningOptions" in html
     assert "gpt-5.6-sol" not in html.lower()
-    # No selectable disallowed reasoning options.
-    for bad in ("\"low\"", "'low'", "\"medium\"", "'medium'", "\"max\"", "'max'",
-                "\"none\"", "'none'"):
-        assert bad not in html, f"disallowed effort option {bad} present"
 
 
-def test_cookie_polling_has_no_browser_token_storage():
-    html = _html()
-    for forbidden in ("sessionStorage", "localStorage", "Bearer ", "RUN_KEY"):
-        assert forbidden not in html, f"cookie UI must not contain {forbidden!r}"
-    assert "/api/runs" in html
-    assert "/api/config" in html
-    assert "2000" in html                 # two-second poll cadence
-    assert "addEventListener" in html     # no inline onclick handlers
-    assert "onclick=" not in html
+def test_submission_uses_vercel_fields_and_clears_api_key():
+    script = _script()
+    for field in (
+        'fd.append("api_key"', 'fd.append("mock"', 'fd.append("jd_text"',
+        'fd.append("resume_text"', 'fd.append("model"',
+        'fd.append("reasoning"', 'fd.append("job_search", "0")',
+    ):
+        assert field in script
+    assert '$("byok-key").value = ""' in script
+    assert 'fd.append("job_description"' not in script
 
 
-def test_submission_includes_transient_key_and_mock_flag():
-    html = _html()
-    assert 'fd.append("api_key"' in html
-    assert 'fd.append("mock"' in html
-    assert 'fd.append("jd_text"' in html
-    assert 'fd.append("job_description"' not in html
-    assert '$("apiKey").value = ""' in html
-    assert "saveRun(" not in html and "currentRun()" not in html
+def test_explicit_run_state_machine_is_shared_by_all_views():
+    script = _script()
+    assert "const runState =" in script
+    for phase in ("idle", "submitting", "running", "cancelling", "terminal"):
+        assert f'"{phase}"' in script
+    for field in (
+        "runId", "stages", "report", "safeToDeliver", "unresolvedFixes",
+        "resumeStruct", "model", "reasoning",
+    ):
+        assert field in script
+    assert "function renderRunState(" in script
 
 
-def test_quota_errors_focus_byok_and_refresh_quota():
-    html = _html()
-    assert "free_quota_exhausted" in html
-    assert "site_quota_exhausted" in html
-    assert '$("apiKey").focus()' in html
-    assert "function updateQuota(" in html
-    assert "free_left" in html and "free_per_day" in html
+def test_adaptive_polling_is_non_overlapping_and_visibility_aware():
+    script = _script()
+    assert "function pollDelay(" in script
+    assert "return 5000" in script
+    assert "return 10000" in script
+    assert "return 15000" in script
+    assert "pollInFlight" in script and "pollGeneration" in script
+    assert "generation !== pollGeneration" in script
+    assert "document.hidden" in script
+    assert 'addEventListener("visibilitychange"' in script
+    assert "setTimeout" in script and "setInterval" not in script
 
 
-def test_recent_history_can_open_delete_and_resume_running_run():
-    html = _html()
+def test_history_restores_active_run_and_rejects_stale_results():
+    script = _script()
     for function_name in (
         "loadHistory", "renderHistory", "openRun", "deleteRun",
+        "recoverActiveRun", "startPolling", "stopPolling",
     ):
-        assert f"function {function_name}(" in html
-    assert 'method:"DELETE"' in html or 'method: "DELETE"' in html
-    assert "find(function(run)" in html
-    assert "startPolling(active.run_id)" in html
-    assert "refreshPublicState" in html
+        assert f"function {function_name}(" in script
+    assert "historyRequestId" in script
+    assert "navigationGeneration" in script
+    assert "run_start_uncertain" in script
+    assert 'method: "DELETE"' in script or 'method:"DELETE"' in script
+    assert "terminal(run.status)" in script
 
 
-def test_active_run_locks_start_until_it_stops():
+def test_eight_stages_support_inline_and_drawer_detail():
     html = _html()
-    start_polling = re.search(
-        r"function startPolling\(runId\)(.*?)function stopPolling", html, re.DOTALL,
-    ).group(1)
-    assert '$("startBtn").disabled = true' in start_polling
-    assert html.count('$("startBtn").disabled = false') >= 4
-
-
-def test_polling_prevents_overlap_and_ignores_stale_responses():
-    html = _html()
-    assert "var pollInFlight = false" in html
-    assert "var pollGeneration = 0" in html
-    assert "if(pollInFlight)" in html
-    assert "generation !== pollGeneration" in html
-    assert "pollInFlight = true" in html and "pollInFlight = false" in html
-    assert 'setError("");\n      applyStatus(data);' in html
-
-
-def test_boot_and_history_ignore_stale_async_results():
-    html = _html()
-    assert "var historyRequestId = 0" in html
-    assert "requestId !== historyRequestId" in html
-    assert "var navigationGeneration = 0" in html
-    assert "bootGeneration !== navigationGeneration" in html
-    assert "var startGeneration = navigationGeneration" in html
-    assert "startGeneration !== navigationGeneration" in html
-    assert "recoverActiveRun(startGeneration)" in html
-    assert 'catch(e){\n      if(startGeneration !== navigationGeneration)' in html
-
-
-def test_only_terminal_history_runs_can_be_deleted():
-    html = _html()
-    assert "var canDelete = terminal(run.status)" in html
-    assert "remove.disabled = !canDelete" in html
-    assert "if(canDelete)" in html
-
-
-def test_cancel_ignores_stale_response_and_surfaces_failure():
-    html = _html()
-    assert "var activeRunTerminal = false" in html
-    assert "activeRunTerminal = terminal(data.status)" in html
-    assert "var cancelRunId = activeRunId" in html
-    assert "var cancelGeneration = navigationGeneration" in html
-    assert "cancelRunId !== activeRunId" in html
-    assert "cancelGeneration !== navigationGeneration" in html
-    assert "activeRunTerminal" in html
-    assert "取消请求失败" in html
-
-
-def test_uncertain_start_attempts_history_recovery():
-    html = _html()
-    assert "run_start_uncertain" in html
-    assert "function recoverActiveRun(" in html
-    assert "await recoverActiveRun(startGeneration)" in html
-    assert "function restoreStartButton(" in html
-
-
-def test_history_uses_text_content_not_server_html():
-    html = _html()
-    assert "grid-template-columns:minmax(0,1fr) auto auto" in html
-    assert 'list.textContent = ""' in html
-    assert "button.textContent" in html
-    assert "meta.textContent" in html
-    assert "recentRuns.innerHTML" not in html
-
-
-def test_eight_stable_stage_rows():
-    html = _html()
+    script = _script()
     assert len(re.findall(r'data-stage="\d+"', html)) == 8
+    assert len(re.findall(r'id="stage-detail-\d+"', html)) == 8
+    assert "function toggleStageDetail(" in script
+    assert "function openTraceDrawer(" in script
+    assert "function stageDetailText(" in script
+    assert "textContent = detail" in script
+    assert "detailBox.innerHTML" not in script
+    for field in (
+        "duration_ms", "attempt", "retry_category", "validation_status",
+        "error_category", "revision_round", "safe_to_deliver",
+    ):
+        assert field in script
 
 
-def test_safe_report_rendering_escapes_first():
+def test_report_rendering_escapes_before_formatting():
+    script = _script()
+    assert "function escapeHtml(" in script
+    assert "function renderMarkdownSafe(" in script
+    assert "escapeHtml(String(markdown" in script
+    assert "marked.parse" not in script and "DOMPurify" not in script
+    assert "renderMarkdownSafe(runState.report)" in script
+
+
+def test_resume_exports_require_verified_struct():
     html = _html()
-    assert "function escapeHtml(" in html
-    assert "function renderMarkdownSafe(" in html
-    # The report must be routed through the safe renderer, not raw markdown.
-    assert "renderMarkdownSafe(" in html
-    assert "marked.parse" not in html or "DOMPurify" in html
+    script = _script()
+    assert "function canExportResume(" in script
+    assert 'runState.status === "completed"' in script
+    assert "runState.safeToDeliver === true" in script
+    assert "runState.unresolvedFixes.length === 0" in script
+    assert "runState.resumeStruct !== null" in script
+    assert 'id="resume-frame"' in html and "sandbox=" in html
+    assert "function buildResumeHTML(" in script
+    assert "function printResume(" in script
+    assert "function downloadResumeHTML(" in script
+    assert "resumeFallbackText" not in script
 
 
-def test_trace_detail_drawer_present():
+def test_photo_is_local_only_and_bounded():
+    script = _script()
+    assert "5 * 1024 * 1024" in script or "5*1024*1024" in script
+    assert "FileReader" in script and "readAsDataURL" in script
+    assert "photoData" in script and "clearPhoto" in script
+    assert 'fd.append("photo"' not in script
+
+
+def test_history_and_dynamic_labels_use_text_content():
+    script = _script()
+    assert 'list.textContent = ""' in script
+    assert "button.textContent" in script
+    assert "meta.textContent" in script
+    assert "recentRuns.innerHTML" not in script
+
+
+def test_responsive_layout_has_stable_mobile_constraints():
     html = _html()
-    # One sanitized detail container per stage row, populated via textContent only.
-    assert len(re.findall(r'id="std-\d+"', html)) == 8
-    assert "function setStageDetail(" in html
-    assert "function toggleStageDetail(" in html
-    # The drawer must never inject trace strings as HTML.
-    assert "box.textContent" in html
-    assert "box.innerHTML" not in html
-    assert "s.validation_status" in html
-    assert "验证状态" in html
+    assert "@media(max-width:900px)" in html.replace(" ", "")
+    assert "overflow-wrap:anywhere" in html.replace(" ", "")
+    assert "minmax(0,1fr)" in html.replace(" ", "")
 
 
-def test_report_export_button_present():
-    html = _html()
-    assert 'id="downloadBtn"' in html
-    assert "function downloadReport(" in html
-    assert "resume-report.md" in html
-
-
-def test_csp_nonce_placeholder_present():
-    html = _html()
-    assert "__CSP_NONCE__" in html
-    assert 'nonce="__CSP_NONCE__"' in html
-
-
-def test_inline_favicon_avoids_missing_asset_request():
+def test_csp_nonce_favicon_and_vercel_telemetry_are_preserved():
     html = _html()
     assert '<link rel="icon" href="data:,">' in html
-
-
-def test_speed_insights_and_analytics_scripts_are_preserved():
-    html = _html()
     assert '/_vercel/insights/script.js' in html
     assert '/_vercel/speed-insights/script.js' in html
     assert html.count('nonce="__CSP_NONCE__"') >= 3
+    assert "__CSP_NONCE__" in html
 
 
-def test_inline_script_is_valid_javascript():
+def test_inline_application_script_is_valid_javascript():
     if not shutil.which("node"):
         print("SKIP node --check (node not installed)")
         return
-    html = _html()
-    match = re.search(r'<script nonce="__CSP_NONCE__">(.*?)</script>', html, re.DOTALL)
-    assert match, "expected one nonce-guarded inline application script"
-    script = match.group(1)
-    out_path = "/tmp/resume-agent-vercel-inline.js"
-    with open(out_path, "w", encoding="utf-8") as handle:
-        handle.write(script)
-    result = subprocess.run(["node", "--check", out_path],
-                            capture_output=True, text=True)
+    path = "/tmp/resume-agent-vercel-inline.js"
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(_script())
+    result = subprocess.run(
+        ["node", "--check", path], capture_output=True, text=True,
+    )
     assert result.returncode == 0, result.stderr
 
 
-def test_server_injects_nonce_and_csp_header():
+def test_server_injects_matching_nonce_and_csp():
     from fastapi.testclient import TestClient
     import webui.vercel_server as server
 
     client = TestClient(server.app)
-    resp = client.get("/")
-    assert resp.status_code == 200
-    csp = resp.headers.get("Content-Security-Policy", "")
+    response = client.get("/")
+    assert response.status_code == 200
+    csp = response.headers.get("Content-Security-Policy", "")
     assert "script-src" in csp and "nonce-" in csp
     assert "object-src 'none'" in csp
-    body = resp.text
-    assert "__CSP_NONCE__" not in body        # placeholder was substituted
+    assert "frame-ancestors 'none'" in csp
     nonce = re.search(r"'nonce-([A-Za-z0-9_-]+)'", csp).group(1)
-    assert f'nonce="{nonce}"' in body          # header nonce matches script tag
+    assert "__CSP_NONCE__" not in response.text
+    assert response.text.count(f'nonce="{nonce}"') >= 3
 
 
 if __name__ == "__main__":
-    tests = [v for n, v in sorted(globals().items()) if n.startswith("test_")]
+    tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
         test()
         print(f"PASS {test.__name__}")

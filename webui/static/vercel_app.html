@@ -7,612 +7,1187 @@
 <link rel="icon" href="data:,">
 <style>
 :root{
-  --paper:#fbfbf9; --card:#ffffff; --ink:#16181d; --sub:#5f6672; --faint:#a7adb8;
-  --hair:#e9e9e4; --hair2:#d8d8d2;
-  --signal:#2b5ce6; --ok:#178a50; --warn:#b7791f; --bad:#c2402f;
-  --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --paper:#f5f5f2;--surface:#fff;--surface-2:#fafaf8;--ink:#17191e;
+  --sub:#626975;--faint:#a2a8b2;--hair:#e7e7e2;--hair-strong:#d4d5d0;
+  --signal:#2b5ce6;--signal-soft:#eef3ff;--ok:#168653;--warn:#a96b16;
+  --bad:#bf3f33;--mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
 }
-@media (prefers-color-scheme: dark){
-  :root{--paper:#15161a; --card:#1c1e24; --ink:#e9eaec; --sub:#9aa1ad; --faint:#5f6672;
-        --hair:#2a2c33; --hair2:#363943; --signal:#5b82f0;}
-}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}
-.wrap{max-width:900px;margin:0 auto;padding:28px 20px 64px}
-header{display:flex;align-items:center;gap:12px;padding-bottom:18px;border-bottom:1px solid var(--hair);margin-bottom:22px}
-.mark{width:10px;height:10px;background:var(--ink)}
-h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.02em}
-.tag{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
-.quota-text{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--sub);white-space:nowrap}
-.grid{display:grid;grid-template-columns:1fr;gap:20px}
-@media(min-width:760px){.grid{grid-template-columns:360px 1fr}}
-label{display:block;font-size:12px;color:var(--sub);margin:14px 0 6px}
-input[type=text],input[type=password],textarea,select{
-  width:100%;background:var(--card);color:var(--ink);border:1px solid var(--hair2);
-  border-radius:7px;padding:9px 10px;font-family:var(--sans);font-size:13.5px}
-textarea{min-height:150px;resize:vertical;line-height:1.5}
-input[type=file]{width:100%;font-size:12.5px;color:var(--sub)}
-.row2{display:flex;gap:10px}.row2>div{flex:1}
-button{font-family:var(--sans);font-size:13.5px;border-radius:7px;padding:10px 14px;cursor:pointer;border:1px solid var(--hair2);background:var(--card);color:var(--ink)}
-.btn-primary{width:100%;margin-top:18px;background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:600}
-.btn-primary:disabled{opacity:.5;cursor:not-allowed}
-.btn-ghost{width:100%;margin-top:8px;background:transparent;color:var(--sub)}
-.toggle-row{display:flex;align-items:center;gap:8px;margin-top:12px;min-height:30px}
-.toggle-row label{margin:0;color:var(--ink);cursor:pointer}
-.toggle-row input{width:16px;height:16px;margin:0;accent-color:var(--signal)}
-.recent-section{margin-top:22px;padding-top:16px;border-top:1px solid var(--hair)}
-.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.section-head h2{font-size:12px;font-weight:600;color:var(--sub);margin:0}
-.history-list{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:7px;overflow:hidden}
-.history-item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;border-bottom:1px solid var(--hair)}
-.history-item:last-child{border-bottom:none}
-.history-open{min-width:0;border:0;border-radius:0;padding:9px 10px;text-align:left;background:transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.history-meta{font-family:var(--mono);font-size:10px;color:var(--faint);padding-right:8px;white-space:nowrap}
-.history-delete{border:0;border-left:1px solid var(--hair);border-radius:0;padding:9px 10px;color:var(--faint);background:transparent}
-.history-delete:disabled{opacity:.45;cursor:not-allowed}
-.history-empty{display:block;padding:10px;color:var(--faint);font-size:11.5px}
-.hidden{display:none}
-.note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.5}
-.stages{list-style:none;margin:0;padding:0;border:1px solid var(--hair);border-radius:9px;overflow:hidden}
-.stage{display:block;padding:11px 14px;border-bottom:1px solid var(--hair);font-size:13px;cursor:pointer}
-.stage:last-child{border-bottom:none}
-.st-main{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.st-status{font-family:var(--mono);font-size:11px;color:var(--faint)}
-.st-detail{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:7px;line-height:1.6}
-.stage[data-state=running]{background:color-mix(in srgb,var(--signal) 8%,transparent)}
-.stage[data-state=running] .st-status{color:var(--signal)}
-.stage[data-state=completed] .st-status{color:var(--ok)}
-.stage[data-state=failed] .st-status,.stage[data-state=skipped] .st-status{color:var(--warn)}
-.status-line{font-family:var(--mono);font-size:11px;color:var(--sub);margin:14px 0}
-.report{margin-top:18px;background:var(--card);border:1px solid var(--hair);border-radius:9px;padding:18px 20px;line-height:1.6;font-size:13.5px}
-.report h1{font-size:17px;margin:.4em 0}.report h2{font-size:15px;margin:1em 0 .4em;color:var(--sub)}
-.report h3{font-size:13.5px;margin:.8em 0 .3em}
-.report ul{padding-left:20px;margin:.4em 0}.report blockquote{border-left:3px solid var(--hair2);margin:.6em 0;padding:.2em 0 .2em 12px;color:var(--sub)}
-.report hr{border:none;border-top:1px solid var(--hair);margin:1em 0}
-.report pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;background:transparent}
-.banner{padding:10px 12px;border-radius:7px;font-size:12.5px;margin-top:12px}
-.banner.warn{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
-.banner.bad{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}
+button,input,textarea{font:inherit;color:inherit}
+button{letter-spacing:0}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.hidden{display:none!important}
+.app-shell{max-width:1480px;margin:0 auto;padding:22px 26px 40px;min-height:100vh}
+.topbar{height:54px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--hair);margin-bottom:18px}
+.brand-mark{width:10px;height:10px;background:var(--ink);flex:none}
+.brand h1{font-size:15px;font-weight:650;margin:0;letter-spacing:0}
+.brand small{display:block;margin-top:2px;color:var(--faint);font:9px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase}
+.top-status{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
+.status-pill,.quota-pill{border:1px solid var(--hair-strong);background:var(--surface);border-radius:999px;padding:6px 10px;font:10px/1 var(--mono);white-space:nowrap}
+.status-pill::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px}
+.status-pill[data-state=running]::before{background:var(--signal)}
+.status-pill[data-state=completed]::before{background:var(--ok)}
+.status-pill[data-state=failed]::before{background:var(--bad)}
+.quota-pill{color:var(--sub)}
+.workspace{display:grid;grid-template-columns:minmax(320px,380px) minmax(0,1fr);gap:18px;align-items:start}
+.input-pane{display:grid;gap:12px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--hair);border-radius:8px;padding:17px;min-width:0}
+.card h2,.card h3{margin:0;font:600 10px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--sub)}
+.field{display:block;margin:15px 0 6px;font-size:12px;color:var(--sub)}
+.field em{font-style:normal;color:var(--faint)}
+input[type=text],input[type=password],textarea{width:100%;border:1px solid var(--hair-strong);border-radius:6px;background:var(--surface);padding:9px 10px;font-size:13px;line-height:1.5}
+textarea{resize:vertical;min-height:116px;overflow-wrap:anywhere}
+.source-tabs{display:grid;grid-template-columns:1fr 1fr;background:var(--surface-2);border:1px solid var(--hair);padding:3px;gap:3px;border-radius:6px;margin-top:12px}
+.source-tabs button,.seg button,.model-seg button{border:0;background:transparent;border-radius:4px;min-height:32px;padding:6px 8px;color:var(--sub);cursor:pointer;font-size:12px}
+.source-tabs button.on,.seg button.on,.model-seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 0 0 1px var(--hair-strong)}
+.resume-source{margin-top:10px}
+.drop-zone{min-height:112px;border:1px dashed var(--hair-strong);border-radius:7px;background:var(--surface-2);display:grid;place-items:center;text-align:center;padding:16px;cursor:pointer}
+.drop-zone.drag{border-color:var(--signal);background:var(--signal-soft)}
+.drop-zone b{display:block;font-size:13px;font-weight:600}.drop-zone span{display:block;color:var(--faint);font-size:11px;margin-top:4px}
+.file-name{margin-top:8px;color:var(--sub);font:10px/1.4 var(--mono);overflow-wrap:anywhere}
+.seg,.model-seg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;padding:3px;background:var(--surface-2);border:1px solid var(--hair);border-radius:6px}
+.model-seg{grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
+.model-seg button{display:grid;gap:3px;text-align:left;padding:8px}.model-seg button b{font-size:12px}.model-seg button span{font:9px/1.2 var(--mono);color:var(--faint)}
+details.advanced{border-top:1px solid var(--hair);margin-top:15px;padding-top:12px}
+details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
+.switch-row{display:flex;align-items:center;gap:9px;margin-top:14px;font-size:12px;cursor:pointer}
+.switch-row input{width:17px;height:17px;margin:0;accent-color:var(--signal)}
+.button-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:16px}
+.btn{border:1px solid var(--hair-strong);border-radius:6px;background:var(--surface);padding:9px 13px;cursor:pointer;font-size:12px;min-height:38px}
+.btn:hover:not(:disabled){border-color:#aeb0aa}.btn:disabled{opacity:.42;cursor:not-allowed}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+.btn-danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 32%,var(--hair))}
+.btn-icon{width:34px;height:34px;padding:0;display:grid;place-items:center;font-size:18px}
+.note,.privacy{margin-top:10px;color:var(--faint);font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}
+.banner{display:none;border-radius:6px;padding:10px 11px;margin-top:10px;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}
+.banner.show{display:block}.banner.info{background:var(--signal-soft);color:var(--signal)}.banner.warn{background:#fff7e8;color:var(--warn)}.banner.bad{background:#fff0ed;color:var(--bad)}
+.meta-rows{display:grid;gap:7px;margin-top:13px}.meta-row{display:flex;justify-content:space-between;gap:12px;font-size:11px}.meta-row span{color:var(--faint)}.meta-row b{font:500 10px/1.4 var(--mono);overflow-wrap:anywhere;text-align:right}
+.pipe{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:2px}.pipe li{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:11px;color:var(--faint)}.pipe i{width:7px;height:7px;border:1px solid var(--hair-strong);border-radius:50%}.pipe li[data-state=running]{color:var(--signal)}.pipe li[data-state=running] i{border-color:var(--signal);background:var(--signal)}.pipe li[data-state=completed]{color:var(--ok)}.pipe li[data-state=completed] i{border-color:var(--ok);background:var(--ok)}.pipe li[data-state=failed]{color:var(--bad)}.pipe li[data-state=failed] i{border-color:var(--bad);background:var(--bad)}
+.result-pane{min-width:0;background:var(--surface);border:1px solid var(--hair);border-radius:8px;overflow:hidden;min-height:720px}
+.tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:48px;border-bottom:1px solid var(--hair);background:var(--surface-2)}
+.tabs button{border:0;border-right:1px solid var(--hair);background:transparent;color:var(--sub);cursor:pointer;font-size:12px}.tabs button:last-child{border-right:0}.tabs button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:inset 0 -2px var(--ink)}
+.view{display:none;min-width:0}.view.on{display:block}.view-inner{padding:18px;min-width:0}
+.empty{min-height:630px;display:grid;place-content:center;text-align:center;padding:28px;color:var(--faint)}.empty h2{font-size:16px;color:var(--sub);margin:16px 0 8px}.empty p{font-size:12px;line-height:1.7;margin:0}.empty-mark{display:flex;justify-content:center;gap:5px}.empty-mark span{width:7px;height:7px;background:var(--hair-strong)}
+.stream-cols{display:grid;grid-template-columns:minmax(0,1fr) 220px;min-height:670px}.stream-main{padding:18px;border-right:1px solid var(--hair);min-width:0}.run-rail{padding:14px;background:var(--surface-2);display:grid;align-content:start;gap:10px;min-width:0}
+.swarm-panel{border:1px solid var(--hair);border-radius:7px;padding:13px;background:var(--surface-2)}
+.swarm-head{display:flex;justify-content:space-between;gap:10px;color:var(--faint);font:9px/1.3 var(--mono);letter-spacing:.08em}.swarm-head b{color:var(--sub);font-weight:500}
+.swarm{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px}
+.swarm-node{min-height:58px;border:1px solid var(--hair-strong);border-radius:5px;padding:8px;background:var(--surface);display:grid;align-content:space-between;gap:5px}.swarm-node b{font-size:10.5px;font-weight:600;overflow-wrap:anywhere}.swarm-node span{font:8px/1 var(--mono);color:var(--faint)}.swarm-node[data-state=running]{border-color:var(--signal);background:var(--signal-soft)}.swarm-node[data-state=running] span{color:var(--signal)}.swarm-node[data-state=completed]{border-color:color-mix(in srgb,var(--ok) 45%,var(--hair));background:#f1fbf6}.swarm-node[data-state=completed] span{color:var(--ok)}.swarm-node[data-state=failed]{border-color:color-mix(in srgb,var(--bad) 45%,var(--hair));background:#fff4f1}
+.stage-list{display:grid;gap:8px;margin-top:14px}.stage-row{border:1px solid var(--hair);border-radius:7px;background:var(--surface);overflow:hidden}.stage-main{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;align-items:center;gap:8px;padding:10px}.stage-index{font:9px/1 var(--mono);color:var(--faint)}.stage-title{font-size:12px;font-weight:600;overflow-wrap:anywhere}.stage-status{font:9px/1 var(--mono);color:var(--faint)}.stage-row[data-state=running]{border-color:color-mix(in srgb,var(--signal) 50%,var(--hair))}.stage-row[data-state=running] .stage-status{color:var(--signal)}.stage-row[data-state=completed] .stage-status{color:var(--ok)}.stage-row[data-state=failed] .stage-status{color:var(--bad)}
+.stage-toggle,.stage-open{border:0;background:transparent;color:var(--faint);cursor:pointer;padding:5px;font-size:14px}.stage-detail{border-top:1px solid var(--hair);padding:9px 46px;color:var(--sub);font:10px/1.7 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.rail-card{border:1px solid var(--hair);border-radius:6px;background:var(--surface);padding:11px}.rail-card h3{margin:0 0 9px;font:600 9px/1.2 var(--mono);letter-spacing:.1em;color:var(--faint)}.elapsed{font:600 24px/1 var(--mono)}.elapsed small{display:block;margin-top:6px;font:8px/1 var(--mono);color:var(--faint)}.overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.overview-grid div{border-top:1px solid var(--hair);padding-top:7px}.overview-grid b{display:block;font:600 11px/1.2 var(--mono)}.overview-grid span{font-size:9px;color:var(--faint)}
+.timeline{list-style:none;margin:0;padding:0;display:grid;gap:6px}.timeline li{display:flex;justify-content:space-between;gap:8px;font-size:9px;color:var(--faint)}.timeline b{font-weight:500;color:var(--sub);overflow-wrap:anywhere}
+.report-head,.layout-head,.history-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--hair);background:var(--surface-2)}.report-head h2,.layout-head h2,.history-head h2{font-size:13px;margin:0}.report-head .spacer,.history-head .spacer{margin-left:auto}.score{display:flex;align-items:baseline;gap:3px}.score b{font:700 22px/1 var(--mono)}.score span{font:9px/1 var(--mono);color:var(--faint)}
+.md{padding:20px;line-height:1.7;font-size:13px;overflow-wrap:anywhere}.md h1{font-size:19px;margin:.3em 0 .8em}.md h2{font-size:15px;margin:1.2em 0 .5em}.md h3{font-size:13px;margin:1em 0 .4em}.md ul{padding-left:20px}.md blockquote{border-left:3px solid var(--hair-strong);margin:10px 0;padding:3px 0 3px 12px;color:var(--sub)}.md pre{white-space:pre-wrap;font:11px/1.6 var(--mono)}.md hr{border:0;border-top:1px solid var(--hair)}
+.layout-grid{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:650px}.layout-controls{padding:16px;border-right:1px solid var(--hair);background:var(--surface-2)}.layout-controls h3{font:600 9px/1.2 var(--mono);color:var(--faint);letter-spacing:.1em;margin:18px 0 8px}.layout-controls h3:first-child{margin-top:0}.template-list{display:grid;gap:7px}.template-card{border:1px solid var(--hair-strong);background:var(--surface);border-radius:5px;padding:9px;text-align:left;cursor:pointer;font-size:11px}.template-card.on{border-color:var(--signal);box-shadow:0 0 0 1px var(--signal);color:var(--signal)}.photo-row{display:flex;align-items:center;gap:8px}.photo-thumb{width:40px;height:52px;object-fit:cover;border:1px solid var(--hair-strong);border-radius:3px}.layout-preview{padding:18px;min-width:0;background:#ecece8}.layout-preview iframe{display:block;width:100%;min-height:610px;border:1px solid #d5d5d0;background:#fff;box-shadow:0 8px 28px rgba(20,22,25,.08)}
+.history-list{list-style:none;margin:0;padding:14px;display:grid;gap:8px}.history-item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;border:1px solid var(--hair);border-radius:6px;background:var(--surface)}.history-open{min-width:0;border:0;background:transparent;text-align:left;padding:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.history-meta{font:9px/1.4 var(--mono);color:var(--faint);padding:0 8px;white-space:nowrap}.history-delete{border:0;border-left:1px solid var(--hair);background:transparent;padding:11px;color:var(--faint);cursor:pointer}.history-delete:disabled{opacity:.35;cursor:not-allowed}
+.trace-drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,94vw);background:var(--surface);border-left:1px solid var(--hair-strong);box-shadow:-18px 0 40px rgba(20,22,25,.12);z-index:20;transform:translateX(102%);transition:transform .2s ease;display:grid;grid-template-rows:auto 1fr}.trace-drawer.open{transform:translateX(0)}.drawer-head{display:flex;align-items:center;gap:10px;padding:15px;border-bottom:1px solid var(--hair)}.drawer-head h2{font-size:13px;margin:0}.drawer-head button{margin-left:auto}.drawer-body{padding:18px;white-space:pre-wrap;overflow:auto;font:11px/1.8 var(--mono);color:var(--sub);overflow-wrap:anywhere}
+@media(max-width:1100px){.stream-cols{grid-template-columns:minmax(0,1fr)}.stream-main{border-right:0}.run-rail{grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--hair)}.swarm{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.app-shell{padding:12px}.topbar{height:auto;min-height:54px;flex-wrap:wrap;padding:10px 0}.workspace{grid-template-columns:minmax(0,1fr)}.result-pane{min-height:650px}.stream-cols{min-height:0}.empty{min-height:520px}.layout-grid{grid-template-columns:minmax(0,1fr)}.layout-controls{border-right:0;border-bottom:1px solid var(--hair)}.run-rail{grid-template-columns:minmax(0,1fr)}.tabs{position:sticky;top:0;z-index:5}.tabs button{font-size:10.5px;padding:0 4px}.quota-pill{max-width:170px;overflow:hidden;text-overflow:ellipsis}}
+@media(max-width:520px){.app-shell{padding:0}.topbar{padding:12px;margin:0 12px}.workspace{gap:0}.card,.result-pane{border-left:0;border-right:0;border-radius:0}.input-pane{gap:8px}.result-pane{margin-top:8px}.button-row{grid-template-columns:minmax(0,1fr)}.swarm{grid-template-columns:minmax(0,1fr)}.stage-main{grid-template-columns:24px minmax(0,1fr) auto}.stage-open{display:none}.layout-preview{padding:8px}.view-inner,.stream-main{padding:12px}.history-item{grid-template-columns:minmax(0,1fr) auto}.history-meta{display:none}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <span class="mark"></span>
-    <div><h1>简历优化 Agent</h1><div class="tag">Preview</div></div>
-    <div class="quota-text" id="quotaText">免费额度 --/--</div>
+<main class="app-shell" id="app-shell">
+  <header class="topbar">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand"><h1>简历优化 Agent</h1><small>Evidence-bound delivery</small></div>
+    <div class="top-status">
+      <span class="status-pill" id="globalStatus" data-state="idle">待命</span>
+      <span class="quota-pill" id="quotaText">免费额度 --/--</span>
+    </div>
   </header>
 
-  <div class="grid">
-    <section id="formPane">
-      <label for="resumeFile">简历文件（PDF / DOCX / TXT / MD，≤4MB）</label>
-      <input type="file" id="resumeFile" accept=".pdf,.docx,.txt,.md">
-
-      <label for="jdText">目标职位 JD（必填）</label>
-      <textarea id="jdText" placeholder="粘贴目标岗位的职位描述……"></textarea>
-
-      <div class="row2">
-        <div>
-          <label for="modelSelect">模型</label>
-          <select id="modelSelect"></select>
+  <section class="workspace">
+    <aside class="input-pane" id="formPane">
+      <div class="card" id="card-input">
+        <h2>00 / 输入与引擎</h2>
+        <div class="source-tabs" id="source-tabs">
+          <button type="button" class="on" data-source="paste">粘贴文本</button>
+          <button type="button" data-source="file">上传文件</button>
         </div>
-        <div>
-          <label for="reasoningSelect">推理强度</label>
-          <select id="reasoningSelect"></select>
+        <div class="resume-source" id="paste-source">
+          <label class="field" for="resume-text">简历文本 <em>（与文件二选一）</em></label>
+          <textarea id="resume-text" rows="7" placeholder="粘贴简历正文……"></textarea>
         </div>
+        <div class="resume-source hidden" id="file-source">
+          <input type="file" id="resume-file" accept=".pdf,.docx,.txt,.md,.text" class="hidden">
+          <div class="drop-zone" id="resume-drop" role="button" tabindex="0" aria-label="选择简历文件">
+            <div><b>选择或拖入简历</b><span>PDF / DOCX / TXT / MD · 最大 4 MB</span></div>
+          </div>
+          <div class="file-name" id="file-name">尚未选择文件</div>
+        </div>
+
+        <label class="field" for="jdText">目标岗位 JD <em>（必填）</em></label>
+        <textarea id="jdText" rows="6" placeholder="粘贴当前正在招聘岗位的完整职位描述……"></textarea>
+
+        <label class="field">模型引擎 <em>（选项来自服务端）</em></label>
+        <div class="model-seg" id="model-seg" role="group" aria-label="模型引擎"></div>
+        <label class="field">推理强度 <em>（随模型变化）</em></label>
+        <div class="seg" id="effort-seg" role="group" aria-label="推理强度"></div>
+
+        <details class="advanced" id="advanced-settings">
+          <summary>高级设置 · 自带 API Key（BYOK）</summary>
+          <label class="field" for="byok-key">API Key <em>（仅本次请求使用）</em></label>
+          <input type="password" id="byok-key" placeholder="sk-…" autocomplete="off" spellcheck="false">
+          <div class="note">网关由服务端固定；密钥不保存在浏览器中。</div>
+        </details>
+
+        <label class="switch-row" for="mockMode">
+          <input type="checkbox" id="mockMode"><span>Mock 离线演示（不调用模型）</span>
+        </label>
+        <div class="button-row">
+          <button class="btn btn-primary" id="startBtn" type="button">开始分析</button>
+          <button class="btn" id="demoBtn" type="button">示例演示</button>
+        </div>
+        <button class="btn btn-danger hidden" id="cancelBtn" type="button" style="width:100%;margin-top:8px">取消本次运行</button>
+        <div class="banner bad" id="errorBanner" role="alert"></div>
+        <div class="privacy">简历与 JD 用于本次 Workflow；脱敏运行轨迹与历史元数据 24 小时后自动过期。历史仅当前 Cookie 会话可见。</div>
       </div>
 
-      <label for="apiKey">自有 API Key（可选）</label>
-      <input type="password" id="apiKey" autocomplete="off" spellcheck="false">
-
-      <div class="toggle-row">
-        <input type="checkbox" id="mockMode">
-        <label for="mockMode">Mock 模式</label>
+      <div class="card hidden" id="card-run">
+        <h3>01 / 当前任务</h3>
+        <div class="meta-rows" id="run-meta"></div>
       </div>
-
-      <button class="btn-primary" id="startBtn">开始分析</button>
-      <button class="btn-ghost hidden" id="cancelBtn">取消本次运行</button>
-      <div class="note">简历文本会在一天内保留于 Vercel 工作流状态用于本次运行，结束后可删除。自有密钥仅用于本次提交，不会保存在浏览器中。</div>
-      <div class="banner bad hidden" id="errBanner"></div>
-
-      <div class="recent-section">
-        <div class="section-head"><h2>最近任务</h2></div>
-        <ul class="history-list" id="recentRuns"><li class="history-empty">暂无任务</li></ul>
+      <div class="card hidden" id="card-pipe">
+        <h3>02 / 分析流水线</h3>
+        <ul class="pipe" id="pipe"></ul>
       </div>
+    </aside>
+
+    <section class="result-pane">
+      <nav class="tabs" aria-label="结果视图">
+        <button type="button" class="on" id="tab-stream" data-tab="stream">推理过程</button>
+        <button type="button" id="tab-report" data-tab="report">分析报告</button>
+        <button type="button" id="tab-layout" data-tab="layout">简历排版</button>
+        <button type="button" id="tab-history" data-tab="history">历史报告</button>
+      </nav>
+
+      <section class="view on" id="view-stream">
+        <div class="empty" id="stream-empty">
+          <div class="empty-mark"><span></span><span></span><span></span></div>
+          <h2>Agent 就绪</h2>
+          <p>提供简历和目标 JD 后开始分析。<br>八个可观测阶段会在此推进，交付前完成真实性审查。</p>
+        </div>
+        <div class="stream-cols hidden" id="stream-content">
+          <div class="stream-main">
+            <div class="swarm-panel">
+              <div class="swarm-head"><span>SWARM ORCHESTRATION / 可观测任务图</span><b id="swarm-status">STANDBY</b></div>
+              <div class="swarm" id="swarm">
+                <div class="swarm-node" data-swarm-stage="1" data-state="pending"><b>简历解析</b><span>PARSER</span></div>
+                <div class="swarm-node" data-swarm-stage="2" data-state="pending"><b>信息结构化</b><span>EXTRACTOR</span></div>
+                <div class="swarm-node" data-swarm-stage="3" data-state="pending"><b>在招岗位发现</b><span>SCOUT</span></div>
+                <div class="swarm-node" data-swarm-stage="4" data-state="pending"><b>JD 要求分析</b><span>JD ANALYST</span></div>
+                <div class="swarm-node" data-swarm-stage="5" data-state="pending"><b>匹配度分析</b><span>MATCHER</span></div>
+                <div class="swarm-node" data-swarm-stage="6" data-state="pending"><b>简历优化</b><span>ADVISOR</span></div>
+                <div class="swarm-node" data-swarm-stage="7" data-state="pending"><b>真实性审查</b><span>AUDITOR</span></div>
+                <div class="swarm-node" data-swarm-stage="8" data-state="pending"><b>生成报告</b><span>RENDERER</span></div>
+              </div>
+            </div>
+            <div class="banner info" id="connectionBanner"></div>
+            <div class="banner warn" id="deliveryBanner"></div>
+            <div class="stage-list" id="steps">
+              <article class="stage-row" data-stage="1" data-state="pending"><div class="stage-main"><span class="stage-index">01</span><span class="stage-title">简历解析</span><span class="stage-status" id="stage-status-1">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="1" aria-label="展开简历解析详情">+</button><button type="button" class="stage-open" data-open-stage="1" aria-label="在抽屉中查看简历解析">↗</button></div><div class="stage-detail hidden" id="stage-detail-1"></div></article>
+              <article class="stage-row" data-stage="2" data-state="pending"><div class="stage-main"><span class="stage-index">02</span><span class="stage-title">简历信息结构化</span><span class="stage-status" id="stage-status-2">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="2" aria-label="展开信息结构化详情">+</button><button type="button" class="stage-open" data-open-stage="2" aria-label="在抽屉中查看信息结构化">↗</button></div><div class="stage-detail hidden" id="stage-detail-2"></div></article>
+              <article class="stage-row" data-stage="3" data-state="pending"><div class="stage-main"><span class="stage-index">03</span><span class="stage-title">在招岗位发现</span><span class="stage-status" id="stage-status-3">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="3" aria-label="展开岗位发现详情">+</button><button type="button" class="stage-open" data-open-stage="3" aria-label="在抽屉中查看岗位发现">↗</button></div><div class="stage-detail hidden" id="stage-detail-3"></div></article>
+              <article class="stage-row" data-stage="4" data-state="pending"><div class="stage-main"><span class="stage-index">04</span><span class="stage-title">岗位要求分析</span><span class="stage-status" id="stage-status-4">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="4" aria-label="展开岗位要求详情">+</button><button type="button" class="stage-open" data-open-stage="4" aria-label="在抽屉中查看岗位要求">↗</button></div><div class="stage-detail hidden" id="stage-detail-4"></div></article>
+              <article class="stage-row" data-stage="5" data-state="pending"><div class="stage-main"><span class="stage-index">05</span><span class="stage-title">匹配度分析</span><span class="stage-status" id="stage-status-5">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="5" aria-label="展开匹配分析详情">+</button><button type="button" class="stage-open" data-open-stage="5" aria-label="在抽屉中查看匹配分析">↗</button></div><div class="stage-detail hidden" id="stage-detail-5"></div></article>
+              <article class="stage-row" data-stage="6" data-state="pending"><div class="stage-main"><span class="stage-index">06</span><span class="stage-title">简历优化</span><span class="stage-status" id="stage-status-6">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="6" aria-label="展开简历优化详情">+</button><button type="button" class="stage-open" data-open-stage="6" aria-label="在抽屉中查看简历优化">↗</button></div><div class="stage-detail hidden" id="stage-detail-6"></div></article>
+              <article class="stage-row" data-stage="7" data-state="pending"><div class="stage-main"><span class="stage-index">07</span><span class="stage-title">真实性审查</span><span class="stage-status" id="stage-status-7">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="7" aria-label="展开真实性审查详情">+</button><button type="button" class="stage-open" data-open-stage="7" aria-label="在抽屉中查看真实性审查">↗</button></div><div class="stage-detail hidden" id="stage-detail-7"></div></article>
+              <article class="stage-row" data-stage="8" data-state="pending"><div class="stage-main"><span class="stage-index">08</span><span class="stage-title">生成报告</span><span class="stage-status" id="stage-status-8">待运行</span><button type="button" class="stage-toggle" data-toggle-stage="8" aria-label="展开报告生成详情">+</button><button type="button" class="stage-open" data-open-stage="8" aria-label="在抽屉中查看报告生成">↗</button></div><div class="stage-detail hidden" id="stage-detail-8"></div></article>
+            </div>
+          </div>
+          <aside class="run-rail">
+            <div class="rail-card"><h3>运行概览</h3><div class="elapsed" id="elapsed">00:00<small>TOTAL ELAPSED</small></div><div class="overview-grid"><div><b id="doneCount">0/8</b><span>阶段完成</span></div><div><b id="activeModel">—</b><span>模型</span></div></div></div>
+            <div class="rail-card"><h3>执行时间线</h3><ul class="timeline" id="timeline"></ul></div>
+            <div class="rail-card"><h3>运行说明</h3><div class="note" style="margin:0">此处只展示可观测阶段、耗时、重试和验证状态，不展示模型隐藏思维、Prompt 或原始响应。</div></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-report">
+        <div class="empty" id="report-empty"><div class="empty-mark"><span></span><span></span><span></span></div><h2>暂无报告</h2><p>工作流到达终态后，报告会在这里安全渲染。</p></div>
+        <div class="hidden" id="report-content">
+          <div class="report-head"><div class="score hidden" id="score"><b id="scoreValue">—</b><span>/100 MATCH</span></div><h2>简历优化报告</h2><span class="spacer"></span><button type="button" class="btn" id="downloadReportBtn">下载 Markdown</button></div>
+          <div class="banner warn" id="reportWarning" style="margin:14px 18px 0"></div>
+          <article class="md" id="report-md"></article>
+        </div>
+      </section>
+
+      <section class="view" id="view-layout">
+        <div class="empty" id="layout-empty"><div class="empty-mark"><span></span><span></span><span></span></div><h2>暂无可排版简历</h2><p>终态结果包含结构化简历后，可预览三套模板。</p></div>
+        <div class="layout-grid hidden" id="layout-content">
+          <aside class="layout-controls">
+            <h3>01 / 选择模板</h3>
+            <div class="template-list">
+              <button type="button" class="template-card on" data-tpl="classic">经典单栏</button>
+              <button type="button" class="template-card" data-tpl="modern">现代双栏</button>
+              <button type="button" class="template-card" data-tpl="minimal">极简留白</button>
+            </div>
+            <h3>02 / 照片</h3>
+            <label class="switch-row" for="photo-on"><input type="checkbox" id="photo-on"><span>显示本地照片</span></label>
+            <div class="photo-row" style="margin-top:8px"><button type="button" class="btn" id="choosePhotoBtn">选择照片</button><img class="photo-thumb hidden" id="photo-thumb" alt="照片预览"><button type="button" class="btn btn-icon hidden" id="clearPhotoBtn" aria-label="清除照片">×</button></div>
+            <input type="file" id="photo-file" accept="image/*" class="hidden">
+            <div class="note">照片只在本地浏览器处理，不上传服务器。</div>
+            <h3>03 / 导出</h3>
+            <button type="button" class="btn btn-primary" id="printResumeBtn" style="width:100%">打印 / 存为 PDF</button>
+            <button type="button" class="btn" id="downloadResumeBtn" style="width:100%;margin-top:7px">下载 HTML</button>
+            <div class="banner warn" id="layoutWarning"></div>
+          </aside>
+          <div class="layout-preview"><iframe id="resume-frame" title="简历预览" sandbox="allow-same-origin allow-modals"></iframe></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-history">
+        <div class="history-head"><h2>当前会话的最近任务</h2><span class="spacer"></span><button type="button" class="btn" id="refreshHistoryBtn">刷新</button></div>
+        <ul class="history-list" id="recentRuns"></ul>
+        <div class="empty hidden" id="history-empty"><div class="empty-mark"><span></span><span></span><span></span></div><h2>还没有历史任务</h2><p>任务将按 Cookie 会话隔离并最长保留 24 小时。</p></div>
+      </section>
     </section>
+  </section>
+</main>
 
-    <section id="runPane">
-      <div class="status-line" id="statusLine">尚未开始</div>
-      <ol class="stages" id="stages">
-        <li class="stage" data-stage="1" data-state="pending"><div class="st-main"><span>简历解析</span><span class="st-status" id="st-1">待运行</span></div><div class="st-detail hidden" id="std-1"></div></li>
-        <li class="stage" data-stage="2" data-state="pending"><div class="st-main"><span>简历信息结构化</span><span class="st-status" id="st-2">待运行</span></div><div class="st-detail hidden" id="std-2"></div></li>
-        <li class="stage" data-stage="3" data-state="pending"><div class="st-main"><span>在招岗位发现</span><span class="st-status" id="st-3">待运行</span></div><div class="st-detail hidden" id="std-3"></div></li>
-        <li class="stage" data-stage="4" data-state="pending"><div class="st-main"><span>岗位要求分析</span><span class="st-status" id="st-4">待运行</span></div><div class="st-detail hidden" id="std-4"></div></li>
-        <li class="stage" data-stage="5" data-state="pending"><div class="st-main"><span>匹配度分析</span><span class="st-status" id="st-5">待运行</span></div><div class="st-detail hidden" id="std-5"></div></li>
-        <li class="stage" data-stage="6" data-state="pending"><div class="st-main"><span>简历优化</span><span class="st-status" id="st-6">待运行</span></div><div class="st-detail hidden" id="std-6"></div></li>
-        <li class="stage" data-stage="7" data-state="pending"><div class="st-main"><span>真实性审查</span><span class="st-status" id="st-7">待运行</span></div><div class="st-detail hidden" id="std-7"></div></li>
-        <li class="stage" data-stage="8" data-state="pending"><div class="st-main"><span>生成报告</span><span class="st-status" id="st-8">待运行</span></div><div class="st-detail hidden" id="std-8"></div></li>
-      </ol>
-      <div class="note">点击任一阶段行可展开/收起脱敏运行明细（仅耗时、尝试次数、错误类别等状态字段）。</div>
-      <div class="banner warn hidden" id="partialBanner"></div>
-      <button class="btn-ghost hidden" id="downloadBtn">导出报告（Markdown）</button>
-      <div class="report hidden" id="report"></div>
-    </section>
-  </div>
-</div>
+<aside class="trace-drawer" id="trace-drawer" aria-hidden="true">
+  <div class="drawer-head"><h2 id="drawer-title">阶段详情</h2><button type="button" class="btn btn-icon" id="closeDrawerBtn" aria-label="关闭详情">×</button></div>
+  <div class="drawer-body" id="drawer-body">尚无阶段数据。</div>
+</aside>
 
 <script nonce="__CSP_NONCE__" src="/_vercel/insights/script.js" defer></script>
 <script nonce="__CSP_NONCE__" src="/_vercel/speed-insights/script.js" defer></script>
 <script nonce="__CSP_NONCE__">
 "use strict";
 (function(){
-  var POLL_MS = 2000;
-  var STATE_LABEL = {pending:"待运行", running:"进行中", completed:"完成",
-                     failed:"失败", skipped:"跳过", cancelled:"已取消"};
-  var pollTimer = null;
-  var pollInFlight = false;
-  var pollGeneration = 0;
-  var historyRequestId = 0;
-  var navigationGeneration = 0;
-  var activeRunId = "";
-  var activeRunTerminal = false;
-  var freePerDay = null;
+const $ = function(id){ return document.getElementById(id); };
+const PHASES = Object.freeze({
+  idle:"idle", submitting:"submitting", running:"running",
+  cancelling:"cancelling", terminal:"terminal"
+});
+const TERMINAL = new Set(["completed","partial","failed","cancelled","deadline_exceeded"]);
+const STAGE_NAMES = {
+  1:"简历解析",2:"简历信息结构化",3:"在招岗位发现",4:"岗位要求分析",
+  5:"匹配度分析",6:"简历优化",7:"真实性审查",8:"生成报告"
+};
+const STATE_LABEL = {
+  pending:"待运行",running:"运行中",completed:"完成",failed:"失败",
+  skipped:"跳过",partial:"部分完成",cancelled:"已取消",deadline_exceeded:"已超时"
+};
+const runState = {
+  phase: PHASES.idle,
+  runId:"", startedAt:0, status:"", stages:[], report:"",
+  safeToDeliver:false, unresolvedFixes:[], resumeStruct:null,
+  model:"", reasoning:"", mock:false, byok:false
+};
+let publicConfig = null;
+let selectedModel = "";
+let selectedReasoning = "";
+let sourceMode = "paste";
+let pickedFile = null;
+let layoutTemplate = "classic";
+let photoData = null;
+let pollTimer = null;
+let pollInFlight = false;
+let pollGeneration = 0;
+let navigationGeneration = 0;
+let historyRequestId = 0;
 
-  function $(id){ return document.getElementById(id); }
+function terminal(status){ return TERMINAL.has(String(status || "")); }
 
-  function escapeHtml(value){
-    return String(value == null ? "" : value).replace(/[&<>"']/g, function(ch){
-      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];
-    });
+function escapeHtml(value){
+  return String(value == null ? "" : value).replace(/[&<>"']/g, function(character){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character];
+  });
+}
+
+function renderMarkdownSafe(markdown){
+  let safe = escapeHtml(String(markdown || "")).replace(/\r\n?/g, "\n");
+  safe = safe.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  safe = safe.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  safe = safe.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  safe = safe.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+  safe = safe.replace(/^---+$/gm, "<hr>");
+  safe = safe.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
+  safe = safe.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+  safe = safe.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  safe = safe.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  return safe.split(/\n{2,}/).map(function(block){
+    const trimmed = block.trim();
+    if(!trimmed){ return ""; }
+    if(/^<(h[1-3]|ul|blockquote|hr)/.test(trimmed)){ return trimmed; }
+    return "<p>" + trimmed.replace(/\n/g, "<br>") + "</p>";
+  }).join("");
+}
+
+async function requestJson(url, options){
+  const response = await fetch(url, options || {});
+  let data = {};
+  try{ data = await response.json(); }catch(_error){ data = {}; }
+  if(!response.ok){
+    const failure = new Error(data.error || "请求失败");
+    failure.code = data.code || "request_failed";
+    failure.status = response.status;
+    throw failure;
   }
+  return data;
+}
 
-  // Escape first, then apply a small markdown subset over safe text only.
-  function renderMarkdownSafe(md){
-    var lines = escapeHtml(md).split("\n");
-    var out = [], listOpen = false;
-    function closeList(){ if(listOpen){ out.push("</ul>"); listOpen = false; } }
-    for(var i=0;i<lines.length;i++){
-      var line = lines[i];
-      var inline = line
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`([^`]+?)`/g, "<code>$1</code>");
-      if(/^\s*---\s*$/.test(line)){ closeList(); out.push("<hr>"); continue; }
-      var h = /^(#{1,3})\s+(.*)$/.exec(line);
-      if(h){ closeList(); var lvl = h[1].length; out.push("<h"+lvl+">"+h[2]+"</h"+lvl+">"); continue; }
-      var quote = /^&gt;\s?(.*)$/.exec(inline);
-      if(quote){ closeList(); out.push("<blockquote>"+quote[1]+"</blockquote>"); continue; }
-      var li = /^\s*[-*]\s+(.*)$/.exec(inline);
-      if(li){ if(!listOpen){ out.push("<ul>"); listOpen = true; } out.push("<li>"+li[1]+"</li>"); continue; }
-      if(line.trim() === ""){ closeList(); continue; }
-      out.push("<p>"+inline+"</p>");
+function setBanner(id, text, kind){
+  const element = $(id);
+  element.textContent = String(text || "");
+  element.className = "banner " + (kind || "info") + (text ? " show" : "");
+}
+
+function setError(text){ setBanner("errorBanner", text, "bad"); }
+
+function updateQuota(freeLeft, freePerDay){
+  if(freeLeft == null || freePerDay == null){ return; }
+  $("quotaText").textContent = "免费额度 " + freeLeft + "/" + freePerDay;
+}
+
+function formatElapsed(milliseconds){
+  const seconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return String(minutes).padStart(2,"0") + ":" + String(remainder).padStart(2,"0");
+}
+
+function humanStatus(status){ return STATE_LABEL[status] || status || "待运行"; }
+
+function modelOption(modelId){
+  if(!publicConfig || !Array.isArray(publicConfig.model_options)){ return null; }
+  return publicConfig.model_options.find(function(item){ return item.id === modelId; }) || null;
+}
+
+function renderModelOptions(){
+  const container = $("model-seg");
+  container.textContent = "";
+  const options = publicConfig && Array.isArray(publicConfig.model_options)
+    ? publicConfig.model_options : [];
+  options.forEach(function(option){
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.model = option.id;
+    button.classList.toggle("on", option.id === selectedModel);
+    const title = document.createElement("b");
+    title.textContent = option.label || option.id;
+    const meta = document.createElement("span");
+    meta.textContent = [option.tier_label, option.status_label].filter(Boolean).join(" · ");
+    button.append(title, meta);
+    button.addEventListener("click", function(){
+      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting){ return; }
+      selectedModel = option.id;
+      const preferred = publicConfig.default_reasoning && publicConfig.default_reasoning[selectedModel];
+      renderModelOptions();
+      renderReasoningOptions(preferred);
+    });
+    container.appendChild(button);
+  });
+}
+
+function renderReasoningOptions(preferred){
+  const container = $("effort-seg");
+  container.textContent = "";
+  const option = modelOption(selectedModel);
+  const levels = option && Array.isArray(option.reasoning_levels)
+    ? option.reasoning_levels : [];
+  if(!levels.includes(selectedReasoning)){
+    selectedReasoning = levels.includes(preferred)
+      ? preferred : (option && option.default_reasoning) || levels[0] || "";
+  }
+  levels.forEach(function(level){
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.reasoning = level;
+    button.textContent = level === "high" ? "高" : level === "xhigh" ? "极高" : level;
+    button.classList.toggle("on", level === selectedReasoning);
+    button.addEventListener("click", function(){
+      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting){ return; }
+      selectedReasoning = level;
+      renderReasoningOptions();
+    });
+    container.appendChild(button);
+  });
+}
+
+async function loadConfig(){
+  publicConfig = await requestJson("/api/config");
+  selectedModel = publicConfig.default_model || (
+    publicConfig.model_options && publicConfig.model_options[0]
+      ? publicConfig.model_options[0].id : ""
+  );
+  const preferred = publicConfig.default_reasoning
+    ? publicConfig.default_reasoning[selectedModel] : "";
+  renderModelOptions();
+  renderReasoningOptions(preferred);
+  updateQuota(publicConfig.free_left, publicConfig.free_per_day);
+}
+
+function setSourceMode(mode){
+  sourceMode = mode === "file" ? "file" : "paste";
+  document.querySelectorAll("[data-source]").forEach(function(button){
+    button.classList.toggle("on", button.dataset.source === sourceMode);
+  });
+  $("paste-source").classList.toggle("hidden", sourceMode !== "paste");
+  $("file-source").classList.toggle("hidden", sourceMode !== "file");
+}
+
+function setPickedFile(file){
+  pickedFile = file || null;
+  $("file-name").textContent = pickedFile
+    ? pickedFile.name + " · " + Math.ceil(pickedFile.size / 1024) + " KB"
+    : "尚未选择文件";
+}
+
+function setTab(name){
+  const target = ["stream","report","layout","history"].includes(name) ? name : "stream";
+  document.querySelectorAll("[data-tab]").forEach(function(button){
+    button.classList.toggle("on", button.dataset.tab === target);
+  });
+  ["stream","report","layout","history"].forEach(function(view){
+    $("view-" + view).classList.toggle("on", view === target);
+  });
+  if(target === "history"){ loadHistory(); }
+  if(target === "layout"){ renderResumeLayout(); }
+}
+
+function stageDetailText(stage){
+  if(!stage || typeof stage !== "object"){ return "尚无脱敏运行详情。"; }
+  const lines = [];
+  const fields = [
+    ["duration_ms","耗时",function(value){ return value + " ms"; }],
+    ["attempt","尝试次数"],
+    ["retry_category","重试类别"],
+    ["validation_status","验证状态"],
+    ["error_category","错误类别"],
+    ["revision_round","修正轮次"],
+    ["safe_to_deliver","可交付",function(value){ return value ? "是" : "否"; }]
+  ];
+  fields.forEach(function(definition){
+    const key = definition[0];
+    if(stage[key] === undefined || stage[key] === null || stage[key] === ""){ return; }
+    const rendered = definition[2] ? definition[2](stage[key]) : stage[key];
+    lines.push(definition[1] + "：" + rendered);
+  });
+  if(stage.reason){ lines.push("状态说明：" + stage.reason); }
+  return lines.length ? lines.join("\n") : "尚无脱敏运行详情。";
+}
+
+function stageById(stageId){
+  return runState.stages.find(function(stage){ return Number(stage.stage_id) === Number(stageId); }) || null;
+}
+
+function toggleStageDetail(stageId){
+  const detailBox = $("stage-detail-" + stageId);
+  const detail = stageDetailText(stageById(stageId));
+  detailBox.textContent = detail;
+  detailBox.classList.toggle("hidden");
+}
+
+function openTraceDrawer(stageId){
+  const stage = stageById(stageId);
+  $("drawer-title").textContent = String(stageId).padStart(2,"0") + " / " + STAGE_NAMES[stageId];
+  $("drawer-body").textContent = stageDetailText(stage);
+  $("trace-drawer").classList.add("open");
+  $("trace-drawer").setAttribute("aria-hidden", "false");
+}
+
+function closeTraceDrawer(){
+  $("trace-drawer").classList.remove("open");
+  $("trace-drawer").setAttribute("aria-hidden", "true");
+}
+
+function renderStages(){
+  const byId = new Map();
+  runState.stages.forEach(function(stage){ byId.set(Number(stage.stage_id), stage); });
+  const timeline = $("timeline");
+  const pipe = $("pipe");
+  timeline.textContent = "";
+  pipe.textContent = "";
+  let done = 0;
+  for(let stageId = 1; stageId <= 8; stageId += 1){
+    const stage = byId.get(stageId) || {stage_id:stageId,status:"pending",name:STAGE_NAMES[stageId]};
+    const state = stage.status || "pending";
+    if(state === "completed" || state === "skipped"){ done += 1; }
+    const row = document.querySelector('.stage-row[data-stage="' + stageId + '"]');
+    const node = document.querySelector('.swarm-node[data-swarm-stage="' + stageId + '"]');
+    row.dataset.state = state;
+    node.dataset.state = state;
+    $("stage-status-" + stageId).textContent = humanStatus(state);
+    const detailBox = $("stage-detail-" + stageId);
+    const detail = stageDetailText(stage);
+    detailBox.textContent = detail;
+
+    const pipeItem = document.createElement("li");
+    pipeItem.dataset.state = state;
+    const dot = document.createElement("i");
+    const pipeLabel = document.createElement("span");
+    pipeLabel.textContent = String(stageId).padStart(2,"0") + " · " + STAGE_NAMES[stageId];
+    pipeItem.append(dot, pipeLabel);
+    pipe.appendChild(pipeItem);
+
+    if(state !== "pending"){
+      const timelineItem = document.createElement("li");
+      const timelineName = document.createElement("b");
+      timelineName.textContent = STAGE_NAMES[stageId];
+      const timelineStatus = document.createElement("span");
+      timelineStatus.textContent = stage.duration_ms != null
+        ? stage.duration_ms + " ms" : humanStatus(state);
+      timelineItem.append(timelineName, timelineStatus);
+      timeline.appendChild(timelineItem);
     }
-    closeList();
-    return out.join("");
   }
+  $("doneCount").textContent = done + "/8";
+  $("swarm-status").textContent = runState.phase === PHASES.running
+    ? "RUNNING" : terminal(runState.status) ? "TERMINAL" : "STANDBY";
+}
 
-  function setError(msg){
-    var el = $("errBanner");
-    if(!msg){ el.classList.add("hidden"); return; }
-    el.textContent = msg;
-    el.classList.remove("hidden");
+function renderMeta(){
+  const target = $("run-meta");
+  target.textContent = "";
+  const rows = [
+    ["运行 ID", runState.runId || "—"],
+    ["状态", humanStatus(runState.status) || "待命"],
+    ["模型", runState.model || selectedModel || "—"],
+    ["推理", runState.reasoning || selectedReasoning || "—"]
+  ];
+  rows.forEach(function(row){
+    const line = document.createElement("div");
+    line.className = "meta-row";
+    const label = document.createElement("span");
+    label.textContent = row[0];
+    const value = document.createElement("b");
+    value.textContent = row[1];
+    line.append(label, value);
+    target.appendChild(line);
+  });
+}
+
+function deliveryMessage(){
+  if(!terminal(runState.status)){ return ""; }
+  if(runState.status === "completed" && runState.safeToDeliver && runState.unresolvedFixes.length === 0){ return ""; }
+  const fixes = runState.unresolvedFixes.length
+    ? " 待修复：" + runState.unresolvedFixes.join("；") : "";
+  return "本次结果不可作为完整简历交付。" + fixes;
+}
+
+function renderReport(){
+  const hasReport = Boolean(runState.report);
+  $("report-empty").classList.toggle("hidden", hasReport);
+  $("report-content").classList.toggle("hidden", !hasReport);
+  $("downloadReportBtn").disabled = !hasReport;
+  if(hasReport){
+    $("report-md").innerHTML = renderMarkdownSafe(runState.report);
+    const match = runState.report.match(/(?:匹配评分|匹配度|MATCH)[^\d]{0,12}(\d{1,3})(?:\s*\/\s*100)?/i);
+    $("score").classList.toggle("hidden", !match);
+    if(match){ $("scoreValue").textContent = match[1]; }
+  }else{
+    $("report-md").textContent = "";
+    $("score").classList.add("hidden");
   }
+  setBanner("reportWarning", deliveryMessage(), "warn");
+}
 
-  function setStage(stageId, state, detail){
-    var row = document.querySelector('.stage[data-stage="'+stageId+'"]');
-    if(!row) return;
-    row.setAttribute("data-state", state);
-    var label = STATE_LABEL[state] || state;
-    if(detail){ label += " · " + detail; }
-    $("st-"+stageId).textContent = label;
+function renderRunState(){
+  const active = runState.phase === PHASES.submitting || runState.phase === PHASES.running || runState.phase === PHASES.cancelling;
+  const hasRun = Boolean(runState.runId);
+  $("card-run").classList.toggle("hidden", !hasRun);
+  $("card-pipe").classList.toggle("hidden", !hasRun);
+  $("stream-empty").classList.toggle("hidden", hasRun);
+  $("stream-content").classList.toggle("hidden", !hasRun);
+  $("startBtn").disabled = active;
+  $("demoBtn").disabled = active;
+  $("cancelBtn").classList.toggle("hidden", !active || runState.phase === PHASES.submitting);
+  $("cancelBtn").disabled = runState.phase === PHASES.cancelling;
+  $("cancelBtn").textContent = runState.phase === PHASES.cancelling ? "正在取消……" : "取消本次运行";
+  $("globalStatus").dataset.state = active ? "running" : runState.status || "idle";
+  $("globalStatus").textContent = active
+    ? (runState.phase === PHASES.submitting ? "提交中" : runState.phase === PHASES.cancelling ? "取消中" : "运行中")
+    : runState.status ? humanStatus(runState.status) : "待命";
+  $("activeModel").textContent = runState.model || selectedModel || "—";
+  $("elapsed").firstChild.nodeValue = formatElapsed(
+    runState.startedAt ? Date.now() - runState.startedAt : 0
+  );
+  renderMeta();
+  renderStages();
+  renderReport();
+  renderResumeLayout();
+  setBanner("deliveryBanner", deliveryMessage(), "warn");
+}
+
+function applyStatus(data){
+  if(!data || typeof data !== "object"){ return; }
+  if(data.run_id){ runState.runId = data.run_id; }
+  if(data.status){ runState.status = data.status; }
+  if(Array.isArray(data.stages)){ runState.stages = data.stages; }
+  if(typeof data.report === "string"){ runState.report = data.report; }
+  if(typeof data.safe_to_deliver === "boolean"){
+    runState.safeToDeliver = data.safe_to_deliver;
   }
-
-  // Debug Trace 抽屉：只渲染脱敏状态字段，永不渲染任意字符串为 HTML。
-  function setStageDetail(s){
-    var box = $("std-" + s.stage_id);
-    if(!box) return;
-    var parts = [];
-    if(s.duration_ms != null){ parts.push("耗时 " + Math.round(s.duration_ms/1000) + "s"); }
-    if(s.attempt != null){ parts.push("尝试 " + s.attempt); }
-    if(s.revision_round != null){ parts.push("修正轮 " + s.revision_round); }
-    if(s.error_category){ parts.push("错误类别 " + s.error_category); }
-    if(s.reason){ parts.push("原因 " + s.reason); }
-    if(s.validation_status){ parts.push("验证状态 " + s.validation_status); }
-    box.textContent = parts.length ? parts.join(" · ") : "暂无明细";
+  if(Array.isArray(data.unresolved_fixes)){
+    runState.unresolvedFixes = data.unresolved_fixes.map(String);
   }
-
-  function toggleStageDetail(event){
-    var row = event.target.closest ? event.target.closest(".stage") : null;
-    if(!row) return;
-    var box = $("std-" + row.getAttribute("data-stage"));
-    if(box){ box.classList.toggle("hidden"); }
+  if(Object.prototype.hasOwnProperty.call(data, "optimized_resume_struct")){
+    runState.resumeStruct = data.optimized_resume_struct || null;
   }
-
-  function updateQuota(freeLeft, total){
-    if(total != null && Number.isFinite(Number(total))){ freePerDay = Number(total); }
-    if(freeLeft == null){ return; }
-    var left = Math.max(0, Number(freeLeft) || 0);
-    $("quotaText").textContent = freePerDay == null
-      ? "免费额度 " + left
-      : "免费额度 " + left + "/" + freePerDay;
+  if(data.model){ runState.model = data.model; }
+  if(data.reasoning){ runState.reasoning = data.reasoning; }
+  if(typeof data.mock === "boolean"){ runState.mock = data.mock; }
+  if(typeof data.byok === "boolean"){ runState.byok = data.byok; }
+  if(terminal(runState.status)){
+    runState.phase = PHASES.terminal;
+    stopPolling(false);
+  }else if(runState.phase !== PHASES.cancelling){
+    runState.phase = PHASES.running;
   }
-
-  async function loadConfig(){
-    var response = await fetch("/api/config");
-    var cfg = await response.json();
-    if(!response.ok){ throw new Error(cfg.error || "config unavailable"); }
-    var modelSel = $("modelSelect");
-    modelSel.textContent = "";
-    (cfg.model_options || []).forEach(function(m){
-      var opt = document.createElement("option");
-      opt.value = m.id; opt.textContent = m.label || m.id;
-      opt.setAttribute("data-levels", (m.reasoning_levels || []).join(","));
-      opt.setAttribute("data-default", m.default_reasoning || "");
-      modelSel.appendChild(opt);
-    });
-    if(cfg.default_model){ modelSel.value = cfg.default_model; }
-    syncReasoning();
-    updateQuota(cfg.free_left, cfg.free_per_day);
+  setBanner("connectionBanner", "", "info");
+  renderRunState();
+  if(terminal(runState.status)){
+    loadHistory();
+    if(runState.report){ setTab("report"); }
   }
+}
 
-  function syncReasoning(){
-    var opt = $("modelSelect").selectedOptions[0];
-    var sel = $("reasoningSelect");
-    sel.textContent = "";
-    var levels = (opt && opt.getAttribute("data-levels") || "").split(",").filter(Boolean);
-    var friendly = {high:"高", xhigh:"极高"};
-    levels.forEach(function(lv){
-      var o = document.createElement("option");
-      o.value = lv; o.textContent = friendly[lv] || lv;
-      sel.appendChild(o);
-    });
-    var def = opt && opt.getAttribute("data-default");
-    if(def){ sel.value = def; }
+function pollDelay(elapsedMs){
+  if(elapsedMs < 30000) return 5000;
+  if(elapsedMs < 150000) return 10000;
+  return 15000;
+}
+
+function clearPollTimer(){
+  if(pollTimer !== null){
+    clearTimeout(pollTimer);
+    pollTimer = null;
   }
+}
 
-  function terminal(status){
-    return ["completed","partial","failed","cancelled","deadline_exceeded"].indexOf(status) !== -1;
-  }
+function stopPolling(invalidate){
+  clearPollTimer();
+  pollInFlight = false;
+  if(invalidate !== false){ pollGeneration += 1; }
+}
 
-  function resetRunView(){
-    $("report").classList.add("hidden");
-    $("partialBanner").classList.add("hidden");
-    $("downloadBtn").classList.add("hidden");
-    lastReportMarkdown = "";
-    for(var stage=1;stage<=8;stage++){
-      setStage(stage, "pending", "");
-      var box = $("std-"+stage);
-      if(box){ box.textContent = ""; box.classList.add("hidden"); }
-    }
-  }
+function schedulePoll(generation){
+  clearPollTimer();
+  if(
+    generation !== pollGeneration || document.hidden || !runState.runId ||
+    terminal(runState.status)
+  ){ return; }
+  const elapsed = runState.startedAt ? Date.now() - runState.startedAt : 0;
+  pollTimer = setTimeout(function(){ pollOnce(generation); }, pollDelay(elapsed));
+}
 
-  function applyStatus(data){
-    (data.stages || []).forEach(function(s){
-      var detail = s.duration_ms ? Math.round(s.duration_ms/1000)+"s" : "";
-      setStage(s.stage_id, s.status || "pending", detail);
-      setStageDetail(s);
-    });
-    var human = {running:"分析进行中……", completed:"分析完成", partial:"已完成（部分）",
-                 failed:"运行失败", cancelled:"已取消", deadline_exceeded:"运行超时"};
-    $("statusLine").textContent = human[data.status] || data.status || "";
-    activeRunTerminal = terminal(data.status);
-    if(terminal(data.status)){
+async function pollOnce(generation){
+  if(generation !== pollGeneration || document.hidden || terminal(runState.status)){ return; }
+  if(pollInFlight){ schedulePoll(generation); return; }
+  const requestedRunId = runState.runId;
+  pollInFlight = true;
+  try{
+    const data = await requestJson("/api/runs/" + encodeURIComponent(requestedRunId));
+    if(
+      generation !== pollGeneration || requestedRunId !== runState.runId ||
+      navigationGeneration < 0
+    ){ return; }
+    applyStatus(data);
+  }catch(error){
+    if(generation !== pollGeneration || requestedRunId !== runState.runId){ return; }
+    if(error.status === 404){
       stopPolling();
-      $("cancelBtn").classList.add("hidden");
-      $("startBtn").disabled = false;
-      renderTerminal(data);
-      refreshPublicState();
+      setError("运行已过期、被删除或不属于当前会话。");
+      return;
     }
-  }
-
-  var lastReportMarkdown = "";
-
-  function renderTerminal(data){
-    var banner = $("partialBanner");
-    if(data.status !== "completed"){
-      banner.classList.remove("hidden");
-      var fixes = (data.unresolved_fixes || []).map(escapeHtml).join("；");
-      banner.textContent = "本次结果不完整或未通过严格交付校验，请谨慎使用。" + (fixes ? " 未解决：" + fixes : "");
-    } else {
-      banner.classList.add("hidden");
-    }
-    if(data.report){
-      lastReportMarkdown = String(data.report);
-      var rep = $("report");
-      rep.innerHTML = renderMarkdownSafe(data.report);
-      rep.classList.remove("hidden");
-      $("downloadBtn").classList.remove("hidden");
-    }
-  }
-
-  function downloadReport(){
-    if(!lastReportMarkdown) return;
-    var blob = new Blob([lastReportMarkdown], {type:"text/markdown;charset=utf-8"});
-    var url = URL.createObjectURL(blob);
-    var link = document.createElement("a");
-    link.href = url;
-    link.download = "resume-report.md";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
-  async function pollOnce(){
-    if(!activeRunId){ stopPolling(); return; }
-    if(pollInFlight){ return; }
-    pollInFlight = true;
-    var generation = pollGeneration;
-    var requestedRunId = activeRunId;
-    try{
-      var resp = await fetch("/api/runs/" + encodeURIComponent(requestedRunId));
-      if(generation !== pollGeneration || requestedRunId !== activeRunId){ return; }
-      if(resp.status === 404){
-        stopPolling(); activeRunId = ""; activeRunTerminal = false;
-        setError("任务不存在或已过期。");
-        $("cancelBtn").classList.add("hidden");
-        $("startBtn").disabled = false;
-        refreshPublicState(); return;
-      }
-      var data = await resp.json();
-      if(generation !== pollGeneration || requestedRunId !== activeRunId){ return; }
-      if(!resp.ok){ setError(data.error || "运行状态暂不可用"); return; }
-      setError("");
-      applyStatus(data);
-    }catch(e){ /* transient network error; keep polling */ }
-    finally{
-      if(generation === pollGeneration){ pollInFlight = false; }
-    }
-  }
-
-  function startPolling(runId){
-    stopPolling();
-    activeRunId = String(runId || "");
-    activeRunTerminal = false;
-    if(!activeRunId){ return; }
-    $("startBtn").disabled = true;
-    $("cancelBtn").classList.remove("hidden");
-    pollOnce();
-    pollTimer = setInterval(pollOnce, POLL_MS);
-  }
-
-  function stopPolling(){
-    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-    pollGeneration += 1;
+    setBanner("connectionBanner", "连接暂时中断，保留最后一次有效进度并自动重连。", "info");
+  }finally{
     pollInFlight = false;
+    if(generation === pollGeneration && !terminal(runState.status)){
+      schedulePoll(generation);
+    }
   }
+}
 
-  function formatCreatedAt(value){
-    var timestamp = Number(value);
-    if(!Number.isFinite(timestamp)){ return ""; }
-    if(timestamp < 1000000000000){ timestamp *= 1000; }
-    try{ return new Date(timestamp).toLocaleString(); }
-    catch(e){ return ""; }
+function startPolling(runId){
+  clearPollTimer();
+  runState.runId = runId;
+  if(!runState.startedAt){ runState.startedAt = Date.now(); }
+  if(!terminal(runState.status)){ runState.phase = PHASES.running; }
+  const generation = ++pollGeneration;
+  renderRunState();
+  pollOnce(generation);
+}
+
+function resetRunForStart(){
+  runState.phase = PHASES.submitting;
+  runState.runId = "";
+  runState.startedAt = Date.now();
+  runState.status = "pending";
+  runState.stages = [];
+  runState.report = "";
+  runState.safeToDeliver = false;
+  runState.unresolvedFixes = [];
+  runState.resumeStruct = null;
+  runState.model = selectedModel;
+  runState.reasoning = selectedReasoning;
+  runState.mock = $("mockMode").checked;
+  runState.byok = false;
+}
+
+function startErrorMessage(error){
+  const messages = {
+    free_quota_exhausted:"今日免费额度已用完，请在高级设置填写自有 API Key。",
+    site_quota_exhausted:"站点今日免费总额已用完，请填写自有 API Key。",
+    hourly_limit:"当前 IP 本小时启动次数已达上限。",
+    ip_concurrent:"当前 IP 已有一个任务在运行。",
+    global_concurrent:"当前全站并发任务已满，请稍后重试。",
+    quota_unavailable:"配额与会话服务暂不可用，请稍后重试。",
+    gateway_not_configured:"模型网关尚未配置，请联系管理员。"
+  };
+  return messages[error.code] || error.message || "运行启动失败。";
+}
+
+async function startRun(useDemo){
+  if(runState.phase === PHASES.submitting || runState.phase === PHASES.running || runState.phase === PHASES.cancelling){ return; }
+  if(useDemo){
+    sourceMode = "paste";
+    setSourceMode("paste");
+    $("resume-text").value = "范小林\n数据分析实习生\n\n【工作经历】\n示例公司 | 数据分析实习生\n- 使用 Python 和 SQL 整理运营数据\n- 优化周报流程，将生成时间缩短 30%\n\n【核心技能】\nPython、SQL、Excel";
+    $("jdText").value = "招聘数据分析实习生，要求掌握 Python、SQL 和数据可视化，能独立完成数据清洗与周报。";
+    $("mockMode").checked = true;
+    syncMockControl();
   }
+  const jdText = $("jdText").value.trim();
+  const resumeText = $("resume-text").value.trim();
+  if(!jdText){ setError("请填写目标岗位 JD。"); $("jdText").focus(); return; }
+  if(sourceMode === "file" && !pickedFile){ setError("请选择简历文件。"); return; }
+  if(sourceMode === "paste" && !resumeText){ setError("请粘贴简历文本。"); $("resume-text").focus(); return; }
+  if(pickedFile && pickedFile.size > 4 * 1024 * 1024){ setError("简历文件超过 4 MB 上限。"); return; }
+  if(!selectedModel || !selectedReasoning){ setError("模型配置尚未加载完成。"); return; }
 
-  function renderHistory(runs){
-    var list = $("recentRuns");
-    list.textContent = "";
-    if(!runs.length){
-      var empty = document.createElement("li");
-      empty.className = "history-empty";
-      empty.textContent = "暂无任务";
-      list.appendChild(empty);
+  setError("");
+  stopPolling();
+  resetRunForStart();
+  setTab("stream");
+  renderRunState();
+  const fd = new FormData();
+  fd.append("resume_text", sourceMode === "paste" ? resumeText : "");
+  if(sourceMode === "file" && pickedFile){ fd.append("resume_file", pickedFile, pickedFile.name); }
+  fd.append("jd_text", jdText);
+  fd.append("model", selectedModel);
+  fd.append("reasoning", selectedReasoning);
+  fd.append("job_search", "0");
+  const mock = $("mockMode").checked;
+  fd.append("mock", mock ? "1" : "0");
+  const apiKey = $("byok-key").value.trim();
+  fd.append("api_key", mock ? "" : apiKey);
+  $("byok-key").value = "";
+  const startGeneration = ++navigationGeneration;
+  try{
+    const data = await requestJson("/api/runs", {method:"POST", body:fd});
+    if(startGeneration !== navigationGeneration){ return; }
+    runState.runId = data.run_id;
+    runState.startedAt = Date.now();
+    runState.status = "running";
+    runState.phase = PHASES.running;
+    runState.stages = Array.isArray(data.stages) ? data.stages : [];
+    runState.model = data.model || selectedModel;
+    runState.reasoning = data.reasoning || selectedReasoning;
+    runState.mock = Boolean(data.mock);
+    runState.byok = Boolean(data.byok);
+    updateQuota(data.free_left, publicConfig && publicConfig.free_per_day);
+    renderRunState();
+    startPolling(runState.runId);
+  }catch(error){
+    if(startGeneration !== navigationGeneration){ return; }
+    if(error.code === "run_start_uncertain"){
+      setError("运行已提交但状态确认失败，正在从历史任务恢复。");
+      await recoverActiveRun(startGeneration);
       return;
     }
-    runs.forEach(function(run){
-      var runId = String(run.run_id || "");
-      if(!runId){ return; }
-      var item = document.createElement("li");
-      item.className = "history-item";
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "history-open";
-      button.textContent = (run.model || "任务") + " · " + (STATE_LABEL[run.status] || run.status || "运行中");
-      button.addEventListener("click", function(){ openRun(runId); });
-      var meta = document.createElement("span");
-      meta.className = "history-meta";
-      meta.textContent = formatCreatedAt(run.created_at);
-      var remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "history-delete";
-      remove.textContent = "删除";
-      remove.setAttribute("aria-label", "删除任务");
-      var canDelete = terminal(run.status);
-      remove.disabled = !canDelete;
-      if(canDelete){
-        remove.addEventListener("click", function(){ deleteRun(runId); });
-      } else {
-        remove.title = "运行结束后可删除";
-      }
-      item.appendChild(button);
-      item.appendChild(meta);
-      item.appendChild(remove);
-      list.appendChild(item);
-    });
-  }
-
-  async function loadHistory(){
-    var requestId = ++historyRequestId;
-    var response, data;
-    try{
-      response = await fetch("/api/runs");
-      data = await response.json();
-    }catch(error){
-      if(requestId !== historyRequestId){ return null; }
-      throw error;
+    setError(startErrorMessage(error));
+    runState.phase = PHASES.idle;
+    runState.status = "";
+    runState.startedAt = 0;
+    renderRunState();
+    if(error.code === "free_quota_exhausted" || error.code === "site_quota_exhausted"){
+      $("advanced-settings").open = true;
+      $("byok-key").focus();
     }
-    if(requestId !== historyRequestId){ return null; }
-    if(!response.ok){ throw new Error(data.error || "history unavailable"); }
-    var runs = Array.isArray(data.runs) ? data.runs : [];
-    updateQuota(data.free_left, null);
+    loadHistory();
+  }
+}
+
+async function cancelRun(){
+  if(!runState.runId || terminal(runState.status) || runState.phase === PHASES.cancelling){ return; }
+  const cancelRunId = runState.runId;
+  const cancelGeneration = navigationGeneration;
+  runState.phase = PHASES.cancelling;
+  renderRunState();
+  try{
+    await requestJson("/api/runs/" + encodeURIComponent(cancelRunId) + "/cancel", {method:"POST"});
+    if(cancelRunId !== runState.runId || cancelGeneration !== navigationGeneration){ return; }
+    setBanner("connectionBanner", "取消请求已提交，等待 Workflow 到达终态。", "info");
+    if(pollTimer === null){ startPolling(cancelRunId); }
+  }catch(error){
+    if(cancelRunId !== runState.runId || cancelGeneration !== navigationGeneration){ return; }
+    runState.phase = PHASES.running;
+    setError("取消请求失败：" + (error.message || "请稍后重试"));
+    renderRunState();
+  }
+}
+
+function renderHistory(runs){
+  const list = $("recentRuns");
+  list.textContent = "";
+  $("history-empty").classList.toggle("hidden", runs.length !== 0);
+  runs.forEach(function(run){
+    const item = document.createElement("li");
+    item.className = "history-item";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-open";
+    button.textContent = (run.model || "未知模型") + " · " + humanStatus(run.status);
+    button.addEventListener("click", function(){ openRun(run.run_id, run); });
+    const meta = document.createElement("span");
+    meta.className = "history-meta";
+    meta.textContent = run.created_at
+      ? new Date(Number(run.created_at) * 1000).toLocaleString() : "";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "history-delete";
+    remove.textContent = "删除";
+    const canDelete = terminal(run.status);
+    remove.disabled = !canDelete;
+    if(canDelete){ remove.addEventListener("click", function(){ deleteRun(run.run_id); }); }
+    item.append(button, meta, remove);
+    list.appendChild(item);
+  });
+}
+
+async function loadHistory(){
+  const requestId = ++historyRequestId;
+  try{
+    const data = await requestJson("/api/runs");
+    if(requestId !== historyRequestId){ return []; }
+    const runs = Array.isArray(data.runs) ? data.runs : [];
     renderHistory(runs);
+    updateQuota(data.free_left, publicConfig && publicConfig.free_per_day);
     return runs;
+  }catch(error){
+    if(requestId !== historyRequestId){ return []; }
+    setError(error.message || "历史任务暂不可用。");
+    return [];
   }
+}
 
-  function refreshPublicState(){
-    return loadHistory().catch(function(){ /* keep the current view */ });
+async function openRun(runId, summary){
+  const generation = ++navigationGeneration;
+  stopPolling();
+  runState.runId = runId;
+  runState.startedAt = summary && summary.created_at
+    ? Number(summary.created_at) * 1000 : Date.now();
+  runState.status = summary && summary.status ? summary.status : "running";
+  runState.phase = terminal(runState.status) ? PHASES.terminal : PHASES.running;
+  runState.stages = [];
+  runState.report = "";
+  runState.safeToDeliver = false;
+  runState.unresolvedFixes = [];
+  runState.resumeStruct = null;
+  runState.model = summary && summary.model ? summary.model : "";
+  runState.reasoning = summary && summary.reasoning ? summary.reasoning : "";
+  setTab("stream");
+  renderRunState();
+  try{
+    const data = await requestJson("/api/runs/" + encodeURIComponent(runId));
+    if(generation !== navigationGeneration || runId !== runState.runId){ return; }
+    applyStatus(data);
+    if(!terminal(runState.status)){ startPolling(runId); }
+  }catch(error){
+    if(generation !== navigationGeneration){ return; }
+    setError(error.message || "无法打开该任务。");
   }
+}
 
-  function restoreStartButton(){
-    $("startBtn").disabled = Boolean(activeRunId && !activeRunTerminal);
+async function recoverActiveRun(expectedGeneration){
+  const runs = await loadHistory();
+  if(expectedGeneration != null && expectedGeneration !== navigationGeneration){ return false; }
+  const active = runs.find(function(run){ return !terminal(run.status); });
+  if(!active){
+    runState.phase = PHASES.idle;
+    runState.status = "";
+    renderRunState();
+    return false;
   }
+  await openRun(active.run_id, active);
+  return true;
+}
 
-  async function recoverActiveRun(expectedGeneration){
-    var runs;
-    try{ runs = await loadHistory(); }
-    catch(e){ return false; }
-    if(expectedGeneration !== navigationGeneration){ return false; }
-    if(!Array.isArray(runs)){ return false; }
-    var active = runs.find(function(run){ return !terminal(run.status); });
-    if(!active || !active.run_id){ return false; }
-    resetRunView();
-    $("statusLine").textContent = "已从最近任务恢复运行";
-    startPolling(active.run_id);
-    return true;
+async function deleteRun(runId){
+  try{
+    await requestJson("/api/runs/" + encodeURIComponent(runId), {method: "DELETE"});
+    if(runState.runId === runId){
+      stopPolling();
+      Object.assign(runState, {
+        phase:PHASES.idle,runId:"",startedAt:0,status:"",stages:[],report:"",
+        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,model:"",reasoning:""
+      });
+      renderRunState();
+    }
+    await loadHistory();
+  }catch(error){
+    setError(error.message || "删除任务失败。");
   }
+}
 
-  function openRun(runId){
-    navigationGeneration += 1;
-    setError("");
-    resetRunView();
-    $("statusLine").textContent = "正在载入……";
-    startPolling(runId);
+function canExportResume(){
+  return runState.status === "completed" &&
+    runState.safeToDeliver === true &&
+    runState.unresolvedFixes.length === 0 &&
+    runState.resumeStruct !== null;
+}
+
+function entryPeriod(item){
+  return [item.start, item.end].filter(Boolean).join(" – ");
+}
+
+function entriesHTML(items, headKeys){
+  return (items || []).map(function(item){
+    const head = headKeys.map(function(key){ return item[key]; }).filter(Boolean)
+      .map(escapeHtml).join('<span class="sep">｜</span>');
+    const period = entryPeriod(item);
+    const bullets = (item.bullets || item.highlights || []).map(function(bullet){
+      return "<li>" + escapeHtml(bullet) + "</li>";
+    }).join("");
+    return '<div class="entry"><div class="entry-head"><span class="entry-title">' +
+      head + "</span>" + (period ? '<span class="entry-date">' + escapeHtml(period) + "</span>" : "") +
+      "</div>" + (bullets ? "<ul>" + bullets + "</ul>" : "") + "</div>";
+  }).join("");
+}
+
+function skillsHTML(skills){
+  return (skills || []).map(function(skill){
+    const items = (skill.items || []).map(escapeHtml).join("、");
+    return '<div class="skill-row"><b>' + escapeHtml(skill.group || "技能") +
+      "</b><span>" + items + "</span></div>";
+  }).join("");
+}
+
+function buildResumeHTML(struct, template, photo){
+  const basic = struct.basic_info || {};
+  const contact = [basic.phone,basic.email,basic.location].filter(Boolean).map(escapeHtml);
+  const education = entriesHTML(struct.education, ["school","degree","major"]);
+  const experience = entriesHTML(struct.experience, ["company","title"]);
+  const projects = entriesHTML(struct.projects, ["name","role"]);
+  const skills = skillsHTML(struct.skills);
+  const extras = (struct.extras || []).map(function(item){ return "<li>" + escapeHtml(item) + "</li>"; }).join("");
+  const section = function(title, body){ return body ? "<section><h2>" + title + "</h2>" + body + "</section>" : ""; };
+  const safePhoto = typeof photo === "string" && /^data:image\/[a-z0-9.+-]+;base64,/i.test(photo)
+    ? photo : "";
+  const base = "*{box-sizing:border-box;margin:0;padding:0}" +
+    "html,body{background:#fff}body{font-family:-apple-system,\"PingFang SC\",\"Segoe UI\",sans-serif;color:#1c1e22;font-size:12.5px;line-height:1.7;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+    ".sheet{width:100%;min-height:100vh;padding:15mm 16mm;position:relative}.sep{color:#b9bcc2;margin:0 6px}" +
+    "ul{margin:4px 0 0 18px}.entry{margin-bottom:11px}.entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.entry-title{font-weight:600}.entry-date{color:#7a7f88;font-size:11px;white-space:nowrap}.skill-row{margin:3px 0}.skill-row b{margin-right:8px}.photo{object-fit:cover;border:1px solid #d8d8d2}@page{size:A4;margin:0}@media print{.sheet{min-height:auto}}";
+  const styles = {
+    classic:".name{font-size:24px;font-weight:700;text-align:center;letter-spacing:.08em}.contact{text-align:center;color:#5c616b;font-size:11.5px;margin-top:6px}.target{text-align:center;font-size:12px;margin-top:3px;color:#3a3f48}.rule{border:0;border-top:1.5px solid #1c1e22;margin:14px 0 0}h2{font-size:13.5px;font-weight:700;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #d8d8d2}.photo{position:absolute;top:15mm;right:16mm;width:26mm;height:34mm}.with-photo .head{padding-right:32mm}",
+    modern:"body{font-size:12px}.sheet{display:flex;padding:0;min-height:100vh}.side{width:33%;background:#eef3fb;padding:14mm 8mm 14mm 10mm}.main{flex:1;padding:14mm 12mm 14mm 9mm}.name{font-size:22px;font-weight:700;color:#153e78}.target{color:#2b5ce6;font-size:12px;margin-top:4px;font-weight:600}.side h2{font-size:11.5px;color:#153e78;margin:18px 0 8px;border-bottom:2px solid #c6d6f2;padding-bottom:4px}.main h2{font-size:13.5px;color:#153e78;margin:0 0 10px;padding-left:9px;border-left:3.5px solid #2b5ce6}.main section{margin-bottom:16px}.contact div{margin:4px 0;font-size:11px;color:#39414e;word-break:break-all}.photo{width:30mm;height:38mm;border-radius:4px;margin-bottom:8mm;border:2px solid #fff}.side ul{margin-left:15px}",
+    minimal:"body{color:#26282c}.sheet{padding:18mm}.name{font-size:26px;font-weight:300;letter-spacing:.04em}.contact{font-family:Menlo,monospace;font-size:10px;color:#8b8f97;margin-top:8px}.target{font-size:11.5px;color:#4a4e55;margin-top:4px}h2{font-family:Menlo,monospace;font-size:9.5px;font-weight:400;letter-spacing:.18em;color:#9a9ea6;margin:20px 0 9px;display:flex;align-items:center;gap:10px}h2:after{content:\"\";flex:1;border-top:1px solid #e7e7e2}.entry-title{font-weight:500}.photo{position:absolute;top:18mm;right:18mm;width:24mm;height:31mm;filter:grayscale(1);border-radius:2px}.with-photo .head{padding-right:30mm}"
+  };
+  let body = "";
+  if(template === "modern"){
+    const side = (safePhoto ? '<img class="photo" src="' + safePhoto + '" alt="照片">' : "") +
+      '<div class="name">' + escapeHtml(basic.name || "") + "</div>" +
+      (basic.target_role ? '<div class="target">' + escapeHtml(basic.target_role) + "</div>" : "") +
+      "<h2>联系方式</h2><div class=\"contact\">" + contact.map(function(item){ return "<div>" + item + "</div>"; }).join("") + "</div>" +
+      (skills ? "<h2>核心技能</h2>" + skills : "") +
+      (education ? "<h2>教育背景</h2>" + education : "") +
+      (extras ? "<h2>其他</h2><ul>" + extras + "</ul>" : "");
+    const main = (struct.summary ? section("个人简介", "<p>" + escapeHtml(struct.summary) + "</p>") : "") +
+      section("工作经历", experience) + section("项目经验", projects);
+    body = '<div class="sheet"><aside class="side">' + side + '</aside><main class="main">' + main + "</main></div>";
+  }else{
+    const head = '<div class="head"><div class="name">' + escapeHtml(basic.name || "") + "</div>" +
+      (contact.length ? '<div class="contact">' + contact.join('<span class="sep">｜</span>') + "</div>" : "") +
+      (basic.target_role ? '<div class="target">求职意向：' + escapeHtml(basic.target_role) + "</div>" : "") +
+      (template === "classic" ? '<hr class="rule">' : "") + "</div>";
+    const content = head +
+      (struct.summary ? section("个人简介", "<p>" + escapeHtml(struct.summary) + "</p>") : "") +
+      section("教育背景", education) + section("工作经历", experience) +
+      section("项目经验", projects) + section("核心技能", skills) +
+      (extras ? section("其他", "<ul>" + extras + "</ul>") : "");
+    body = '<div class="sheet ' + (safePhoto ? "with-photo" : "") + '">' +
+      (safePhoto ? '<img class="photo" src="' + safePhoto + '" alt="照片">' : "") + content + "</div>";
   }
+  return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>简历</title><style>' +
+    base + (styles[template] || styles.classic) + "</style></head><body>" + body + "</body></html>";
+}
 
-  async function deleteRun(runId){
-    if(!window.confirm("删除这条任务记录？")){ return; }
-    navigationGeneration += 1;
-    try{
-      var response = await fetch("/api/runs/" + encodeURIComponent(runId), {method:"DELETE"});
-      var data = await response.json();
-      if(!response.ok){ setError(data.error || "删除失败"); return; }
-      if(activeRunId === runId){
-        stopPolling(); activeRunId = ""; activeRunTerminal = false; resetRunView();
-        $("cancelBtn").classList.add("hidden");
-        $("startBtn").disabled = false;
-        $("statusLine").textContent = "任务已删除";
-      }
-      await refreshPublicState();
-    }catch(e){ setError("删除失败，请稍后再试"); }
+function renderResumeLayout(){
+  const hasStruct = runState.resumeStruct !== null;
+  $("layout-empty").classList.toggle("hidden", hasStruct);
+  $("layout-content").classList.toggle("hidden", !hasStruct);
+  const allowed = canExportResume();
+  $("printResumeBtn").disabled = !allowed;
+  $("downloadResumeBtn").disabled = !allowed;
+  if(!hasStruct){
+    $("resume-frame").removeAttribute("srcdoc");
+    setBanner("layoutWarning", "", "warn");
+    return;
   }
+  const photo = $("photo-on").checked ? photoData : null;
+  $("resume-frame").srcdoc = buildResumeHTML(runState.resumeStruct, layoutTemplate, photo);
+  const warning = allowed ? "" : "可预览当前结构，但本次结果未通过完整交付门，PDF/HTML 导出已禁用。";
+  setBanner("layoutWarning", warning, "warn");
+}
 
-  async function onStart(){
-    setError("");
-    var jd = $("jdText").value.trim();
-    var file = $("resumeFile").files[0];
-    if(!file){ setError("请上传简历文件"); return; }
-    if(!jd){ setError("请粘贴目标 JD"); return; }
-    navigationGeneration += 1;
-    var startGeneration = navigationGeneration;
+function printResume(){
+  if(!canExportResume()){ return; }
+  const frame = $("resume-frame");
+  try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
+  catch(_error){ setError("无法打开打印预览，请使用浏览器打印命令。"); }
+}
 
-    var fd = new FormData();
-    fd.append("jd_text", jd);
-    fd.append("model", $("modelSelect").value);
-    fd.append("reasoning", $("reasoningSelect").value);
-    fd.append("resume_file", file);
-    var mockEnabled = $("mockMode").checked;
-    fd.append("api_key", mockEnabled ? "" : $("apiKey").value.trim());
-    fd.append("mock", mockEnabled ? "1" : "0");
-    $("apiKey").value = "";
+function downloadResumeHTML(){
+  if(!canExportResume()){ return; }
+  const photo = $("photo-on").checked ? photoData : null;
+  const html = buildResumeHTML(runState.resumeStruct, layoutTemplate, photo);
+  const basic = runState.resumeStruct.basic_info || {};
+  const safeName = String(basic.name || "resume").replace(/[\\/:*?"<>|]/g, "_");
+  const blob = new Blob([html], {type:"text/html;charset=utf-8"});
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = safeName + "_" + layoutTemplate + "_简历.html";
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
 
+function downloadReport(){
+  if(!runState.report){ return; }
+  const blob = new Blob([runState.report], {type:"text/markdown;charset=utf-8"});
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = "resume-report.md";
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
+
+function clearPhoto(){
+  photoData = null;
+  $("photo-file").value = "";
+  $("photo-thumb").removeAttribute("src");
+  $("photo-thumb").classList.add("hidden");
+  $("clearPhotoBtn").classList.add("hidden");
+  $("photo-on").checked = false;
+  renderResumeLayout();
+}
+
+function syncMockControl(){
+  const enabled = $("mockMode").checked;
+  $("byok-key").disabled = enabled;
+  if(enabled){ $("byok-key").value = ""; }
+}
+
+function bindEvents(){
+  document.querySelectorAll("[data-tab]").forEach(function(button){
+    button.addEventListener("click", function(){ setTab(button.dataset.tab); });
+  });
+  document.querySelectorAll("[data-source]").forEach(function(button){
+    button.addEventListener("click", function(){ setSourceMode(button.dataset.source); });
+  });
+  $("resume-drop").addEventListener("click", function(){ $("resume-file").click(); });
+  $("resume-drop").addEventListener("keydown", function(event){
+    if(event.key === "Enter" || event.key === " "){
+      event.preventDefault();
+      $("resume-file").click();
+    }
+  });
+  ["dragenter","dragover"].forEach(function(name){
+    $("resume-drop").addEventListener(name, function(event){
+      event.preventDefault();
+      $("resume-drop").classList.add("drag");
+    });
+  });
+  ["dragleave","drop"].forEach(function(name){
+    $("resume-drop").addEventListener(name, function(event){
+      event.preventDefault();
+      $("resume-drop").classList.remove("drag");
+    });
+  });
+  $("resume-drop").addEventListener("drop", function(event){
+    setPickedFile(event.dataTransfer && event.dataTransfer.files
+      ? event.dataTransfer.files[0] : null);
+  });
+  $("resume-file").addEventListener("change", function(event){
+    setPickedFile(event.target.files ? event.target.files[0] : null);
+  });
+  $("mockMode").addEventListener("change", syncMockControl);
+  $("startBtn").addEventListener("click", function(){ startRun(false); });
+  $("demoBtn").addEventListener("click", function(){ startRun(true); });
+  $("cancelBtn").addEventListener("click", cancelRun);
+  $("downloadReportBtn").addEventListener("click", downloadReport);
+  $("refreshHistoryBtn").addEventListener("click", loadHistory);
+  $("closeDrawerBtn").addEventListener("click", closeTraceDrawer);
+  document.querySelectorAll("[data-toggle-stage]").forEach(function(button){
+    button.addEventListener("click", function(){ toggleStageDetail(button.dataset.toggleStage); });
+  });
+  document.querySelectorAll("[data-open-stage]").forEach(function(button){
+    button.addEventListener("click", function(){ openTraceDrawer(button.dataset.openStage); });
+  });
+  document.querySelectorAll("[data-tpl]").forEach(function(button){
+    button.addEventListener("click", function(){
+      layoutTemplate = button.dataset.tpl;
+      document.querySelectorAll("[data-tpl]").forEach(function(item){
+        item.classList.toggle("on", item.dataset.tpl === layoutTemplate);
+      });
+      renderResumeLayout();
+    });
+  });
+  $("choosePhotoBtn").addEventListener("click", function(){ $("photo-file").click(); });
+  $("clearPhotoBtn").addEventListener("click", clearPhoto);
+  $("photo-on").addEventListener("change", renderResumeLayout);
+  $("photo-file").addEventListener("change", function(event){
+    const file = event.target.files ? event.target.files[0] : null;
+    if(!file){ return; }
+    if(file.size > 5 * 1024 * 1024){ setError("照片超过 5 MB 上限。"); clearPhoto(); return; }
+    if(!String(file.type || "").startsWith("image/")){ setError("请选择图片文件。"); clearPhoto(); return; }
+    const reader = new FileReader();
+    reader.addEventListener("load", function(){
+      photoData = String(reader.result || "");
+      $("photo-thumb").src = photoData;
+      $("photo-thumb").classList.remove("hidden");
+      $("clearPhotoBtn").classList.remove("hidden");
+      $("photo-on").checked = true;
+      renderResumeLayout();
+    });
+    reader.readAsDataURL(file);
+  });
+  $("printResumeBtn").addEventListener("click", printResume);
+  $("downloadResumeBtn").addEventListener("click", downloadResumeHTML);
+  document.addEventListener("keydown", function(event){
+    if(event.key === "Escape"){ closeTraceDrawer(); }
+  });
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden){ clearPollTimer(); return; }
+    if(runState.runId && !terminal(runState.status)){
+      clearPollTimer();
+      pollOnce(pollGeneration);
+    }
+  });
+}
+
+async function boot(){
+  bindEvents();
+  setSourceMode("paste");
+  syncMockControl();
+  renderRunState();
+  try{
+    await loadConfig();
+    await recoverActiveRun(navigationGeneration);
+  }catch(error){
+    setError(error.message || "公开配置加载失败。");
     $("startBtn").disabled = true;
-    resetRunView();
-    var resp;
-    try{ resp = await fetch("/api/runs", { method:"POST", body: fd }); }
-    catch(e){
-      if(startGeneration !== navigationGeneration){
-        restoreStartButton(); refreshPublicState(); return;
-      }
-      $("startBtn").disabled = false;
-      setError("提交失败，请检查网络后重试");
-      return;
-    }
-    if(startGeneration !== navigationGeneration){
-      restoreStartButton(); refreshPublicState(); return;
-    }
-    if(!resp.ok){
-      $("startBtn").disabled = false;
-      var errorBody = {};
-      try{ errorBody = await resp.json(); }catch(e){}
-      if(startGeneration !== navigationGeneration){
-        restoreStartButton(); refreshPublicState(); return;
-      }
-      updateQuota(errorBody.free_left, null);
-      setError(errorBody.error || "提交失败");
-      if(errorBody.code === "run_start_uncertain"){
-        if(await recoverActiveRun(startGeneration)){
-          setError("运行已提交，已从最近任务恢复。");
-        }
-        return;
-      }
-      if(errorBody.code === "free_quota_exhausted" || errorBody.code === "site_quota_exhausted"){
-        $("mockMode").checked = false;
-        $("apiKey").disabled = false;
-        $("apiKey").focus();
-      }
-      return;
-    }
-    var body = await resp.json();
-    if(startGeneration !== navigationGeneration){
-      restoreStartButton(); refreshPublicState(); return;
-    }
-    body.status = body.status || "running";
-    activeRunId = body.run_id;
-    updateQuota(body.free_left, null);
-    applyStatus(body);
-    startPolling(body.run_id);
-    await refreshPublicState();
+    $("demoBtn").disabled = true;
   }
+}
 
-  async function onCancel(){
-    if(!activeRunId){ return; }
-    var cancelRunId = activeRunId;
-    var cancelGeneration = navigationGeneration;
-    try{
-      var response = await fetch(
-        "/api/runs/" + encodeURIComponent(cancelRunId) + "/cancel",
-        {method:"POST"}
-      );
-      var data = await response.json();
-      if(cancelRunId !== activeRunId || cancelGeneration !== navigationGeneration || activeRunTerminal){ return; }
-      if(!response.ok){ setError(data.error || "取消请求失败"); return; }
-      await refreshPublicState();
-      if(cancelRunId !== activeRunId || cancelGeneration !== navigationGeneration || activeRunTerminal){ return; }
-    }catch(e){
-      if(cancelRunId === activeRunId && cancelGeneration === navigationGeneration && !activeRunTerminal){
-        setError("取消请求失败，请稍后重试");
-      }
-      return;
-    }
-    $("statusLine").textContent = "正在取消……";
-  }
-
-  function syncMock(){
-    var enabled = $("mockMode").checked;
-    $("apiKey").disabled = enabled;
-    if(enabled){ $("apiKey").value = ""; }
-  }
-
-  function boot(){
-    var bootGeneration = navigationGeneration;
-    $("startBtn").addEventListener("click", onStart);
-    $("cancelBtn").addEventListener("click", onCancel);
-    $("downloadBtn").addEventListener("click", downloadReport);
-    $("stages").addEventListener("click", toggleStageDetail);
-    $("modelSelect").addEventListener("change", syncReasoning);
-    $("mockMode").addEventListener("change", syncMock);
-    loadConfig().catch(function(){ setError("无法加载配置"); });
-    loadHistory().then(function(runs){
-      if(!Array.isArray(runs) || bootGeneration !== navigationGeneration || activeRunId){ return; }
-      var active = runs.find(function(run){ return !terminal(run.status); });
-      if(active){ startPolling(active.run_id); }
-    }).catch(function(){ setError("无法加载最近任务"); });
-  }
-
-  if(document.readyState === "loading"){
-    document.addEventListener("DOMContentLoaded", boot);
-  } else { boot(); }
+boot();
 })();
 </script>
 </body>
