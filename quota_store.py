@@ -10,6 +10,25 @@ _DAILY_COUNTER_TTL = 86400
 _MAX_SESSION_TTL = 86400
 
 
+# 模块级共享 httpx.AsyncClient（按 (url, token) 缓存，带 keepalive），
+# 避免每条 Redis 命令都新建 TCP+TLS 连接。token 是站点级 Upstash 凭据，
+# 非用户凭据，模块级缓存安全。
+_SHARED_CLIENTS = {}
+
+
+def _shared_client(url, token):
+    key = (url, token)
+    client = _SHARED_CLIENTS.get(key)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=5.0,
+            limits=httpx.Limits(max_keepalive_connections=8, max_connections=16),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        _SHARED_CLIENTS[key] = client
+    return client
+
+
 class QuotaUnavailable(RuntimeError):
     code = "quota_unavailable"
 
@@ -564,14 +583,10 @@ class QuotaStore:
             else:
                 if not self._url or not self._token:
                     raise QuotaUnavailable()
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    http_response = await client.post(
-                        self._url,
-                        headers={"Authorization": f"Bearer {self._token}"},
-                        json=command,
-                    )
-                    http_response.raise_for_status()
-                    response = http_response.json()
+                client = _shared_client(self._url, self._token)
+                http_response = await client.post(self._url, json=command)
+                http_response.raise_for_status()
+                response = http_response.json()
             if isinstance(response, dict):
                 if response.get("error") is not None:
                     raise QuotaUnavailable()

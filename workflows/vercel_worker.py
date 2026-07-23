@@ -1,7 +1,7 @@
 """Private ASGI adapter for Vercel's GA service queue trigger."""
 
 import asyncio
-import threading
+import os
 
 import sniffio
 
@@ -11,7 +11,9 @@ import workflows.resume_workflow as _resume_workflow  # noqa: F401
 from vercel.workers import get_asgi_app
 
 
-_post_lock = threading.Lock()
+# 并发上限可用 AGENT_WORKER_STEP_CONCURRENCY 调整；模块级创建在 Python 3.10+ 安全
+# （asyncio.Semaphore 不再在 __init__ 中绑定事件循环）。
+_step_semaphore = asyncio.Semaphore(int(os.environ.get("AGENT_WORKER_STEP_CONCURRENCY", "3")))
 
 
 def _guard_worker_app(inner_app):
@@ -21,21 +23,14 @@ def _guard_worker_app(inner_app):
             await inner_app(scope, receive, send)
             return
 
-        acquired = False
         library_token = None
-        try:
-            while not acquired:
-                acquired = _post_lock.acquire(blocking=False)
-                if not acquired:
-                    await asyncio.sleep(0.01)
-
-            library_token = sniffio.current_async_library_cvar.set("asyncio")
-            await inner_app(scope, receive, send)
-        finally:
-            if library_token is not None:
-                sniffio.current_async_library_cvar.reset(library_token)
-            if acquired:
-                _post_lock.release()
+        async with _step_semaphore:
+            try:
+                library_token = sniffio.current_async_library_cvar.set("asyncio")
+                await inner_app(scope, receive, send)
+            finally:
+                if library_token is not None:
+                    sniffio.current_async_library_cvar.reset(library_token)
 
     return guarded_app
 

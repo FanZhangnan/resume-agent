@@ -1,6 +1,22 @@
 import os
+import tempfile
 from docx import Document
 import pdfplumber
+
+
+def _allowed_roots():
+    override = os.environ.get("AGENT_ALLOWED_FILE_ROOTS", "").strip()
+    if override:
+        roots = [os.path.realpath(os.path.expanduser(p)) for p in override.split(os.pathsep) if p.strip()]
+    else:
+        roots = [tempfile.gettempdir(), os.getcwd(), os.path.expanduser("~")]
+        roots = [os.path.realpath(p) for p in roots]
+    # 去重且去掉被子目录覆盖的父目录（保留更上层即可）
+    uniq = []
+    for root in roots:
+        if root not in uniq:
+            uniq.append(root)
+    return uniq
 
 
 def _parse_pdf(file_path):
@@ -43,7 +59,12 @@ def _parse_text(file_path):
 def parse_resume_file(file_path):
     if not file_path:
         return {"success": False, "error": "file_path不能为空", "text": ""}
-    expanded_path = os.path.abspath(os.path.expanduser(file_path))
+    expanded_path = os.path.realpath(os.path.expanduser(file_path))
+    roots = _allowed_roots()
+    if not any(expanded_path == root or expanded_path.startswith(root + os.sep) for root in roots):
+        return {"success": False,
+                "error": "出于安全考虑，仅允许解析受信任目录内的文件（可用 AGENT_ALLOWED_FILE_ROOTS 配置）",
+                "text": "", "file_path": expanded_path}
     if not os.path.exists(expanded_path):
         return {"success": False, "error": f"文件不存在：{expanded_path}", "text": "", "file_path": expanded_path}
     if not os.path.isfile(expanded_path):
