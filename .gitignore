@@ -11,9 +11,15 @@ webui/runs/
 
 # ===== 环境与缓存 =====
 venv/
+.venv312/
+node_modules/
+.playwright-cli/
+.superpowers/
 __pycache__/
 *.pyc
 .DS_Store
 
 # ===== 商单内部文档（如需公开可自行移出此列表） =====
 简历优化Agent_项目企划.md
+.vercel
+.env*

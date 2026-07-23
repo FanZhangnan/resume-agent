@@ -8,12 +8,34 @@
 """
 import json
 import os
+import signal
+import threading
+import time
+import uuid
+from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
 
 import config
+from contracts import (
+    delivery_is_complete,
+    suggestions_are_usable,
+    verification_is_deliverable,
+)
 from llm_client import LLMClient
+from pipeline import DeterministicPipeline, PipelineStageError
 from prompts import AGENT_SYSTEM_PROMPT, FINAL_REPORT_FORMAT_PROMPT
+from report_renderer import render_report as render_local_report
+from runtime_context import (
+    RunSettings,
+    current_settings,
+    monotonic_deadline,
+    use_run_settings,
+)
 from tools import execute_tool, get_tool_definitions
+from tools.common import use_run_deadline
+from tools.interaction import get_substantive_answer
+from trace_catalog import emit_trace
 from utils import (clip_text, compact_text, parse_resume_text_to_struct,
                    render_resume_text, to_pretty_json)
 
@@ -32,7 +54,7 @@ _ALLOWED_PARAMS = {
     "parse_resume_file": {"file_path"},
     "extract_resume_info": {"resume_text"},
     "analyze_jd": {"jd_text"},
-    "calculate_match": {"resume_info", "jd_analysis"},
+    "calculate_match": {"resume_info", "jd_analysis", "preferences"},
     "generate_suggestions": {"resume_info", "jd_analysis", "match_result", "fix_instructions"},
     "verify_output": {"resume_info", "jd_analysis", "match_result", "suggestions"},
     "recommend_jobs": {"resume_info", "preferences"},
@@ -55,11 +77,88 @@ _KEY_LABELS = {
 }
 
 
+def _trace_shape(value):
+    """只记录结构和大小，不记录工具的简历/JD/回答内容。"""
+    if isinstance(value, dict):
+        return {
+            "kind": "object",
+            "field_count": len(value),
+            "value_types": dict(sorted(Counter(
+                type(item).__name__ for item in value.values()
+            ).items())),
+        }
+    if isinstance(value, (list, tuple)):
+        return {"kind": "array", "item_count": len(value)}
+    if isinstance(value, str):
+        return {"kind": "string", "chars": len(value)}
+    return {"kind": type(value).__name__}
+
+
+def _verification_issue_count(verification):
+    verification = verification if isinstance(verification, dict) else {}
+    keys = (
+        "required_fixes", "overstatement_issues", "fabrication_risks",
+        "logic_issues", "match_authenticity_issues",
+    )
+    return sum(len(verification.get(key) or []) for key in keys)
+
+
+def _revision_limit(value=None):
+    configured = config.MAX_REVISION_ROUNDS if value is None else value
+    return min(1, max(0, int(configured)))
+
+
+class RunDeadlineExceeded(TimeoutError):
+    """整次Agent运行超出总墙钟预算。"""
+
+    is_run_deadline = True
+
+
+@contextmanager
+def _run_timeout(seconds):
+    """POSIX主线程上可中断阻塞调用；其他环境由阶段deadline检查兜底。"""
+    timeout = max(0.001, float(seconds))
+    can_interrupt = (
+        hasattr(signal, "setitimer")
+        and threading.current_thread() is threading.main_thread()
+    )
+    if not can_interrupt:
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    started = time.monotonic()
+
+    def raise_timeout(signum, frame):
+        raise RunDeadlineExceeded(f"Agent run exceeded {timeout:g}s deadline")
+
+    signal.signal(signal.SIGALRM, raise_timeout)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            remaining = max(0.001, previous_timer[0] - (time.monotonic() - started))
+            signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
+
+
+def _disarm_run_timeout_alarm():
+    """Stop this run's one-shot alarm after a deadline was already observed."""
+    if (
+        hasattr(signal, "setitimer")
+        and threading.current_thread() is threading.main_thread()
+    ):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 class ResumeAgent:
-    """简历优化Agent：通过ReAct循环自主完成简历分析、匹配评估与优化建议"""
+    """简历优化Agent：默认确定性流水线，保留ReAct诊断模式。"""
 
     def __init__(self, resume_input, jd_text=None, resume_is_file=False, output_dir=None,
-                 preferences=None):
+                 preferences=None, model=None, reasoning=None, deadline_epoch=None,
+                 api_key=None, mock=None):
         """
         参数:
             resume_input: 简历文本或文件路径
@@ -67,7 +166,22 @@ class ResumeAgent:
             resume_is_file: resume_input是否为文件路径
             output_dir: 报告输出目录，默认使用config.OUTPUT_DIR
             preferences: 岗位推荐模式下用户的求职偏好（如"在中国求职大厂实习"、"只考虑远程"）
+            model/reasoning: 本次运行的精确模型策略
+            deadline_epoch: 本次运行的绝对截止时间（Unix epoch）
+            api_key/mock: 本次运行的可选密钥与Mock策略；未传时继承当前运行上下文
         """
+        active = current_settings()
+        self.settings = RunSettings(
+            model=active.model if model is None else model,
+            reasoning=active.reasoning if reasoning is None else reasoning,
+            deadline_epoch=(
+                active.deadline_epoch
+                if deadline_epoch is None
+                else deadline_epoch
+            ),
+            api_key=active.api_key if api_key is None else api_key,
+            mock=active.mock if mock is None else mock,
+        )
         self.resume_input = resume_input
         self.jd_text = str(jd_text or "")
         # 岗位推荐模式：用户只给了简历没给JD → 先推荐大厂岗位，再针对第一名深入分析
@@ -75,7 +189,12 @@ class ResumeAgent:
         self.preferences = str(preferences or "").strip()
         self.resume_is_file = resume_is_file
         self.output_dir = output_dir or config.OUTPUT_DIR
-        self.client = LLMClient()
+        self.client = LLMClient(
+            model=self.settings.model,
+            reasoning=self.settings.reasoning,
+            api_key=self.settings.api_key,
+            mock=self.settings.mock,
+        )
         self.tool_definitions = get_tool_definitions()
         self.messages = []
         self.state = {
@@ -128,56 +247,226 @@ class ResumeAgent:
         self.messages.append({"role": "user", "content": user_content})
 
     def run(self):
-        """主循环：运行ReAct推理循环，返回最终报告"""
-        print("=" * 60)
-        print("🚀 简历优化Agent启动")
-        if self.client.mock_mode:
-            print("🧪 模式：离线演示（Mock）")
-        else:
-            print(f"🤖 模型：{config.MODEL_NAME} @ {config.API_BASE_URL}")
-            if config.REASONING_EFFORT:
-                labels = {"none": "关闭推理", "low": "快速", "medium": "标准", "high": "深度", "xhigh": "极深"}
-                print(f"🧩 推理强度：{labels.get(config.REASONING_EFFORT, config.REASONING_EFFORT)}（{config.REASONING_EFFORT}）")
-        print(f"📄 简历来源：{'文件（' + str(self.resume_input) + '）' if self.resume_is_file else '文本'}")
-        if self.job_search_mode:
-            print("🎯 任务：未提供JD → 岗位推荐模式（自动匹配最合适的大厂岗位）")
-            if self.preferences:
-                print(f"💡 求职偏好：{self.preferences}")
-        else:
-            print(f"🎯 JD长度：{len(self.jd_text)}字符")
-        print(f"🔧 可用工具：{len(self.tool_definitions)}个")
-        print("=" * 60)
+        """强制整次运行的总墙钟预算。"""
+        with use_run_settings(self.settings):
+            started = time.monotonic()
+            self._run_deadline = monotonic_deadline(limit=config.RUN_TIMEOUT)
+            timeout = max(0.001, self._run_deadline - started)
+            with _run_timeout(timeout):
+                return self._run_traced()
 
+    def _check_run_deadline(self):
+        deadline = getattr(self, "_run_deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RunDeadlineExceeded(
+                f"Agent run exceeded {float(config.RUN_TIMEOUT):g}s deadline"
+            )
+
+    def _run_traced(self):
+        """按配置运行确定性流水线或诊断用ReAct循环。"""
+        started = time.monotonic()
+        stage = "analysis"
+        deadline_partial = False
+        pipeline = (
+            DeterministicPipeline(self)
+            if config.ORCHESTRATOR == "pipeline"
+            else None
+        )
+        emit_trace(
+            "run.started", span="run",
+            data={
+                "mode": "job_search" if self.job_search_mode else "target_jd",
+                "mock": self.client.mock_mode,
+                "model": "mock" if self.client.mock_mode else self.settings.model,
+                "reasoning": None if self.client.mock_mode else self.settings.reasoning,
+                "resume_source": "file" if self.resume_is_file else "text",
+                "resume_chars": None if self.resume_is_file else len(str(self.resume_input or "")),
+                "jd_provided": not self.job_search_mode,
+                "jd_chars": len(self.jd_text),
+            },
+        )
         try:
-            self._loop()
-        except Exception as error:
-            # 已有部分分析成果时不白跑：输出部分报告；一无所获才向上抛出
-            if any(self.state[key] for key in ("resume_info", "jd_analysis", "match_result")):
-                self.interrupted_error = str(error)
-                print(f"\n⚠️ 分析中途出错：{error}")
-                print("⚠️ 将基于已完成的分析步骤生成部分报告（缺失章节会标注）")
+            print("=" * 60)
+            print("🚀 简历优化Agent启动")
+            if self.client.mock_mode:
+                print("🧪 模式：离线演示（Mock）")
             else:
-                print(f"❌ Agent运行异常：{error}")
-                raise
+                print(f"🤖 模型：{self.settings.model} @ {config.API_BASE_URL}")
+                labels = {"high": "深度", "xhigh": "极深"}
+                print(
+                    f"🧩 推理强度："
+                    f"{labels.get(self.settings.reasoning, self.settings.reasoning)}"
+                    f"（{self.settings.reasoning}）"
+                )
+            print(f"📄 简历来源：{'文件（' + str(self.resume_input) + '）' if self.resume_is_file else '文本'}")
+            if self.job_search_mode:
+                print("🎯 任务：未提供JD → 岗位推荐模式（自动匹配最合适的大厂岗位）")
+                if self.preferences:
+                    print(f"💡 求职偏好：{self.preferences}")
+            else:
+                print(f"🎯 JD长度：{len(self.jd_text)}字符")
+            print(f"🔧 可用工具：{len(self.tool_definitions)}个")
+            print(
+                "🎬 编排：确定性八阶段流水线"
+                if pipeline is not None
+                else "🎬 编排：ReAct诊断模式"
+            )
+            print("=" * 60)
 
-        final_report = self._generate_final_report()
-        output_path = self._save_report(final_report)
-        if output_path:
-            print(f"\n💾 报告已保存：{output_path}")
-        return final_report
+            try:
+                if pipeline is not None:
+                    pipeline.run()
+                else:
+                    self._loop()
+            except Exception as error:
+                if getattr(error, "is_run_deadline", False):
+                    _disarm_run_timeout_alarm()
+                    has_deadline_results = (
+                        bool(pipeline and pipeline.completed_stages)
+                        or any(self.state[key] for key in (
+                            "resume_info", "job_recommendations", "jd_analysis",
+                            "match_result", "suggestions", "verification",
+                        ))
+                    )
+                    if not has_deadline_results:
+                        print("\n❌ Agent运行超时，尚无可交付的阶段结果")
+                        raise
+                    deadline_partial = True
+                    stage = f"pipeline_stage_{self.step_count}"
+                    self.interrupted_error = (
+                        "运行达到总时限；本报告仅包含超时前完成的阶段。"
+                    )
+                    emit_trace(
+                        "run.interrupted", level="warning", span="run",
+                        data={
+                            "stage": stage,
+                            "error_class": type(error).__name__,
+                            "partial_results": True,
+                            "reason": "run_timeout",
+                        },
+                    )
+                    print("\n⚠️ Agent运行达到总时限，将立即生成本地部分报告")
+                    print("⚠️ 缺失章节会在报告中标注，建议稍后重新运行")
+                elif isinstance(error, PipelineStageError):
+                    stage = f"pipeline_stage_{error.stage_id}"
+                    # 确定性流水线的阶段错误始终交付本地部分报告；ReAct沿用已有成果判断。
+                    has_partial_results = (
+                        isinstance(error, PipelineStageError)
+                        or any(self.state[key] for key in (
+                            "resume_info", "jd_analysis", "match_result"
+                        ))
+                    )
+                    if has_partial_results:
+                        self.interrupted_error = str(error)
+                        emit_trace(
+                            "run.interrupted", level="warning", span="run",
+                            data={"stage": stage, "error_class": type(error).__name__,
+                                  "partial_results": True},
+                        )
+                        print(f"\n⚠️ 分析中途出错：{error}")
+                        print("⚠️ 将基于已完成的分析步骤生成部分报告（缺失章节会标注）")
+                    else:
+                        print(f"❌ Agent运行异常：{error}")
+                        raise
+                else:
+                    has_partial_results = any(self.state[key] for key in (
+                        "resume_info", "jd_analysis", "match_result"
+                    ))
+                    if has_partial_results:
+                        self.interrupted_error = str(error)
+                        emit_trace(
+                            "run.interrupted", level="warning", span="run",
+                            data={"stage": stage, "error_class": type(error).__name__,
+                                  "partial_results": True},
+                        )
+                        print(f"\n⚠️ 分析中途出错：{error}")
+                        print("⚠️ 将基于已完成的分析步骤生成部分报告（缺失章节会标注）")
+                    else:
+                        print(f"❌ Agent运行异常：{error}")
+                        raise
+
+            if not deadline_partial:
+                self._check_run_deadline()
+            stage = "report_generation"
+            if pipeline is not None:
+                final_report, output_path = pipeline.render_report(
+                    allow_expired_deadline=deadline_partial
+                )
+            elif deadline_partial:
+                final_report = self._generate_final_report(force_local=True)
+                output_path = self._save_report(final_report)
+                if output_path:
+                    print(f"\n💾 报告已保存：{output_path}")
+            else:
+                final_report = self._generate_final_report()
+                self._check_run_deadline()
+                stage = "report_save"
+                output_path = self._save_report(final_report)
+                if output_path:
+                    print(f"\n💾 报告已保存：{output_path}")
+            try:
+                emit_trace(
+                    "run.completed", span="run",
+                    data={
+                        "status": (
+                            "completed"
+                            if (
+                                pipeline.terminal_status()
+                                if pipeline is not None
+                                else self._report_terminal_status()
+                            ) == "completed"
+                            else "partial"
+                        ),
+                        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                        "steps": self.step_count,
+                        "revision_rounds": self.revision_rounds,
+                        "report_available": bool(output_path),
+                    },
+                )
+            except Exception as error:
+                # The JSONL event is written before the optional summary file.
+                # A one-shot watchdog may fire during that final atomic replace;
+                # the already-saved report remains the authoritative result.
+                if not getattr(error, "is_run_deadline", False):
+                    raise
+            return final_report
+        except Exception as error:
+            emit_trace(
+                "run.error", level="error", span="run",
+                data={
+                    "stage": stage,
+                    "error_class": type(error).__name__,
+                    "error_category": (
+                        "run_timeout" if getattr(error, "is_run_deadline", False)
+                        else "runtime"
+                    ),
+                    "partial_results": False,
+                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                    "steps": self.step_count,
+                    "revision_rounds": self.revision_rounds,
+                },
+            )
+            raise
 
     def _loop(self):
         """ReAct核心循环：思考→行动→观察（→验证未通过时自动修正）"""
         while self.step_count < self.max_steps:
+            self._check_run_deadline()
             self.step_count += 1
             print(f"\n--- 步骤 {self.step_count}/{self.max_steps} ---")
 
             # 调用LLM，传入当前对话历史和工具定义
+            call_options = {}
+            run_deadline = getattr(self, "_run_deadline", None)
+            if run_deadline is not None:
+                call_options["external_deadline"] = run_deadline
             response = self.client.chat(
                 messages=self.messages,
                 tools=self.tool_definitions,
                 temperature=0.3,
+                **call_options,
             )
+            self._check_run_deadline()
 
             # 提取思考内容和工具调用请求
             thinking = response.content or ""
@@ -194,7 +483,7 @@ class ResumeAgent:
                 # 检查是否已经收集到足够信息，可以结束循环
                 if self._is_complete():
                     verification = self.state["verification"] or {}
-                    if verification.get("passed") or verification.get("safe_to_deliver"):
+                    if verification_is_deliverable(verification):
                         print("\n✅ 关键分析步骤已完成，自我验证通过")
                     else:
                         print("\n⚠️ 已达最大修正轮数，自我验证仍未完全通过——剩余问题会在报告中如实标注")
@@ -266,10 +555,36 @@ class ResumeAgent:
         for tool_call in tool_calls:
             tool_id = tool_call.id
             tool_name = tool_call.function.name
+            trace_tool_name = tool_name if tool_name in _ALLOWED_PARAMS else "unknown"
             arguments = self._prepare_arguments(tool_name, tool_call.function.arguments)
 
             print(f"🔧 调用工具：{tool_name}")
-            result = execute_tool(tool_name, arguments)
+            tool_span = f"tool-{uuid.uuid4().hex[:12]}"
+            tool_started = time.monotonic()
+            emit_trace(
+                "tool.started", span=tool_span,
+                parent=f"step-{self.step_count}", step=self.step_count,
+                data={
+                    "name": trace_tool_name,
+                    "arguments": _trace_shape(arguments),
+                },
+            )
+            try:
+                with use_run_deadline(getattr(self, "_run_deadline", None)):
+                    result = execute_tool(tool_name, arguments)
+            except Exception as error:
+                emit_trace(
+                    "tool.completed", level="error", span=tool_span,
+                    parent=f"step-{self.step_count}", step=self.step_count,
+                    data={
+                        "name": trace_tool_name,
+                        "success": False,
+                        "duration_ms": max(0, int((time.monotonic() - tool_started) * 1000)),
+                        "error_class": type(error).__name__,
+                    },
+                )
+                raise
+            self._check_run_deadline()
 
             # 将工具结果更新到Agent状态
             self._update_state(tool_name, result)
@@ -289,6 +604,18 @@ class ResumeAgent:
             })
 
             print(f"📋 观察：{self._summarize_result(tool_name, result)}")
+            emit_trace(
+                "tool.completed",
+                level="info" if result.get("success") else "warning",
+                span=tool_span, parent=f"step-{self.step_count}",
+                step=self.step_count,
+                data={
+                    "name": trace_tool_name,
+                    "success": bool(result.get("success")),
+                    "duration_ms": max(0, int((time.monotonic() - tool_started) * 1000)),
+                    "result": _trace_shape(result),
+                },
+            )
 
         for note in deferred_notes:
             self.messages.append({"role": "user", "content": note})
@@ -336,6 +663,10 @@ class ResumeAgent:
                 if state[key] is not None:
                     arguments[key] = state[key]
                 arguments.setdefault(key, {})
+            if self.preferences:
+                arguments["preferences"] = self.preferences
+            else:
+                arguments.pop("preferences", None)
             self._merge_clarifications(arguments)
         elif tool_name == "generate_suggestions":
             for key in ("resume_info", "jd_analysis", "match_result"):
@@ -375,11 +706,12 @@ class ResumeAgent:
         if not candidates:
             return ""
         top = candidates[0]
+        description = top.get("description") or top.get("typical_jd") or ""
         return (
             f"公司：{top.get('company', '')}\n"
             f"岗位：{top.get('role_title', '')}（{top.get('job_type', '')}）\n"
             f"地点：{top.get('location', '')}\n\n"
-            f"{top.get('typical_jd', '')}"
+            f"{description}"
         )
 
     def _result_for_history(self, tool_name, result):
@@ -427,7 +759,7 @@ class ResumeAgent:
                     f"优化版简历{len(resume_text)}字{struct_note}")
         if tool_name == "verify_output":
             verification = result.get("verification") or {}
-            if verification.get("passed") or verification.get("safe_to_deliver"):
+            if verification_is_deliverable(verification):
                 return "✅ 自我验证通过，可以交付"
             issue_count = sum(len(verification.get(key) or []) for key in (
                 "overstatement_issues", "fabrication_risks", "logic_issues", "match_authenticity_issues"))
@@ -442,7 +774,10 @@ class ResumeAgent:
                         f"（预估匹配度{top.get('estimated_score', '?')}/100）")
             return "✅ 完成岗位推荐"
         if tool_name == "ask_user":
-            return f"✅ 用户回答：{str(result.get('answer', ''))[:80]}"
+            answer = get_substantive_answer(result)
+            if answer is None:
+                return "⏹️ 用户未提供补充信息，继续使用现有事实"
+            return f"✅ 用户回答：{answer[:80]}"
         return "✅ 完成"
 
     def _update_state(self, tool_name, result):
@@ -474,28 +809,47 @@ class ResumeAgent:
         elif tool_name == "verify_output":
             self.state["verification"] = result.get("verification")
         elif tool_name == "ask_user":
-            # 记录用户澄清，写入最终报告供参考
+            answer = get_substantive_answer(result)
+            if answer is None:
+                return
+            # 仅记录用户真实提交的澄清，跳过/超时占位文本不是可信事实。
             self.user_clarifications.append({
                 "question": result.get("question", ""),
-                "answer": result.get("answer", ""),
+                "answer": answer,
             })
 
-    def _handle_verification(self, verification):
+    def _handle_verification(self, verification, max_revision_rounds=None):
         """自我验证结果处理：未通过且还有修正额度时，触发自动修正轮
         返回需要插入对话的修正指令文本（None表示无需修正）
         """
-        if self.pending_revision:
+        was_pending_revision = self.pending_revision
+        if was_pending_revision:
             # 本次verify是修正后的复检
             self.pending_revision = False
 
-        passed = bool(verification.get("passed") or verification.get("safe_to_deliver"))
+        verification = verification if isinstance(verification, dict) else {}
+        passed = verification_is_deliverable(verification)
+        if was_pending_revision:
+            emit_trace(
+                "revision.completed",
+                level="info" if passed else "warning",
+                span=f"revision-{self.revision_rounds}",
+                parent="run",
+                step=self.step_count,
+                data={
+                    "round": self.revision_rounds,
+                    "passed": passed,
+                    "issue_count": _verification_issue_count(verification),
+                },
+            )
         if passed:
             if self.correction_log and not self.correction_log[-1].get("resolved"):
                 self.correction_log[-1]["resolved"] = True
                 print("   ✅ 修正后复检通过")
             return None
 
-        if self.revision_rounds >= config.MAX_REVISION_ROUNDS:
+        revision_limit = _revision_limit(max_revision_rounds)
+        if self.revision_rounds >= revision_limit:
             print("   ⚠️ 自我验证仍未通过且已达最大修正轮数，将在报告中如实标注")
             return None
 
@@ -510,6 +864,17 @@ class ResumeAgent:
             "action": "已自动要求重新生成优化建议并复检",
             "resolved": False,
         })
+        emit_trace(
+            "revision.started",
+            level="warning",
+            span=f"revision-{self.revision_rounds}",
+            parent="run",
+            step=self.step_count,
+            data={
+                "round": self.revision_rounds,
+                "issue_count": len(fixes),
+            },
+        )
         print(f"   🔁 自我验证未通过，启动第{self.revision_rounds}轮自动修正...")
         issues_text = compact_text(to_pretty_json(fixes), max_chars=2000)
         return (
@@ -529,9 +894,9 @@ class ResumeAgent:
         if self.pending_revision:
             return False
         verification = self.state["verification"]
-        if verification.get("passed") or verification.get("safe_to_deliver"):
+        if verification_is_deliverable(verification):
             return True
-        return self.revision_rounds >= config.MAX_REVISION_ROUNDS
+        return self.revision_rounds >= _revision_limit()
 
     # ==================== 最终报告 ====================
 
@@ -542,25 +907,128 @@ class ResumeAgent:
             sections.insert(1, "【岗位推荐】")
         return sections
 
-    def _generate_final_report(self):
-        """生成最终报告：优先使用LLM格式化，失败或章节缺失则使用本地Markdown模板"""
+    def _unresolved_delivery_fixes(self):
+        verification = self.state.get("verification")
+        unresolved = []
+        if not verification_is_deliverable(verification):
+            if not isinstance(verification, dict):
+                unresolved.append("验证结果未满足严格交付契约")
+            else:
+                fixes = verification.get("required_fixes")
+                if isinstance(fixes, list) and fixes:
+                    unresolved.extend(fixes)
+                else:
+                    unresolved.append(
+                        verification.get("overall_assessment")
+                        or "验证结果未满足严格交付契约"
+                    )
+        if not suggestions_are_usable(self.state.get("suggestions")):
+            unresolved.append("优化版简历未生成或结构无效")
+        return unresolved
+
+    def _report_terminal_status(self):
+        if self.interrupted_error:
+            if "总时限" in str(self.interrupted_error):
+                return "deadline"
+            return "partial"
+        if not delivery_is_complete(
+            self.state.get("verification"), self.state.get("suggestions")
+        ):
+            return "partial"
+        return "completed"
+
+    def _render_local_report(self):
+        terminal_status = self._report_terminal_status()
+        report_state = {
+            **self.state,
+            "correction_log": self.correction_log,
+            "user_clarifications": self.user_clarifications,
+            "generation_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "analysis_engine": (
+                "离线演示模式" if self.client.mock_mode else self.settings.model
+            ),
+            "interrupted_error": self.interrupted_error,
+        }
+        unresolved = self._unresolved_delivery_fixes()
+        return render_local_report(
+            report_state,
+            terminal_status=terminal_status,
+            unresolved_fixes=unresolved,
+        )
+
+    def _generate_final_report(self, force_local=False):
+        """生成报告；确定性流水线强制使用本地Markdown渲染。"""
+        started = time.monotonic()
+        span = f"report-{uuid.uuid4().hex[:12]}"
+        emit_trace(
+            "report.generate.started", span=span, parent="run",
+            step=self.step_count,
+            data={
+                "llm_available": (
+                    not force_local
+                    and not self.client.mock_mode
+                    and not self.interrupted_error
+                    and delivery_is_complete(
+                        self.state.get("verification"),
+                        self.state.get("suggestions"),
+                    )
+                )
+            },
+        )
+
+        def complete(report, renderer, fallback_reason=None):
+            emit_trace(
+                "report.generate.completed", span=span, parent="run",
+                step=self.step_count,
+                data={
+                    "renderer": renderer,
+                    "fallback_reason": fallback_reason,
+                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                    "report_chars": len(report or ""),
+                },
+            )
+            return report
+
+        if force_local:
+            report = self._render_local_report()
+            return complete(report, "local", "deterministic_pipeline")
         if self.client.mock_mode:
-            return self._compose_report(self._format_report_locally())
+            report = self._render_local_report()
+            return complete(report, "local", "mock_mode")
         if self.interrupted_error:
             # 网络已经不稳定，不再发起LLM调用，直接用本地模板渲染已有数据
-            return self._compose_report(self._format_report_locally())
+            report = self._render_local_report()
+            return complete(report, "local", "analysis_interrupted")
+        if not delivery_is_complete(
+            self.state.get("verification"), self.state.get("suggestions")
+        ):
+            report = self._render_local_report()
+            return complete(report, "local", "delivery_unresolved")
 
         prompt = FINAL_REPORT_FORMAT_PROMPT.format(data=self._serialize_report_data_for_llm())
+        fallback_reason = "missing_sections"
         try:
             print("\n📝 正在生成最终报告...")
+            call_options = {}
+            run_deadline = getattr(self, "_run_deadline", None)
+            if run_deadline is not None:
+                call_options["external_deadline"] = run_deadline
             formatted = self.client.simple_ask(
-                prompt=prompt, temperature=0.3, max_tokens=config.REPORT_MAX_TOKENS)
+                prompt=prompt, temperature=0.3, max_tokens=config.REPORT_MAX_TOKENS,
+                operation="report.format", parent_span=span, step=self.step_count,
+                **call_options,
+            )
             if formatted and all(section in formatted for section in self._required_sections()):
-                return self._compose_report(self._ensure_full_resume(formatted))
+                report = self._compose_report(self._ensure_full_resume(formatted))
+                return complete(report, "llm")
             print("⚠️ LLM生成的报告缺少必要章节，改用本地模板")
         except Exception as error:
+            if getattr(error, "is_run_deadline", False):
+                raise
+            fallback_reason = f"llm_{type(error).__name__}"
             print(f"⚠️ LLM格式化报告失败，改用本地模板：{error}")
-        return self._compose_report(self._format_report_locally())
+        report = self._render_local_report()
+        return complete(report, "local", fallback_reason)
 
     def _serialize_report_data_for_llm(self):
         """报告数据按字段分别限额压缩，避免整体截断把末尾字段（尤其优化版简历）砍掉。
@@ -617,7 +1085,7 @@ class ResumeAgent:
             "# 简历优化报告",
             "",
             f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"- 分析引擎：{'离线演示模式' if self.client.mock_mode else config.MODEL_NAME}",
+            f"- 分析引擎：{'离线演示模式' if self.client.mock_mode else self.settings.model}",
         ]
         recommendations = self.state["job_recommendations"] or {}
         candidates = recommendations.get("candidates") or []
@@ -633,14 +1101,14 @@ class ResumeAgent:
             lines.append(f"- 自我修正：{len(self.correction_log)}轮")
         verification = self.state["verification"]
         if verification is not None:
-            verify_passed = verification.get("passed") or verification.get("safe_to_deliver")
+            verify_passed = verification_is_deliverable(verification)
             lines.append(
                 "- 自我验证：✅ 通过" if verify_passed
                 else "- 自我验证：⚠️ 未完全通过（剩余问题详见【自我验证】章节，采纳建议前请逐条核对）")
         if self.interrupted_error:
             lines.extend([
                 "",
-                f"> ⚠️ **本报告不完整**：分析在中途因网络故障中断（{self.interrupted_error}）。",
+                f"> ⚠️ **本报告不完整**：分析在中途失败（{self.interrupted_error}）。",
                 "> 以下内容基于已完成的分析步骤生成，缺失的章节会显示为空。建议稍后重新运行。",
             ])
         lines.extend(["", "---", "", body])
@@ -751,7 +1219,7 @@ class ResumeAgent:
 
         # ---- 自我验证 ----
         sections.append("\n## 【自我验证】")
-        verify_passed = verification.get("passed") or verification.get("safe_to_deliver")
+        verify_passed = verification_is_deliverable(verification)
         sections.append(f"**验证结果**：{'✅ 通过' if verify_passed else '❌ 未通过'}")
         if verification.get("overall_assessment"):
             sections.append(f"**总体评价**：{verification['overall_assessment']}")
@@ -809,7 +1277,7 @@ class ResumeAgent:
         if match_result.get("recommendation"):
             lines.append(f"行动建议：{match_result['recommendation']}")
 
-        if not (verification.get("passed") or verification.get("safe_to_deliver")):
+        if not verification_is_deliverable(verification):
             lines.append(
                 "⚠️ 注意：本报告的优化建议在自我验证中仍存在未完全解决的问题，"
                 "使用前请逐条核对'诚实边界'和'必须修复项'。")
@@ -820,7 +1288,14 @@ class ResumeAgent:
     def _save_report(self, report_text):
         """将最终报告保存为Markdown文件；结构化简历另存同名.json（供Web排版模板使用）"""
         if not report_text:
+            emit_trace(
+                "report.saved", level="warning", parent="run",
+                step=self.step_count,
+                data={"success": False, "reason": "empty_report", "bytes": 0,
+                      "struct_saved": False},
+            )
             return None
+        started = time.monotonic()
         try:
             os.makedirs(self.output_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -829,12 +1304,35 @@ class ResumeAgent:
             with open(filepath, "w", encoding="utf-8") as file:
                 file.write(report_text)
             struct = (self.state["suggestions"] or {}).get("optimized_resume_struct")
+            struct_saved = False
             if isinstance(struct, dict) and struct:
                 struct_path = os.path.splitext(filepath)[0] + ".json"
                 with open(struct_path, "w", encoding="utf-8") as file:
                     json.dump(struct, file, ensure_ascii=False, indent=2)
+                struct_saved = True
+            emit_trace(
+                "report.saved", parent="run", step=self.step_count,
+                data={
+                    "success": True,
+                    "basename": filename,
+                    "bytes": len(report_text.encode("utf-8")),
+                    "struct_saved": struct_saved,
+                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                },
+            )
             return filepath
         except Exception as error:
+            if getattr(error, "is_run_deadline", False):
+                raise
+            emit_trace(
+                "report.saved", level="error", parent="run", step=self.step_count,
+                data={
+                    "success": False,
+                    "error_class": type(error).__name__,
+                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                    "struct_saved": False,
+                },
+            )
             print(f"⚠️ 保存报告失败：{error}")
             return None
 
@@ -869,6 +1367,10 @@ _USAGE = """用法：
   python agent.py <简历文件>            岗位推荐模式：只给简历，自动推荐最匹配的大厂岗位并深入分析
   python agent.py <简历文件> <JD文件或JD文本>
   python agent.py --text "简历文本" ["JD文本"]
+
+模型与推理强度：
+  --model gpt-5.5       --reasoning high|xhigh  （稳定，默认 xhigh）
+  --model gpt-5.6-terra --reasoning high|xhigh  （实验，默认 xhigh）
 
 岗位推荐模式可加 --prefer 指定求职偏好（地点/方向/公司类型等）：
   python agent.py resume.pdf --prefer "在中国求职大厂实习"
@@ -952,6 +1454,8 @@ def main():
     import sys
 
     args = sys.argv[1:]
+    selected_model = config.MODEL_NAME
+    selected_reasoning = config.REASONING_EFFORT
 
     if args and args[0] in ("-h", "--help"):
         print(_USAGE)
@@ -968,14 +1472,26 @@ def main():
         preferences = args[index + 1]
         args = args[:index] + args[index + 2:]
 
-    # 提取 --reasoning 推理强度参数（需模型支持；用probe_reasoning.py可实测网关支持哪些）
-    if "--reasoning" in args:
-        index = args.index("--reasoning")
-        if index + 1 >= len(args) or args[index + 1] not in config.REASONING_LEVELS:
-            print(f"❌ --reasoning 后面需要跟强度等级：{' / '.join(config.REASONING_LEVELS)}\n")
+    # 提取 --model；未指定时使用.env或稳定生产默认模型。
+    if "--model" in args:
+        index = args.index("--model")
+        if index + 1 >= len(args) or args[index + 1] not in config.SUPPORTED_MODELS:
+            print(f"❌ --model 后面需要跟模型：{' / '.join(config.SUPPORTED_MODELS)}\n")
             print(_USAGE)
             return
-        config.REASONING_EFFORT = args[index + 1]
+        selected_model = args[index + 1]
+        args = args[:index] + args[index + 2:]
+        selected_reasoning = config.DEFAULT_REASONING_BY_MODEL[selected_model]
+
+    # 提取 --reasoning 推理强度，并按当前模型校验。
+    if "--reasoning" in args:
+        index = args.index("--reasoning")
+        allowed = config.reasoning_levels_for_model(selected_model)
+        if index + 1 >= len(args) or args[index + 1] not in allowed:
+            print(f"❌ {selected_model} 的 --reasoning 仅限：{' / '.join(allowed)}\n")
+            print(_USAGE)
+            return
+        selected_reasoning = args[index + 1]
         args = args[:index] + args[index + 2:]
 
     if not args:
@@ -1006,12 +1522,33 @@ def main():
         return
 
     resume_input, jd_text, resume_is_file = inputs
-    agent = ResumeAgent(
-        resume_input=resume_input,
-        jd_text=jd_text,
-        resume_is_file=resume_is_file,
-        preferences=preferences,
-    )
+    construction_started = time.monotonic()
+    try:
+        agent = ResumeAgent(
+            resume_input=resume_input,
+            jd_text=jd_text,
+            resume_is_file=resume_is_file,
+            preferences=preferences,
+            model=selected_model,
+            reasoning=selected_reasoning,
+        )
+    except Exception as error:
+        emit_trace(
+            "run.error", level="error", span="run",
+            data={
+                "stage": "client_initialization",
+                "error_class": type(error).__name__,
+                "error_category": "startup",
+                "partial_results": False,
+                "terminal": True,
+                "duration_ms": max(
+                    0, int((time.monotonic() - construction_started) * 1000)
+                ),
+                "steps": 0,
+                "revision_rounds": 0,
+            },
+        )
+        raise
     report = agent.run()
     print("\n" + "=" * 60)
     print(report)

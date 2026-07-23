@@ -280,11 +280,11 @@ def main():
     test_agent_with_resume_file()
 
     # 检查是否运行真实API测试
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ZENMUX_API_KEY", "")
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     if os.environ.get("AGENT_MOCK", "") == "1" or not api_key:
         print("\n⏭️ 跳过真实API测试（未设置API密钥或处于Mock模式）")
         print("如需运行真实测试，请执行：")
-        print("export ZENMUX_API_KEY=你的密钥 && python test_agent.py")
+        print("export OPENAI_API_KEY=你的得否网关密钥 && python test_agent.py")
         return
 
     # 运行真实API测试

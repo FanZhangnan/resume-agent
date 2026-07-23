@@ -44,6 +44,7 @@ QUOTA_FILE = BASE_DIR / "quota.json"
 
 sys.path.insert(0, str(PROJECT_DIR))
 import config as agent_config  # noqa: E402
+from trace_catalog import TRACE_PREFIX, TRACE_SCHEMA  # noqa: E402
 
 # ===== 公网模式配置（都可用环境变量覆盖） =====
 PUBLIC = os.environ.get("AGENT_PUBLIC") == "1"
@@ -55,11 +56,12 @@ MAX_UPLOAD_MB = int(os.environ.get("AGENT_MAX_UPLOAD_MB", "5"))
 TRUST_PROXY = os.environ.get("AGENT_TRUST_PROXY") == "1"            # 反代后置1以读取X-Forwarded-For
 SESSION_TTL = 24 * 3600
 SESSION_REPORT_CAP = 5
+PROCESS_TERMINATE_TIMEOUT = float(
+    os.environ.get("AGENT_PROCESS_TERMINATE_TIMEOUT", "1")
+)
 
 ALLOWED_RESUME_EXT = {".pdf", ".docx", ".doc", ".txt", ".md", ".markdown"}
 REPORT_NAME_RE = re.compile(r"^resume_report_\d{8}_\d{6}\.md$")
-BASE_URL_RE = re.compile(r"^https?://[\w\-.:/]+$")
-MODEL_RE = re.compile(r"^[\w\-./: ]{1,100}$")
 ANSWER_PROMPT = "请输入回答"
 
 app = FastAPI(title="简历优化Agent UI")
@@ -71,6 +73,26 @@ SESSIONS_LOCK = threading.Lock()
 RATE = {}                                       # ip -> [启动时间戳]
 RATE_LOCK = threading.Lock()
 QUOTA_LOCK = threading.Lock()
+
+
+def _resolve_model_reasoning(model, reasoning):
+    """解析并校验一次运行使用的模型与推理档位。"""
+    selected_model = str(model or agent_config.DEFAULT_MODEL).strip()
+    selected_reasoning = str(reasoning or "").strip()
+    try:
+        return agent_config.validate_model_reasoning(
+            selected_model, selected_reasoning
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+def _resolve_gateway_base_url(value):
+    """规范化并校验本次运行的得否网关地址。"""
+    try:
+        return agent_config.normalize_gateway_base_url(value)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
 
 
 # ==================== 会话 / 身份 ====================
@@ -161,7 +183,7 @@ class Job:
     """一次Agent运行：子进程 + 事件缓冲（SSE从这里回放/续播）"""
 
     def __init__(self, proc, meta):
-        self.id = uuid.uuid4().hex[:12]
+        self.id = meta.get("run_id") or uuid.uuid4().hex[:12]
         self.proc = proc
         self.meta = meta
         self.created = time.time()
@@ -171,7 +193,10 @@ class Job:
         self.run_dir = meta.get("run_dir")          # 公网模式的临时输出目录
         self.temp_files = meta.get("temp_files", [])  # 上传/粘贴落盘的文件，结束即删
         self.events = []
+        self.trace_events = []
         self.lock = threading.Lock()
+        self.teardown_lock = threading.Lock()
+        self.finished = threading.Event()
         self.done = False
         self.exit_code = None
         self.report_path = None
@@ -187,8 +212,89 @@ class Job:
         with self.lock:
             return list(self.events[start:])
 
+    def emit_trace(self, event):
+        with self.lock:
+            self.trace_events.append(event)
+            self.events.append({"type": "trace", "event": event})
 
-def _reader_thread(job):
+
+def _parse_trace_line(text):
+    """解析Agent子进程的结构化事件行；非法行交给普通日志处理。"""
+    if not text.startswith(TRACE_PREFIX):
+        return None
+    try:
+        event = json.loads(text[len(TRACE_PREFIX):])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(event, dict) or event.get("schema") != TRACE_SCHEMA:
+        return None
+    return event
+
+
+def _wait_for_process(job):
+    """正常等待不持teardown lock，确保watchdog仍能并发终止子进程。"""
+    if job.exit_code is not None:
+        return job.exit_code
+    return_code = job.proc.wait()
+    with job.teardown_lock:
+        if job.exit_code is None:
+            job.exit_code = return_code
+        return job.exit_code
+
+
+def _terminate_and_reap(job, timeout=PROCESS_TERMINATE_TIMEOUT):
+    """terminate后限时回收；子进程不退出则kill并确认reap。"""
+    with job.teardown_lock:
+        if job.exit_code is not None:
+            return job.exit_code
+        try:
+            return_code = job.proc.poll()
+        except OSError:
+            return_code = None
+        if return_code is None:
+            try:
+                job.proc.terminate()
+            except OSError:
+                pass
+            try:
+                return_code = job.proc.wait(timeout=max(0.0, timeout))
+            except subprocess.TimeoutExpired:
+                try:
+                    job.proc.kill()
+                except OSError:
+                    pass
+                return_code = job.proc.wait()
+        job.exit_code = (
+            return_code if return_code is not None
+            else getattr(job.proc, "returncode", None)
+        )
+        if job.exit_code is None:
+            job.exit_code = -1
+        return job.exit_code
+
+
+def _job_watchdog(job, run_timeout, grace):
+    """子进程预算后留出grace，再由父进程执行硬终止。"""
+    budget = max(0.0, run_timeout)
+    grace = max(0.0, grace)
+    hard_timeout = budget + grace
+    if job.finished.wait(hard_timeout):
+        return
+    try:
+        if job.proc.poll() is None:
+            job.emit({
+                "type": "timeout",
+                "reason": "run_timeout_grace_exceeded",
+                "budget_seconds": budget,
+                "grace_seconds": grace,
+                "hard_timeout_seconds": hard_timeout,
+            })
+            _terminate_and_reap(job)
+    except OSError:
+        pass
+
+
+def _consume_job_output(job):
     """持续读取子进程stdout：拆行→事件；识别追问/报告保存/结束；公网模式用后即焚"""
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     buffer = ""
@@ -199,6 +305,10 @@ def _reader_thread(job):
     def handle_line(line):
         nonlocal asking, ask_question, ask_context, suppress
         text = line.rstrip("\r")
+        trace_event = _parse_trace_line(text)
+        if trace_event is not None:
+            job.emit_trace(trace_event)
+            return
         if suppress:
             return
         if "💾 报告已保存：" in text:
@@ -236,24 +346,26 @@ def _reader_thread(job):
 
     if buffer.strip():
         handle_line(buffer)
-    job.proc.wait()
-    job.exit_code = job.proc.returncode
+    _wait_for_process(job)
 
     # 读取报告文件（限制在项目目录内，防路径穿越）；结构化简历在同名.json
     if job.report_path:
-        try:
-            path = (PROJECT_DIR / job.report_path).resolve() \
-                if not os.path.isabs(job.report_path) else Path(job.report_path).resolve()
-            if str(path).startswith(str(PROJECT_DIR.resolve())) and path.is_file():
-                job.report_text = path.read_text(encoding="utf-8")
-                struct_path = path.with_suffix(".json")
-                if struct_path.is_file():
-                    try:
-                        job.report_struct = json.loads(struct_path.read_text(encoding="utf-8"))
-                    except ValueError:
-                        job.report_struct = None
-        except Exception as error:  # noqa: BLE001
-            job.emit({"type": "line", "text": f"⚠️ 读取报告文件失败：{error}"})
+        path = (PROJECT_DIR / job.report_path).resolve() \
+            if not os.path.isabs(job.report_path) else Path(job.report_path).resolve()
+        if str(path).startswith(str(PROJECT_DIR.resolve())) and path.is_file():
+            job.report_text = path.read_text(encoding="utf-8")
+            struct_path = path.with_suffix(".json")
+            if struct_path.is_file():
+                try:
+                    job.report_struct = json.loads(
+                        struct_path.read_text(encoding="utf-8")
+                    )
+                except ValueError as error:
+                    job.report_struct = None
+                    job.emit({
+                        "type": "report_struct_error",
+                        "error_class": type(error).__name__,
+                    })
 
     if job.report_text:
         name = Path(job.report_path).name if job.report_path else f"resume_report_{job.id}.md"
@@ -263,11 +375,34 @@ def _reader_thread(job):
         if job.ephemeral:
             _session_store_report(job.sid, job.id, name, job.report_text, job.report_struct)
 
-    # 用后即焚：删除临时输出目录与上传文件
-    if job.ephemeral:
-        _burn(job)
-    job.emit({"type": "exit", "code": job.exit_code})
-    job.done = True
+
+
+def _reader_thread(job):
+    """任何reader故障都以可回放的终态结束，并且仅清理一次。"""
+    try:
+        _consume_job_output(job)
+    except Exception as error:  # noqa: BLE001
+        job.emit({"type": "reader_error", "error_class": type(error).__name__})
+        _terminate_and_reap(job)
+    finally:
+        if job.exit_code is None:
+            try:
+                return_code = job.proc.poll()
+            except OSError:
+                return_code = None
+            job.exit_code = return_code if return_code is not None else -1
+
+        if job.ephemeral:
+            try:
+                _burn(job)
+            except Exception as error:  # noqa: BLE001
+                job.emit({"type": "reader_error", "error_class": type(error).__name__})
+
+        try:
+            job.emit({"type": "exit", "code": job.exit_code})
+        finally:
+            job.done = True
+            job.finished.set()
 
 
 def _burn(job):
@@ -370,11 +505,15 @@ def status(request: Request):
     ip = _client_ip(request)
     payload = {
         "model": agent_config.MODEL_NAME,
+        "models": agent_config.MODEL_OPTIONS,
+        "default_model": agent_config.DEFAULT_MODEL,
+        "default_reasoning": agent_config.DEFAULT_REASONING_BY_MODEL,
         "base_url": agent_config.API_BASE_URL,
         "has_key": bool(agent_config.API_KEY),
         "mock_env": os.environ.get("AGENT_MOCK") == "1",
         "max_steps": agent_config.MAX_STEPS,
         "public": PUBLIC,
+        "deployment_mode": "local",
         "free_per_day": FREE_PER_DAY if PUBLIC else None,
         "free_left": _quota_left(ip) if PUBLIC else None,
     }
@@ -399,19 +538,12 @@ def run(request: Request,
     ip = _client_ip(request)
     is_mock = mock == "1"
     api_key = api_key.strip()[:200]
-    base_url = base_url.strip()[:300]
+    base_url = _resolve_gateway_base_url(base_url.strip()[:300])
     model = model.strip()[:100]
     byok = bool(api_key)
-    reasoning = reasoning.strip().lower()
-    if reasoning and reasoning not in agent_config.REASONING_LEVELS:
-        raise HTTPException(400, f"推理强度取值仅限：{' / '.join(agent_config.REASONING_LEVELS)}")
+    model, reasoning = _resolve_model_reasoning(model, reasoning)
     if len(resume_text) > 200_000 or len(jd_text) > 50_000:
         raise HTTPException(400, "文本过长，请精简后重试")
-    if base_url and not BASE_URL_RE.match(base_url):
-        raise HTTPException(400, "Base URL格式不正确（需以http(s)://开头）")
-    if model and not MODEL_RE.match(model):
-        raise HTTPException(400, "模型名格式不正确")
-
     quota_used = False
     if PUBLIC:
         _rate_check(ip, is_mock)
@@ -422,7 +554,12 @@ def run(request: Request,
             quota_used = True
 
     cmd = [sys.executable, "-u", "agent.py"]
-    meta = {"mode": mode, "sid": sid, "ip": ip, "ephemeral": PUBLIC, "temp_files": []}
+    model_option = agent_config.MODEL_OPTION_BY_ID[model]
+    meta = {
+        "mode": mode, "sid": sid, "ip": ip, "ephemeral": PUBLIC,
+        "temp_files": [], "model": model, "reasoning": reasoning,
+        "tier": model_option["tier"], "status": model_option["status"],
+    }
 
     if mode == "demo":
         cmd.append("--demo")
@@ -446,32 +583,39 @@ def run(request: Request,
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["AGENT_MODEL"] = model
+    env["AGENT_REASONING_EFFORT"] = reasoning
     if is_mock:
         env["AGENT_MOCK"] = "1"
         env["AGENT_MOCK_ASK"] = "1"   # Web演示时展示"用户追问"环节（追问卡片可回答/跳过）
     else:
         env.pop("AGENT_MOCK", None)
-        if reasoning:
-            env["AGENT_REASONING_EFFORT"] = reasoning
-        else:
-            env.pop("AGENT_REASONING_EFFORT", None)
         if byok:
             # BYOK：仅本次子进程使用，不落盘不记录
-            env.pop("ZENMUX_API_KEY", None)     # ZENMUX优先级更高，必须清掉
             env["OPENAI_API_KEY"] = api_key
-            if base_url:
-                env["AGENT_BASE_URL"] = base_url
-            if model:
-                env["AGENT_MODEL"] = model
+            env["AGENT_BASE_URL"] = base_url
         elif not agent_config.API_KEY:
             raise HTTPException(400, "未检测到API密钥：请在「高级设置」填写你的API Key，或勾选Mock演示模式")
 
-    job_id_dir = uuid.uuid4().hex[:12]
+    run_id = uuid.uuid4().hex[:12]
+    meta["run_id"] = run_id
+    env["AGENT_RUN_ID"] = run_id
     if PUBLIC:
-        run_dir = RUNS_DIR / job_id_dir
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = RUNS_DIR / run_id
+        run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(run_dir, 0o700)
+        except OSError:
+            pass
         env["AGENT_OUTPUT_DIR"] = str(run_dir)
+        env["AGENT_TRACE_DIR"] = str(run_dir / "traces")
+        env.pop("AGENT_TRACE_RAW", None)
         meta["run_dir"] = str(run_dir)
+    else:
+        output_root = Path(env.get("AGENT_OUTPUT_DIR", agent_config.OUTPUT_DIR))
+        if not output_root.is_absolute():
+            output_root = PROJECT_DIR / output_root
+        env["AGENT_TRACE_DIR"] = str(output_root / "traces" / run_id)
 
     proc = subprocess.Popen(
         cmd, cwd=str(PROJECT_DIR), env=env,
@@ -481,8 +625,14 @@ def run(request: Request,
     with JOBS_LOCK:
         JOBS[job.id] = job
     threading.Thread(target=_reader_thread, args=(job,), daemon=True).start()
+    threading.Thread(
+        target=_job_watchdog,
+        args=(job, agent_config.RUN_TIMEOUT, agent_config.WATCHDOG_GRACE),
+        daemon=True,
+    ).start()
     return {"job_id": job.id, "mock": is_mock, "byok": byok,
-            "model": (model or agent_config.MODEL_NAME) if byok else agent_config.MODEL_NAME,
+            "model": model, "reasoning": reasoning, "tier": model_option["tier"],
+            "status": model_option["status"],
             "quota_used": quota_used,
             "free_left": _quota_left(ip) if PUBLIC else None}
 

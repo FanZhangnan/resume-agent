@@ -16,6 +16,7 @@ MOCK_RESUME_INFO = {
         "email": "liming@example.com",
         "location": "",
         "target_role": "运营专员",
+        "work_authorization": False,
     },
     "education": [
         {"school": "江南大学", "degree": "本科", "major": "市场营销",
@@ -53,6 +54,10 @@ MOCK_JD_ANALYSIS = {
     "responsibilities": ["平台活动运营、商品运营和用户运营", "输出运营分析报告", "协同推进活动落地"],
     "risk_points": ["JD强调独立负责，候选人此前多为助理/协助角色"],
     "raw_summary": "典型电商运营专员岗，硬性门槛不高，核心看活动运营和数据分析的实操能力，隐含跨团队协作与抗压要求。",
+    "gates": {
+        "location": {"required": False, "accepted_values": []},
+        "work_authorization": {"required": False, "accepted_values": []},
+    },
 }
 
 
@@ -60,22 +65,36 @@ MOCK_MATCH = {
     "score": 76,
     "score_reason": "学历、年限、Excel与数据能力均达标，活动复盘和用户分层有直接经验；短板是缺少独立负责的经历和量化成果。",
     "high_matches": [
-        {"requirement": "本科及以上学历", "evidence": "江南大学市场营销本科", "reason": "完全满足"},
-        {"requirement": "1年以上电商运营经验", "evidence": "星河电商运营助理3年", "reason": "年限超出要求"},
-        {"requirement": "熟练使用Excel", "evidence": "技能列出Excel、数据透视表，且有周度数据看板产出", "reason": "有实际使用证据"},
+        {"requirement_id": "hard-001", "requirement": "本科及以上学历", "evidence": "江南大学市场营销本科", "reason": "完全满足"},
+        {"requirement_id": "hard-002", "requirement": "1年以上电商运营经验", "evidence": "星河电商运营助理3年", "reason": "年限超出要求"},
+        {"requirement_id": "hard-003", "requirement": "熟练使用Excel", "evidence": "技能列出Excel、数据透视表，且有周度数据看板产出", "reason": "有实际使用证据"},
     ],
     "partial_matches": [
-        {"requirement": "活动运营（独立负责）", "evidence": "参与618/双11活动复盘、活动配置",
+        {"requirement_id": "business-001", "requirement": "活动运营（独立负责）", "evidence": "参与618/双11活动复盘、活动配置",
          "gap": "均为参与/协助角色，缺少独立负责的活动案例", "improvement": "突出在活动中独立完成的具体环节"},
-        {"requirement": "用户运营", "evidence": "会员复购提升项目参与用户分层",
+        {"requirement_id": "skill-003", "requirement": "用户运营", "evidence": "会员复购提升项目参与用户分层",
          "gap": "角色与产出描述模糊", "improvement": "补充分层维度、触达规模和复购率变化数据"},
     ],
     "missing_requirements": [
-        {"requirement": "输出运营分析报告的独立能力", "impact": "面试中可能被追问", "possible_action": "把周度数据看板经历改写为分析报告产出"},
+        {"requirement_id": "business-002", "requirement": "输出运营分析报告的独立能力", "impact": "面试中可能被追问", "possible_action": "把周度数据看板经历改写为分析报告产出"},
     ],
     "redundant_or_irrelevant": ["SQL基础与该JD相关性弱，可保留但不必突出"],
     "risks": ["3年仍为助理职级，需准备职级解释", "缺少大促核心指标的量化结果"],
     "recommendation": "整体匹配度良好，建议围绕'活动复盘+数据看板'重构经历描述，补充可佐证的量化数据后再投递。",
+    "requirement_evidence": [
+        {"requirement_id": "hard-001", "status": "met", "evidence_ids": ["evidence-education-001"]},
+        {"requirement_id": "hard-002", "status": "met", "evidence_ids": ["evidence-experience-001"]},
+        {"requirement_id": "hard-003", "status": "met", "evidence_ids": ["evidence-experience-001", "evidence-skill-001", "evidence-skill-003"]},
+        {"requirement_id": "skill-001", "status": "met", "evidence_ids": ["evidence-experience-001"]},
+        {"requirement_id": "skill-002", "status": "met", "evidence_ids": ["evidence-experience-001"]},
+        {"requirement_id": "skill-003", "status": "under_evidenced", "evidence_ids": ["evidence-project-001"]},
+        {"requirement_id": "business-001", "status": "under_evidenced", "evidence_ids": ["evidence-experience-001", "evidence-project-001"]},
+        {"requirement_id": "business-002", "status": "under_evidenced", "evidence_ids": ["evidence-project-001"]},
+        {"requirement_id": "business-003", "status": "missing", "evidence_ids": []},
+        {"requirement_id": "soft-001", "status": "missing", "evidence_ids": []},
+        {"requirement_id": "soft-002", "status": "missing", "evidence_ids": []},
+        {"requirement_id": "soft-003", "status": "under_evidenced", "evidence_ids": ["evidence-experience-001", "evidence-project-001"]},
+    ],
 }
 
 

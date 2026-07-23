@@ -1,6 +1,25 @@
 import config
+from contracts import (
+    MatchResult,
+    SuggestionResult,
+    optimized_resume_struct_is_usable,
+)
 from tools.common import ask_json, get_client
-from utils import clip_text, compact_text, parse_resume_text_to_struct, to_pretty_json
+from trace_catalog import emit_trace
+from tools.scoring import (
+    gates_from_jd,
+    normalize_jd_requirements,
+    normalize_resume_evidence,
+    requirement_ledger_from_match_result,
+    score_requirements,
+)
+from utils import (
+    clip_text,
+    compact_text,
+    parse_resume_text_to_struct,
+    render_resume_text,
+    to_pretty_json,
+)
 
 _MATCH_SCHEMA = {
     "score": 0,
@@ -11,10 +30,15 @@ _MATCH_SCHEMA = {
     "redundant_or_irrelevant": [],
     "risks": [],
     "recommendation": "",
+    "requirement_evidence": [],
+    "eligible": True,
+    "requirement_scores": [],
+    "gate_failures": [],
 }
 
 
 _SUGGESTION_SCHEMA = {
+    "generation_mode": "llm",
     "overall_strategy": "",
     "rewrite_suggestions": [],
     "star_rewrites": [],
@@ -25,29 +49,228 @@ _SUGGESTION_SCHEMA = {
 }
 
 
-def calculate_match(resume_info, jd_analysis):
+def _strings(value):
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = str(item.get("name") or item.get("details") or "").strip()
+        else:
+            text = ""
+        if text:
+            result.append(text)
+    return result
+
+
+def _conservative_resume_struct(resume_info):
+    """Map extracted facts to the rendering schema without rewriting claims."""
+    resume_info = resume_info if isinstance(resume_info, dict) else {}
+    basic = resume_info.get("basic_info")
+    basic = basic if isinstance(basic, dict) else {}
+    struct = {
+        "basic_info": {
+            key: str(basic.get(key) or "").strip()
+            for key in ("name", "phone", "email", "location", "target_role")
+        },
+        "summary": "",
+        "education": [],
+        "experience": [],
+        "projects": [],
+        "skills": [],
+        "extras": [],
+    }
+    for item in resume_info.get("education") or []:
+        if not isinstance(item, dict):
+            continue
+        details = str(item.get("details") or "").strip()
+        struct["education"].append({
+            "school": str(item.get("school") or "").strip(),
+            "degree": str(item.get("degree") or "").strip(),
+            "major": str(item.get("major") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "highlights": [details] if details else [],
+        })
+    experiences = (
+        resume_info.get("work_experience")
+        or resume_info.get("experience")
+        or []
+    )
+    for item in experiences:
+        if not isinstance(item, dict):
+            continue
+        bullets = (
+            _strings(item.get("responsibilities"))
+            + _strings(item.get("achievements"))
+        )
+        struct["experience"].append({
+            "company": str(item.get("company") or "").strip(),
+            "title": str(item.get("title") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "bullets": bullets,
+        })
+    for item in resume_info.get("projects") or []:
+        if not isinstance(item, dict):
+            continue
+        description = str(item.get("description") or "").strip()
+        bullets = (
+            ([description] if description else [])
+            + _strings(item.get("achievements"))
+        )
+        technologies = _strings(item.get("technologies"))
+        if technologies:
+            bullets.append("技术：" + "、".join(technologies))
+        struct["projects"].append({
+            "name": str(item.get("name") or "").strip(),
+            "role": str(item.get("role") or "").strip(),
+            "start": str(item.get("start_date") or item.get("start") or "").strip(),
+            "end": str(item.get("end_date") or item.get("end") or "").strip(),
+            "bullets": bullets,
+        })
+    skills = _strings(resume_info.get("skills"))
+    if skills:
+        struct["skills"] = [{"group": "技能", "items": skills}]
+    struct["extras"] = (
+        _strings(resume_info.get("certificates"))
+        + _strings(resume_info.get("achievements"))
+    )
+    return struct
+
+
+def _conservative_suggestions(resume_info, reason):
+    struct = _conservative_resume_struct(resume_info)
+    result = {
+        "generation_mode": "conservative_fallback",
+        "overall_strategy": (
+            "模型生成未在时限内完成，本版仅对原始事实进行保守结构化排版；"
+            "未新增、扩写或升级任何经历。"
+        ),
+        "rewrite_suggestions": [],
+        "star_rewrites": [],
+        "keyword_injection": [],
+        "honesty_boundaries": [
+            "本次为可靠性降级结果，仅保留原简历已确认事实；建议稍后重试以获取完整AI改写。"
+        ],
+        "optimized_resume": render_resume_text(struct),
+        "optimized_resume_struct": struct,
+    }
+    validated = SuggestionResult.model_validate(result, strict=True)
+    emit_trace(
+        "suggestion.conservative_fallback",
+        level="warning",
+        data={"reason": reason},
+    )
+    return {
+        "success": True,
+        "suggestions": validated.model_dump(mode="python"),
+    }
+
+
+def _summary_rows_from_ledger(result, requirements, ledger):
+    """Build user-visible buckets from the same conservative ledger as scoring."""
+    requirements_by_id = {
+        item["requirement_id"]: item["requirement"]
+        for item in requirements
+    }
+    bucket_specs = {
+        "met": ("high_matches", ("reason",)),
+        "under_evidenced": (
+            "partial_matches", ("gap", "improvement")
+        ),
+        "missing": (
+            "missing_requirements", ("impact", "possible_action")
+        ),
+    }
+    original_by_bucket = {}
+    for _, (bucket, _) in bucket_specs.items():
+        rows = result.get(bucket)
+        original_by_bucket[bucket] = {
+            str(row.get("requirement_id") or "").strip(): row
+            for row in rows if isinstance(row, dict)
+        } if isinstance(rows, list) else {}
+
+    rebuilt = {bucket: [] for bucket, _ in bucket_specs.values()}
+    for ledger_row in ledger:
+        status = ledger_row["status"]
+        bucket, safe_fields = bucket_specs[status]
+        requirement_id = ledger_row["requirement_id"]
+        summary = {
+            "requirement_id": requirement_id,
+            "requirement": requirements_by_id.get(requirement_id, ""),
+        }
+        if status != "missing":
+            summary["evidence_ids"] = list(ledger_row.get("evidence_ids") or [])
+        original = original_by_bucket[bucket].get(requirement_id, {})
+        for field in safe_fields:
+            if original.get(field) not in (None, "", [], {}):
+                summary[field] = original[field]
+        rebuilt[bucket].append(summary)
+    return rebuilt
+
+
+def calculate_match(resume_info, jd_analysis, preferences=None):
     system = "你是严谨的招聘匹配度评估专家。只输出JSON。必须诚实评估，不允许为了提高匹配度而强行关联。"
+    requirements = normalize_jd_requirements(jd_analysis)
+    evidence_catalog = normalize_resume_evidence(resume_info, preferences=preferences)
+    prompt_evidence_catalog = [
+        {key: value for key, value in item.items() if key != "search_text"}
+        for item in evidence_catalog
+    ]
     prompt = f"""
-请逐项对比候选人简历结构化信息与JD分析，输出紧凑JSON，每个数组最多6项，字段必须包含：
-score: 0到100的整数匹配度
+请根据下方标准化要求与证据目录逐项评估，只输出紧凑JSON：
+score: 0到100的整数解释草稿
 score_reason: 100字以内评分依据
-high_matches: 数组，高度匹配项，每项包含 requirement, evidence, reason
-partial_matches: 数组，部分匹配项，每项包含 requirement, evidence, gap, improvement
-missing_requirements: 数组，缺失项，每项包含 requirement, impact, possible_action
-redundant_or_irrelevant: 数组，简历中与目标岗位弱相关或冗余的内容
-risks: 数组，风险点，如年限不足、领域不匹配、证据薄弱
+requirement_evidence: 为每个requirement_id输出且仅输出一行，每行只含requirement_id, status, evidence_ids
+redundant_or_irrelevant: 最多6项弱相关或冗余内容
+risks: 最多6项年限、领域或证据风险
 recommendation: 100字以内建议
 
-简历信息：
-{compact_text(to_pretty_json(resume_info))}
+status只能是met、under_evidenced、missing。met/under_evidenced必须引用证据目录中的真实evidence_id，missing的evidence_ids必须为空数组。requirement_id必须从要求清单原样选取，不得编造要求或证据。系统会在本地重建匹配分类并重算最终分数。
 
-JD分析：
-{compact_text(to_pretty_json(jd_analysis))}
+标准化要求清单：
+{compact_text(to_pretty_json(requirements))}
+
+简历证据目录：
+{compact_text(to_pretty_json(prompt_evidence_catalog))}
 """
-    result = ask_json(prompt, system, _MATCH_SCHEMA, temperature=0.2, label="计算简历与JD的匹配度")
+    result = ask_json(
+        prompt,
+        system,
+        _MATCH_SCHEMA,
+        temperature=0.2,
+        label="计算简历与JD的匹配度",
+        validator=MatchResult,
+    )
     if result is None:
         return {"success": False, "error": "LLM未能返回合法JSON，请重试calculate_match"}
-    return {"success": True, "match_result": result}
+    result = dict(result)
+    ledger = requirement_ledger_from_match_result(
+        result,
+        requirements,
+        evidence_catalog=evidence_catalog,
+    )
+    scoring = score_requirements(
+        requirements,
+        ledger,
+        gates_from_jd(jd_analysis, resume_info=resume_info),
+    )
+    result["score"] = scoring["score"]
+    result["eligible"] = scoring["eligible"]
+    result["requirement_evidence"] = ledger
+    result["requirement_scores"] = scoring["requirements"]
+    result["gate_failures"] = scoring["gate_failures"]
+    result.update(_summary_rows_from_ledger(result, requirements, ledger))
+    if not result.get("score_reason"):
+        result["score_reason"] = "按岗位要求类别权重与简历证据充分度进行本地确定性评分。"
+    if scoring["gate_failures"]:
+        gates = "、".join(scoring["gate_failures"])
+        result["score_reason"] = f"{result['score_reason']}；硬性门槛未满足：{gates}。"
+    validated = MatchResult.model_validate(result, strict=True)
+    return {"success": True, "match_result": validated.model_dump(mode="python")}
 
 
 def generate_suggestions(resume_info, jd_analysis, match_result, fix_instructions=None):
@@ -61,12 +284,12 @@ def generate_suggestions(resume_info, jd_analysis, match_result, fix_instruction
 """
 
     prompt = f"""
-请基于简历、JD和匹配分析生成优化建议，输出紧凑JSON，数组最多8项，字段必须包含：
+请基于简历、JD和匹配分析生成优化建议，只输出紧凑JSON。不要复述输入，不要解释推理过程。字段必须包含：
 overall_strategy: 150字以内总体优化策略
-rewrite_suggestions: 数组，逐段建议，每项包含 section, problem, suggestion, before, after
-star_rewrites: 数组，用STAR法则改写经历，每项包含 original, situation, task, action, result, rewritten
-keyword_injection: 数组，可自然补充的关键词及放置位置，每项包含 keyword, placement
-honesty_boundaries: 数组，明确哪些内容不能夸大或编造
+rewrite_suggestions最多4项: 只保留影响最大的逐段建议，每项包含 section, problem, suggestion, before, after；problem和suggestion各80字以内，before和after各180字以内
+star_rewrites最多3项: 用STAR法则改写最关键经历，每项包含 original, situation, task, action, result, rewritten；每个字段160字以内
+keyword_injection最多8项: 可自然补充的关键词及放置位置，每项包含 keyword, placement
+honesty_boundaries最多6项: 明确哪些内容不能夸大或编造，每项100字以内
 optimized_resume_struct: 结构化的完整优化版简历（主要输出，供排版渲染），字段：
   basic_info: {{name, phone, email, location, target_role}}
   summary: 个人简介字符串（100字以内）
@@ -88,20 +311,41 @@ JD分析：
 {compact_text(to_pretty_json(match_result))}
 """
     label = "根据验证意见重新生成优化建议" if fix_instructions else "生成优化建议与优化版简历"
-    # 该调用要输出完整优化版简历全文+全部建议，是最重的输出载荷，直接用大token预算
-    result = ask_json(prompt, system, _SUGGESTION_SCHEMA, temperature=0.2, label=label,
-                      max_tokens=config.REPORT_MAX_TOKENS)
-    if result is None:
-        return {"success": False, "error": "LLM未能返回合法JSON，请重试generate_suggestions"}
-    result = _ensure_struct(result)
-    return {"success": True, "suggestions": result}
+    # 完整简历仍是主要输出；建议项严格限量，避免高推理档在大预算下长时间展开。
+    try:
+        result = ask_json(
+            prompt,
+            system,
+            _SUGGESTION_SCHEMA,
+            temperature=0.2,
+            label=label,
+            max_tokens=config.MAX_TOKENS,
+            retry_max_tokens=config.MAX_TOKENS,
+            validator=SuggestionResult,
+        )
+        if result is None:
+            return _conservative_suggestions(
+                resume_info, "invalid_model_output",
+            )
+        result = dict(result)
+        result["generation_mode"] = "llm"
+        result = _ensure_struct(result)
+        validated = SuggestionResult.model_validate(result, strict=True)
+    except Exception as error:
+        if getattr(error, "is_run_deadline", False):
+            raise
+        return _conservative_suggestions(
+            resume_info, type(error).__name__,
+        )
+    return {
+        "success": True,
+        "suggestions": validated.model_dump(mode="python"),
+    }
 
 
 def _valid_struct(struct):
     """结构化简历是否可用：需有basic_info且至少一段经历类内容"""
-    return (isinstance(struct, dict)
-            and isinstance(struct.get("basic_info"), dict)
-            and any(struct.get(key) for key in ("education", "experience", "projects")))
+    return optimized_resume_struct_is_usable(struct)
 
 
 def _ensure_struct(result):
@@ -146,4 +390,5 @@ extras: 数组（证书/奖项/语言等，可为空数组）
 """
     return ask_json(prompt, "你是精确的文档结构化助手。只输出JSON，不改写内容。",
                     schema, temperature=0.0, label="补全结构化排版数据",
-                    max_tokens=config.REPORT_MAX_TOKENS)
+                    max_tokens=config.MAX_TOKENS,
+                    retry_max_tokens=config.MAX_TOKENS)

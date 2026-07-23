@@ -1,0 +1,46 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": ".",
+      "entrypoint": "webui/vercel_server.py",
+      "framework": "fastapi",
+      "functions": {
+        "webui/vercel_server.py": {
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
+        }
+      }
+    },
+    "resume_workflow": {
+      "root": ".",
+      "entrypoint": "workflows/vercel_worker.py",
+      "framework": "fastapi",
+      "functions": {
+        "workflows/vercel_worker.py": {
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}",
+          "experimentalTriggers": [
+            { "type": "queue/v2beta", "topic": "__wkf_*" }
+          ]
+        }
+      }
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        }
+      ]
+    }
+  ]
+}
