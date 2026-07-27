@@ -1,5 +1,7 @@
 """单次运行模型策略与 deadline 传播测试（纯离线）。"""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import os
 import threading
 import time

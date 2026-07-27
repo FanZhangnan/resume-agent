@@ -1,5 +1,7 @@
 """Production model policy and benchmark harness tests (offline only)."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +18,7 @@ from runtime_context import current_settings
 from webui import server
 
 
-ROOT = Path(__file__).parent
+ROOT = PROJECT_ROOT
 EXPECTED_LEVELS = {
     "gpt-5.5": ("high", "xhigh"),
     "gpt-5.6-terra": ("high", "xhigh"),

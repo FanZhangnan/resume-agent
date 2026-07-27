@@ -6,6 +6,8 @@
 3. quota_store.py 模块级共享 httpx.AsyncClient
 """
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import os
 
@@ -68,7 +70,7 @@ def test_vercel_worker_uses_semaphore_not_global_lock():
         import workflows.vercel_worker as worker
     except ImportError:
         # vercel SDK 不可用时退化为源码级断言
-        source_path = os.path.join(os.path.dirname(__file__), "workflows", "vercel_worker.py")
+        source_path = PROJECT_ROOT / "workflows" / "vercel_worker.py"
         with open(source_path, "r", encoding="utf-8") as file:
             source = file.read()
         assert "threading.Lock" not in source

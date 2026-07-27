@@ -87,11 +87,11 @@ AGENT_ADMISSION_TTL=900
 for t in test_tools test_agent test_model_policy test_runtime_policy \
          test_contracts test_scoring test_pipeline test_trace_catalog \
          test_run_security test_vercel_trace test_web_trace_ui test_vercel_ui; do
-  AGENT_MOCK=1 .venv312/bin/python $t.py || echo "FAIL $t"
+  AGENT_MOCK=1 .venv312/bin/python tests/$t.py || echo "FAIL $t"
 done
-AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_workflow.py
-AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_api.py
-AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_deploy_contract.py
+AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_workflow.py
+AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_api.py
+AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_deploy_contract.py
 
 .venv312/bin/python -m compileall -q . && git diff --check
 ```
@@ -110,7 +110,7 @@ npx vercel@latest deploy --target=preview     # 让 Vercel 从 .vercelignore 过
 `vercel deploy --prebuilt`。CLI 55 的 GA Python 本地构建不会把
 `functions.excludeFiles` 用于源码收集；若必须使用预构建，先把项目按
 `.vercelignore` 同步到临时目录，在该目录执行 `vercel build --target=preview`，
-再用 `VERCEL_BUILD_ROOT=<临时目录> test_vercel_build_output.py` 审计通过后部署。
+再用 `VERCEL_BUILD_ROOT=<临时目录> tests/test_vercel_build_output.py` 审计通过后部署。
 
 部署后先只验证零成本项，再花网关额度：
 

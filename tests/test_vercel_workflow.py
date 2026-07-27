@@ -5,6 +5,8 @@ trace sink, so no Vercel replay context or live LLM is required. An integration
 case runs the graph against the real tool adapters under AGENT_MOCK=1.
 """
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import importlib
 import json
@@ -328,7 +330,7 @@ def test_graph_runs_inside_real_workflow_sandbox():
 def test_fact_only_fallback_runs_inside_cold_workflow_sandbox():
     from vercel._internal.workflow.py_sandbox import workflow_sandbox
 
-    assert "tools.analysis" not in sys.modules
+    loaded_analysis = sys.modules.pop("tools.analysis", None)
 
     async def scenario():
         with workflow_sandbox(random_seed="fallback-sandbox"):
@@ -339,7 +341,11 @@ def test_fact_only_fallback_runs_inside_cold_workflow_sandbox():
                 FakeTrace(),
             )
 
-    result = run(scenario())
+    try:
+        result = run(scenario())
+    finally:
+        if loaded_analysis is not None:
+            sys.modules["tools.analysis"] = loaded_analysis
     assert result["status"] == "completed"
     assert result["safe_to_deliver"] is True
 
@@ -1105,10 +1111,12 @@ def test_required_fixes_extracts_action_text_from_structured_items():
 
 
 def test_durable_runtime_uses_redis_trace_facade():
-    workflow_source = Path("workflows/resume_workflow.py").read_text(
+    workflow_source = (PROJECT_ROOT / "workflows" / "resume_workflow.py").read_text(
         encoding="utf-8"
     )
-    api_source = Path("webui/vercel_server.py").read_text(encoding="utf-8")
+    api_source = (PROJECT_ROOT / "webui" / "vercel_server.py").read_text(
+        encoding="utf-8"
+    )
     assert "from run_trace_store import TraceStore" in workflow_source
     assert "from run_trace_store import TraceStore" in api_source
     assert "vercel_trace" not in workflow_source + api_source

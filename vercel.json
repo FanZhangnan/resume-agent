@@ -7,7 +7,7 @@
       "framework": "fastapi",
       "functions": {
         "webui/vercel_server.py": {
-          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,tests/**,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}"
         }
       }
     },
@@ -17,7 +17,7 @@
       "framework": "fastapi",
       "functions": {
         "workflows/vercel_worker.py": {
-          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,test_*.py,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}",
+          "excludeFiles": "{.env,.env.*,.claude/**,.venv312/**,.playwright-cli/**,**/.DS_Store,output*/**,docs/**,samples/**,tests/**,webui/uploads/**,webui/runs/**,webui/quota.json,benchmark_models.py,probe_reasoning.py,**/*.command,**/*.md}",
           "experimentalTriggers": [
             { "type": "queue/v2beta", "topic": "__wkf_*" }
           ]

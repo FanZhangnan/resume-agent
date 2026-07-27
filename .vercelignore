@@ -24,7 +24,7 @@ webui/quota.json
 # Dev-only assets not needed at runtime
 docs/
 samples/
-test_*.py
+tests/
 benchmark_models.py
 probe_reasoning.py
 简历优化Agent_项目企划.md

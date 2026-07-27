@@ -1,5 +1,7 @@
 """Strict result contract and semantic repair tests (offline only)."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import json
 import os
 import time

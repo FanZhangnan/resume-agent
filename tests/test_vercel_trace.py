@@ -1,5 +1,7 @@
 """Offline contract tests for the Redis-backed Vercel stage trace store."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import json
 import os
