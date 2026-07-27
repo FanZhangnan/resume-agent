@@ -1,5 +1,7 @@
 """Source, security, and behavior contract for the Vercel workbench UI."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import hashlib
 import os
 import re
@@ -9,7 +11,7 @@ import subprocess
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 os.environ.setdefault("AGENT_RUN_SIGNING_KEY", "unit-test-signing-key")
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = str(PROJECT_ROOT)
 PAGE = os.path.join(HERE, "webui", "static", "vercel_app.html")
 LOCAL_PAGE = os.path.join(HERE, "webui", "static", "index.html")
 LOCAL_PAGE_SHA256 = "b362337baff36daa051d675e0844d1ad55f2204c3c48d780bad7dfc95cde10ca"

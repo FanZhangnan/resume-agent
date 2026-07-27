@@ -1,5 +1,7 @@
 """模型目录与推理档位组合测试（纯离线，不调用API）。"""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,7 +58,7 @@ def test_gateway_policy_rejects_other_hosts_and_paths():
 
 
 def test_runtime_source_reads_only_the_generic_key():
-    source = (Path(__file__).parent / "config.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "config.py").read_text(encoding="utf-8")
     obsolete_name = "ZEN" + "MUX_API_KEY"
     assert 'os.environ.get("OPENAI_API_KEY", "")' in source
     assert obsolete_name not in source
@@ -103,7 +105,7 @@ def test_invalid_combinations_are_rejected():
 
 
 def test_frontend_exposes_model_specific_reasoning():
-    html = (Path(__file__).parent / "webui" / "static" / "index.html").read_text(
+    html = (PROJECT_ROOT / "webui" / "static" / "index.html").read_text(
         encoding="utf-8"
     )
     assert 'id="model-seg"' in html

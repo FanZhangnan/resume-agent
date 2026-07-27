@@ -1,5 +1,7 @@
 """Offline tests for stateless signed run tokens."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import run_security as rs
 
 KEY = "test-signing-key-please-rotate"

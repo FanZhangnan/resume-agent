@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`agent.py` contains the CLI and ReAct orchestration. Supporting gateway, configuration, prompt, and parsing code lives in `llm_client.py`, `config.py`, `prompts.py`, and `utils.py`. Tool implementations are grouped by responsibility under `tools/`; keep schemas and function registration synchronized in `tools/__init__.py`. The local FastAPI/SSE backend is `webui/server.py`, while `webui/static/index.html` contains the inline HTML, CSS, and JavaScript frontend. The Vercel Hobby deployment lives in `webui/vercel_server.py` (serverless FastAPI + `webui/static/vercel_app.html` polling UI), `workflows/` (durable eight-stage graph), `run_security.py`, and `vercel_trace.py`; these target Python 3.12 and are tested under a separate `.venv312` (see `docs/deployment-vercel.md`). Demo inputs live in `samples/`; executable checks are the root-level `test_*.py` files. Treat `output/`, `output_test/`, uploads, runs, and quota files as generated data.
+`agent.py` contains the CLI and ReAct orchestration. Supporting gateway, configuration, prompt, and parsing code lives in `llm_client.py`, `config.py`, `prompts.py`, and `utils.py`. Tool implementations are grouped by responsibility under `tools/`; keep schemas and function registration synchronized in `tools/__init__.py`. The local FastAPI/SSE backend is `webui/server.py`, while `webui/static/index.html` contains the inline HTML, CSS, and JavaScript frontend. The Vercel Hobby deployment lives in `webui/vercel_server.py` (serverless FastAPI + `webui/static/vercel_app.html` polling UI), `workflows/` (durable eight-stage graph), `run_security.py`, and `vercel_trace.py`; these target Python 3.12 and are tested under a separate `.venv312` (see `docs/deployment-vercel.md`). Demo inputs live in `samples/`; executable checks live under `tests/`. Treat `output/`, `output_test/`, uploads, runs, and quota files as generated data.
 
 ## Build, Test, and Development Commands
 
@@ -11,10 +11,10 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 AGENT_MOCK=1 python agent.py --demo   # offline CLI smoke test
 python webui/server.py                # serve http://127.0.0.1:7860
-AGENT_MOCK=1 python test_tools.py     # tool registry and implementations
-AGENT_MOCK=1 python test_agent.py     # offline agent workflow
-python test_models.py                 # model and reasoning combinations
-python test_llm.py                    # live gateway check; requires an API key
+AGENT_MOCK=1 python tests/test_tools.py     # tool registry and implementations
+AGENT_MOCK=1 python tests/test_agent.py     # offline agent workflow
+python tests/test_models.py                 # model and reasoning combinations
+python tests/test_llm.py                    # live gateway check; requires an API key
 ```
 
 There is no separate build step. On macOS, `启动WebUI.command` provides the same Web UI setup and launch flow.
@@ -25,7 +25,7 @@ Use four-space Python indentation, `snake_case` for functions and variables, `Pa
 
 ## Testing Guidelines
 
-Tests are executable scripts using built-in assertions, not a configured pytest or unittest suite. Name new files `test_<area>.py` and test functions `test_<behavior>`. Run the two mock-mode checks before submitting; reserve `test_llm.py` for intentional network testing. No coverage threshold is defined, but changes should exercise success and failure paths without requiring live credentials.
+Tests are executable scripts using built-in assertions, not a configured pytest or unittest suite. Name new files `tests/test_<area>.py` and test functions `test_<behavior>`. Run the two mock-mode checks before submitting; reserve `tests/test_llm.py` for intentional network testing. No coverage threshold is defined, but changes should exercise success and failure paths without requiring live credentials.
 
 ## Commit & Pull Request Guidelines
 

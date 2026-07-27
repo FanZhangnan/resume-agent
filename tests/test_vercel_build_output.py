@@ -1,11 +1,13 @@
 """Audit a completed ``vercel build`` output before preview deployment."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import json
 import os
 from pathlib import Path
 
 
-ROOT = Path(os.environ.get("VERCEL_BUILD_ROOT", Path(__file__).resolve().parent)).resolve()
+ROOT = Path(os.environ.get("VERCEL_BUILD_ROOT", PROJECT_ROOT)).resolve()
 OUTPUT = ROOT / ".vercel" / "output"
 SERVICE_NAMES = {"web", "resume_workflow"}
 REQUIRED_FILES = {
@@ -31,7 +33,7 @@ def _forbidden(path):
         or path.startswith("output_test/")
         or path.startswith("docs/")
         or path.startswith("samples/")
-        or path.startswith("test_")
+        or path.startswith("tests/")
     )
 
 

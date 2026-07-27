@@ -1,5 +1,7 @@
 """Static deployment contracts that mirror Vercel's build/runtime boundaries."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import ast
 import importlib
@@ -16,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("AGENT_WORKFLOW_TEST", "1")
 
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = str(PROJECT_ROOT)
 
 
 def test_application_runtime_has_no_blob_dependency():
@@ -57,7 +59,7 @@ def test_vercel_config_uses_ga_services_with_private_workflow_trigger():
     )
     assert trigger == [{"type": "queue/v2beta", "topic": "__wkf_*"}]
 
-    required_excludes = ("env", ".claude", ".playwright-cli", "output", "test_")
+    required_excludes = ("env", ".claude", ".playwright-cli", "output", "tests")
     for name, service in (("web", web), ("resume_workflow", worker)):
         entrypoint = service.get("entrypoint")
         function_config = (service.get("functions") or {}).get(entrypoint, {})
@@ -496,7 +498,7 @@ def test_ga_worker_adapter_registers_workflow_subscriptions():
     assert result.returncode == 0, result.stderr
 
 
-def test_worker_guard_serializes_post_callbacks_with_asyncio_context():
+def test_worker_guard_limits_post_concurrency_with_asyncio_context():
     import sniffio
     from workflows import vercel_worker as worker
 
@@ -522,6 +524,8 @@ def test_worker_guard_serializes_post_callbacks_with_asyncio_context():
                 active -= 1
 
     async def scenario():
+        original_semaphore = worker._step_semaphore
+        worker._step_semaphore = asyncio.Semaphore(2)
         guarded_app = worker._guard_worker_app(inner_app)
 
         async def receive():
@@ -531,14 +535,18 @@ def test_worker_guard_serializes_post_callbacks_with_asyncio_context():
             return None
 
         scope = {"type": "http", "method": "POST", "path": "/"}
-        await asyncio.gather(
-            guarded_app(scope, receive, send),
-            guarded_app(scope, receive, send),
-        )
+        try:
+            await asyncio.gather(
+                guarded_app(scope, receive, send),
+                guarded_app(scope, receive, send),
+                guarded_app(scope, receive, send),
+            )
+        finally:
+            worker._step_semaphore = original_semaphore
 
     asyncio.run(scenario())
-    assert max_active == 1
-    assert libraries == ["asyncio", "asyncio"]
+    assert max_active == 2
+    assert libraries == ["asyncio", "asyncio", "asyncio"]
 
 
 def test_worker_guard_passes_non_post_requests_without_waiting():
@@ -581,40 +589,23 @@ def test_worker_guard_passes_non_post_requests_without_waiting():
     asyncio.run(scenario())
 
 
-def test_worker_guard_releases_post_lock_when_waiter_is_cancelled():
+def test_worker_guard_releases_semaphore_when_waiter_is_cancelled():
     from workflows import vercel_worker as worker
 
-    class TrackingLock:
-        def __init__(self):
-            self._lock = threading.Lock()
-            self.attempted_while_locked = threading.Event()
-            self.acquired_after_wait = threading.Event()
-
-        def acquire(self, blocking=True):
-            was_locked = self._lock.locked()
-            if was_locked:
-                self.attempted_while_locked.set()
-            acquired = self._lock.acquire(blocking=blocking)
-            if was_locked and acquired:
-                self.acquired_after_wait.set()
-            return acquired
-
-        def locked(self):
-            return self._lock.locked()
-
-        def release(self):
-            self._lock.release()
-
-    tracking_lock = TrackingLock()
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
+    third_entered = asyncio.Event()
 
     async def inner_app(scope, _receive, _send):
         if scope.get("request") == "first":
             first_entered.set()
             await release_first.wait()
+        elif scope.get("request") == "third":
+            third_entered.set()
 
     async def scenario():
+        original_semaphore = worker._step_semaphore
+        worker._step_semaphore = asyncio.Semaphore(1)
         guarded_app = worker._guard_worker_app(inner_app)
 
         async def receive():
@@ -623,37 +614,35 @@ def test_worker_guard_releases_post_lock_when_waiter_is_cancelled():
         async def send(_message):
             return None
 
-        first_task = asyncio.create_task(
-            guarded_app({"method": "POST", "request": "first"}, receive, send)
-        )
-        await first_entered.wait()
-        waiting_task = asyncio.create_task(
-            guarded_app({"method": "POST", "request": "waiting"}, receive, send)
-        )
-        attempted = await asyncio.to_thread(
-            tracking_lock.attempted_while_locked.wait, 0.5
-        )
-        assert attempted
-
-        waiting_task.cancel()
         try:
-            await waiting_task
-        except asyncio.CancelledError:
-            pass
+            first_task = asyncio.create_task(
+                guarded_app({"method": "POST", "request": "first"}, receive, send)
+            )
+            await first_entered.wait()
+            waiting_task = asyncio.create_task(
+                guarded_app({"method": "POST", "request": "waiting"}, receive, send)
+            )
+            await asyncio.sleep(0)
+            assert not waiting_task.done()
 
-        release_first.set()
-        await first_task
-        await asyncio.to_thread(tracking_lock.acquired_after_wait.wait, 0.1)
-        assert not tracking_lock.locked()
+            waiting_task.cancel()
+            try:
+                await waiting_task
+            except asyncio.CancelledError:
+                pass
 
-    original_lock = worker._post_lock
-    worker._post_lock = tracking_lock
-    try:
-        asyncio.run(scenario())
-    finally:
-        if tracking_lock.locked():
-            tracking_lock.release()
-        worker._post_lock = original_lock
+            release_first.set()
+            await first_task
+            await asyncio.wait_for(
+                guarded_app({"method": "POST", "request": "third"}, receive, send),
+                timeout=0.1,
+            )
+            assert third_entered.is_set()
+        finally:
+            release_first.set()
+            worker._step_semaphore = original_semaphore
+
+    asyncio.run(scenario())
 
 
 def test_boundary_step_failure_is_fail_closed():

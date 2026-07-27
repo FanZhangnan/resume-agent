@@ -1,5 +1,7 @@
 """可观测事件与可靠性预算测试（纯离线）。"""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import io
 import json

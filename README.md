@@ -207,17 +207,18 @@ tools/
   verification.py   自我验证（批判性审查）
   interaction.py    向用户追问
 samples/            示例简历和JD（--demo模式使用）
+tests/              离线回归、部署契约与安全测试
 ```
 
 ## 测试
 
 ```bash
-AGENT_MOCK=1 python test_tools.py    # 8个工具逐个验证
-AGENT_MOCK=1 python test_agent.py    # 默认流水线完整工作流（离线）
-AGENT_MOCK=1 python test_pipeline.py # 阶段顺序、并发、修正和部分报告（离线）
-python test_model_policy.py          # 稳定/实验政策与benchmark联网保护（离线）
-python test_models.py                # 模型目录、商业档位与推理档位组合（离线）
-python test_llm.py                   # 阶段1：API连通性（需要密钥）
+AGENT_MOCK=1 python tests/test_tools.py    # 8个工具逐个验证
+AGENT_MOCK=1 python tests/test_agent.py    # 默认流水线完整工作流（离线）
+AGENT_MOCK=1 python tests/test_pipeline.py # 阶段顺序、并发、修正和部分报告（离线）
+python tests/test_model_policy.py          # 稳定/实验政策与benchmark联网保护（离线）
+python tests/test_models.py                # 模型目录、商业档位与推理档位组合（离线）
+python tests/test_llm.py                   # 阶段1：API连通性（需要密钥）
 ```
 
 Vercel 部署相关的模块（`run_security`、`vercel_trace`、`workflows/`、`webui/vercel_server`、
@@ -225,14 +226,14 @@ Vercel 部署相关的模块（`run_security`、`vercel_trace`、`workflows/`、
 
 ```bash
 /opt/homebrew/bin/python3.12 -m venv .venv312 && .venv312/bin/python -m pip install -r requirements.txt
-AGENT_MOCK=1 .venv312/bin/python test_run_security.py     # 运行签名与会话安全
-AGENT_MOCK=1 .venv312/bin/python test_vercel_trace.py     # 私有 Blob 轨迹脱敏与隔离
-AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python test_vercel_workflow.py  # 八阶段工作流图
-AGENT_WORKFLOW_TEST=1 .venv312/bin/python test_vercel_api.py                    # FastAPI 契约
-AGENT_WORKFLOW_TEST=1 .venv312/bin/python test_vercel_deploy_contract.py        # Vercel 构建/沙箱契约
+AGENT_MOCK=1 .venv312/bin/python tests/test_run_security.py     # 运行签名与会话安全
+AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_trace.py     # 私有 Blob 轨迹脱敏与隔离
+AGENT_WORKFLOW_TEST=1 AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_workflow.py  # 八阶段工作流图
+AGENT_WORKFLOW_TEST=1 .venv312/bin/python tests/test_vercel_api.py                    # FastAPI 契约
+AGENT_WORKFLOW_TEST=1 .venv312/bin/python tests/test_vercel_deploy_contract.py        # Vercel 构建/沙箱契约
 # 按 docs/deployment-vercel.md 在 .vercelignore 过滤后的临时目录构建后：
-VERCEL_BUILD_ROOT=/tmp/clean-build .venv312/bin/python test_vercel_build_output.py  # 产物/敏感文件审计
-AGENT_MOCK=1 .venv312/bin/python test_vercel_ui.py        # 前端源契约 + CSP + node --check
+VERCEL_BUILD_ROOT=/tmp/clean-build .venv312/bin/python tests/test_vercel_build_output.py  # 产物/敏感文件审计
+AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_ui.py        # 前端源契约 + CSP + node --check
 ```
 
 ## 常见问题

@@ -4,6 +4,8 @@
 1. Mock模式下的端到端流程测试（不消耗API）
 2. 可选的真实API测试（需要设置环境变量）
 """
+
+from _bootstrap import PROJECT_ROOT  # noqa: F401
 import json
 import os
 import tempfile
@@ -284,7 +286,7 @@ def main():
     if os.environ.get("AGENT_MOCK", "") == "1" or not api_key:
         print("\n⏭️ 跳过真实API测试（未设置API密钥或处于Mock模式）")
         print("如需运行真实测试，请执行：")
-        print("export OPENAI_API_KEY=你的得否网关密钥 && python test_agent.py")
+        print("export OPENAI_API_KEY=你的得否网关密钥 && python tests/test_agent.py")
         return
 
     # 运行真实API测试

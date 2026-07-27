@@ -1,3 +1,5 @@
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import builtins
 import os
 import tempfile

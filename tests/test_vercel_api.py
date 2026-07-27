@@ -1,5 +1,7 @@
 """API contract tests for the Vercel FastAPI entrypoint with injected fakes."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import asyncio
 import inspect
 import io

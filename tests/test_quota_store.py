@@ -1,3 +1,5 @@
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import os
 import unittest
 from unittest.mock import patch

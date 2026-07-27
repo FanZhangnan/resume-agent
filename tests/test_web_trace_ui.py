@@ -1,12 +1,14 @@
 """Offline source contract for trace-driven Web pipeline rendering."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import re
 import subprocess
 import tempfile
 from pathlib import Path
 
 
-HTML_PATH = Path(__file__).parent / "webui" / "static" / "index.html"
+HTML_PATH = PROJECT_ROOT / "webui" / "static" / "index.html"
 
 
 def _extract_function(source, name):

@@ -1,5 +1,7 @@
 """Deterministic eight-stage pipeline tests (offline only)."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import json
 import io
 import os

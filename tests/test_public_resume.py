@@ -1,5 +1,7 @@
 """Strict public rendering contract for optimized resume structures."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import json
 
 from public_resume import normalize_public_resume

@@ -1,3 +1,5 @@
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 from llm_client import LLMClient
 
 print("=" * 50)

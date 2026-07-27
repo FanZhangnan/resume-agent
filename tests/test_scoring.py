@@ -1,5 +1,7 @@
 """Deterministic scoring and pure report rendering tests (offline only)."""
 
+from _bootstrap import PROJECT_ROOT  # noqa: F401
+
 import copy
 import json
 from decimal import Decimal
