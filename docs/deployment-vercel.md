@@ -26,11 +26,11 @@
 
 - Vercel 账号（Hobby 即可）、`npx`（Node 18+）。
 - 构建环境 Python **3.12**（`pyproject.toml` 已限定 `>=3.12,<3.13`；`requirements.txt` 用版本标记只在 3.12 装 `vercel==0.11.6`）。
-- 得否 OpenAI 兼容网关及**已轮换**的密钥；本次生产服务端地址为 `https://api.defou.ai/v1`。
+- 得否 OpenAI 兼容网关及有效密钥；本次生产服务端地址为 `https://api.defou.ai/v1`。
 
-## 2. 安全：先轮换密钥（务必第一步）
+## 2. 密钥管理
 
-之前在会话/历史里出现过的网关密钥视为**已泄露**，上线前必须在网关侧作废并重新签发。新密钥只填入 Vercel 环境变量，不要再粘贴进任何对话或代码。
+本次是同一供应商更换域名，保留 Vercel 内现有密钥。密钥只配置在服务端环境变量，不写入前端、仓库或报告。若另行发现密钥泄露，再由管理员在供应商侧轮换。
 
 ## 3. 连接存储
 
@@ -40,7 +40,7 @@
 
 | 变量 | 必填 | 示例 / 说明 |
 |------|------|-------------|
-| `OPENAI_API_KEY` | ✅ | 轮换后的得否网关密钥 |
+| `OPENAI_API_KEY` | ✅ | 有效的得否网关密钥；本次域名迁移保留现有值 |
 | `AGENT_BASE_URL` | ✅ | `https://api.defou.ai/v1`；由服务端管理员配置；公网请求不能覆盖 |
 | `AGENT_RUN_SIGNING_KEY` | ✅ | Cookie/HMAC 与 BYOK 加密根密钥（随机 32+ 字节，独立于网关密钥） |
 | `KV_REST_API_URL` | ✅ | Upstash 连接自动生成，不下发浏览器 |
@@ -125,9 +125,13 @@ curl -s https://<preview>/api/status      # deployment_mode=vercel
 > 对外暴露。Vercel 的 Python Workflows beta 页面仍展示旧
 > `experimentalServices` 示例，不适用于新项目。
 
+当前锁定 `vercel==0.11.6`、`vercel-workflow==0.11.1` 和 `vercel-queue==0.9.1`。
+GA 队列分组由 service 与入口文件派生；worker 使用公开订阅 API 将 SDK 回调注册到该分组，
+并保留 SDK 的 CBOR 字节传输格式。仅构建成功不能证明队列分发可用，必须看到完整任务终态。
+
 ## 7. 隐私与保留
 
-- 简历/JD 原文只存在于：TLS 保护的启动请求、Vercel 工作流状态（Hobby **保留 1 天**）、以及当前 HttpOnly Cookie 会话可读的最终结果。**不进** Redis 轨迹、不进浏览器存储、不进 Vercel Logs。
+- 简历/JD 原文用于 TLS 保护的启动请求和 Vercel 工作流状态，当前 HttpOnly Cookie 会话可读取最终结果。应用不把原文写入 Redis 轨迹、浏览器存储或 Vercel Logs；工作流内容的物理保留由托管平台政策决定。
 - Redis 运行 Hash 只保存 HMAC 化的归属、任务元数据、脱敏阶段状态和取消标记。`DELETE /api/runs/{id}` 使用一次 Lua 原子删除运行 Hash 和历史索引；非终态删除返回 `409`。过期由 Redis `EXPIREAT` 自动处理，不再需要 Blob 或 Cron 扫描。
 - BYOK 仅以 AES-GCM 密文保存到运行终态或 15 分钟 TTL；前端不使用 `localStorage`/`sessionStorage` 保存 Key 或运行凭证。
 
@@ -146,7 +150,7 @@ curl -s https://<preview>/api/status      # deployment_mode=vercel
 
 ## 9. 晋升生产
 
-Preview 全绿、删除 Preview 的 `AGENT_MOCK`、配置轮换后的网关密钥，并完成四组真实模型验收后，用同一 commit：
+Preview 全绿、确认真实调用未被全局 `AGENT_MOCK` 覆盖、配置 Production 的新 Base URL 并保留现有密钥，完成四组真实模型验收后，用同一 commit：
 
 ```bash
 npx vercel@latest deploy --target=production
