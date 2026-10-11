@@ -239,6 +239,21 @@ def test_word_download_rejects_pending_partial_and_unverified_results():
         assert client.get(f"/api/runs/{run_id}/resume.docx").status_code == 409
 
 
+def test_malformed_delivery_flags_never_enable_badges_or_exports():
+    client, backend, _, _, _ = _client()
+    run_id = _start_ok(client).json()["run_id"]
+    for overrides in [{"safe_to_deliver": "false", "unresolved_fixes": None}, {"safe_to_deliver": "true"}, {"unresolved_fixes": {}}, {"unresolved_fixes": [False]}]:
+        result = {"status": "completed", "safe_to_deliver": True, "unresolved_fixes": [], "optimized_resume_struct": VALID_PUBLIC_RESUME, "report": "report", "delivery_summary": {"verified": True}}
+        result.update(overrides)
+        backend.complete(run_id, result)
+        status = client.get(f"/api/runs/{run_id}").json()
+        assert status["status"] == "partial"
+        assert status["safe_to_deliver"] is False
+        assert isinstance(status["unresolved_fixes"], list)
+        assert status["delivery_summary"]["verified"] is False
+        assert client.get(f"/api/runs/{run_id}/resume.docx").status_code == 409
+
+
 def test_entry_responses_issue_secure_http_only_session_and_rotate_invalid_cookie():
     client, _, _, _, _ = _client()
     first = client.get("/api/config")

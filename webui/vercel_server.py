@@ -203,6 +203,17 @@ def _service_config():
             "site_funded": site_funded, "message": message}
 
 
+def _result_is_deliverable(result):
+    """Use one strict gate for status badges and every resume export."""
+    return (
+        isinstance(result, dict)
+        and result.get("status") == "completed"
+        and result.get("safe_to_deliver") is True
+        and isinstance(result.get("unresolved_fixes"), list)
+        and not result["unresolved_fixes"]
+    )
+
+
 def _session_hash(request):
     return str(getattr(request.state, "session_hash", ""))
 
@@ -737,10 +748,19 @@ async def get_run(run_id: str, request: Request):
                 {"error": "运行结果暂不可用", "code": "status_unavailable"},
                 status_code=503,
             )
+        if not isinstance(result, dict):
+            return JSONResponse({"error": "运行结果格式暂不可用", "code": "status_unavailable"}, status_code=503, headers=_PRIVATE_NO_STORE)
         response["status"] = result.get("status", "completed")
         response["report"] = result.get("report", "")
-        response["safe_to_deliver"] = bool(result.get("safe_to_deliver"))
-        response["unresolved_fixes"] = result.get("unresolved_fixes", [])
+        response["safe_to_deliver"] = _result_is_deliverable(result)
+        fixes = result.get("unresolved_fixes")
+        response["unresolved_fixes"] = (
+            [item[:600] for item in fixes[:12]]
+            if isinstance(fixes, list) and all(isinstance(item, str) for item in fixes)
+            else ["结果审查信息不完整，请重新分析"]
+        )
+        if response["status"] == "completed" and not response["safe_to_deliver"]:
+            response["status"] = "partial"
         response["model"] = result.get("model", "")
         response["reasoning"] = result.get("reasoning", "")
         response["mock"] = result.get("mock") if isinstance(result.get("mock"), bool) else None
@@ -788,12 +808,7 @@ async def download_resume_docx(run_id: str, request: Request):
         result = await backend.result(run_id) or {}
     except Exception:
         return JSONResponse({"error": "运行结果暂不可用，请稍后重试", "code": "status_unavailable"}, status_code=503, headers=_PRIVATE_NO_STORE)
-    if (
-        result.get("status") != "completed"
-        or result.get("safe_to_deliver") is not True
-        or not isinstance(result.get("unresolved_fixes"), list)
-        or result["unresolved_fixes"]
-    ):
+    if not _result_is_deliverable(result):
         return JSONResponse({"error": "本次简历尚未满足交付条件，请先核对报告", "code": "resume_not_deliverable"}, status_code=409, headers=_PRIVATE_NO_STORE)
     resume = normalize_public_resume(result.get("optimized_resume_struct"))
     if resume is None:

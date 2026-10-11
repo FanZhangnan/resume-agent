@@ -177,3 +177,7 @@ API 会在配额准入前返回 `503 service_unavailable`，演示仍然明确�
 发布前：运行 `python scripts/check.py`，确认锁定依赖、Preview 的真实模型运行与 DOCX 下载，
 并检查 `vercel deploy --dry --format=json` 中没有 `.env*`、`.venv312`、`.superpowers`、上传文件或报告。
 GitHub Actions 只跑离线检查；它不能证明新供应商及 Vercel durable worker 的线上可用性。
+
+隐私文案中的 24 小时只表示本项目的 Cookie、历史查看入口、Redis 元数据和脱敏轨迹的访问窗口。
+Workflow 输入和结果的物理保留由托管平台政策决定；Redis 到期或删除历史入口不能证明平台已删除 Workflow 内容。
+不得把该访问窗口宣传成输入或结果在 24 小时内物理删除的保证。
