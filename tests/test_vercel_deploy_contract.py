@@ -488,7 +488,7 @@ def test_ga_worker_adapter_registers_workflow_subscriptions():
                 "from workflows.runtime import wf; "
                 "from vercel.queue import get_subscriptions; "
                 "assert callable(wf.http_handler); assert callable(worker.app); "
-                "assert any(subscription.topic == '__wkf_workflow_*' for subscription in get_subscriptions())"
+                "assert any(subscription.topic == '__wkf_workflow_*' and subscription.consumer_group == worker.WORKFLOW_CONSUMER_GROUP for subscription in get_subscriptions())"
             ),
         ],
         cwd=ROOT,
@@ -519,6 +519,28 @@ def test_worker_adapts_streaming_request_to_public_workflow_handler():
     assert response.status_code == 204
     assert response.headers["x-worker"] == "handled"
     assert seen == [("POST", "/?queue=1", "test", b"opaque-queue-message")]
+
+
+def test_worker_consumer_matches_declared_ga_service_and_preserves_wire_bytes():
+    import cbor2
+    from vercel.queue import sanitize_name
+    from workflows import vercel_worker as worker
+
+    config = json.loads(Path(ROOT, "vercel.json").read_text())
+    service = config["services"][worker.SERVICE_NAME]
+    assert service["entrypoint"] == worker.WORKER_ENTRYPOINT
+    assert worker.WORKFLOW_CONSUMER_GROUP == sanitize_name(f"{worker.SERVICE_NAME}~{service['entrypoint']}")
+    message = {"queueName": "__wkf_workflow_test", "payload": {"runId": "unit-run", "input": b"opaque-encrypted-bytes"}}
+    transport = worker._WorkflowQueueTransport()
+
+    async def chunks(data):
+        yield data[:7]
+        yield data[7:]
+
+    decoded = asyncio.run(transport.deserialize(chunks(transport.serialize(message)), content_type="application/cbor"))
+    assert decoded == message
+    legacy = asyncio.run(transport.deserialize(chunks(b'{"payload":{"runId":"old-run"}}'), content_type="application/json"))
+    assert legacy["payload"]["runId"] == "old-run"
 
 
 def test_worker_guard_limits_post_concurrency_with_asyncio_context():

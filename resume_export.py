@@ -38,6 +38,9 @@ def render_resume_docx(resume_struct):
         raise ValueError("简历结构无效，无法导出 Word")
 
     document = Document()
+    zoom = document.settings.element.find(qn("w:zoom"))
+    if zoom is not None:
+        zoom.set(qn("w:percent"), "100")
     section = document.sections[0]
     section.page_width = Mm(210)
     section.page_height = Mm(297)

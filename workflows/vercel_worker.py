@@ -1,17 +1,61 @@
 """Private ASGI adapter for Vercel's GA service queue trigger."""
 
 import asyncio
+import json
 import os
 
+import cbor2
 import sniffio
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from vercel.workflow import ENDPOINT_PATH, MANIFEST_PATH
+from vercel.queue import TopicPattern, get_subscriptions, sanitize_name, subscribe
 
 # Importing the workflow registry registers both durable workflow and step
 # consumers with vercel.workers before the ASGI callback app is created.
 import workflows.resume_workflow as _resume_workflow  # noqa: F401
 from workflows.runtime import wf
+
+
+SERVICE_NAME = "resume_workflow"
+WORKER_ENTRYPOINT = "workflows/vercel_worker.py"
+WORKFLOW_CONSUMER_GROUP = sanitize_name(f"{SERVICE_NAME}~{WORKER_ENTRYPOINT}")
+
+
+class _WorkflowQueueTransport:
+    """The public queue transport protocol for Workflow v3 CBOR messages."""
+
+    content_type = "application/cbor"
+
+    def serialize(self, value):
+        return cbor2.dumps(value)
+
+    async def deserialize(self, payload, *, content_type):
+        chunks = bytearray()
+        async for chunk in payload:
+            chunks.extend(chunk)
+        data = bytes(chunks)
+        if "json" in content_type:
+            return json.loads(data)
+        try:
+            return cbor2.loads(
+                data,
+                tag_hook=lambda tag, *args: tag.value if tag.tag == 64 else tag,
+                object_hook=lambda obj, *args: {key: None if value is cbor2.undefined else value for key, value in obj.items()},
+            )
+        except cbor2.CBORDecodeError:
+            return json.loads(data)
+
+
+# GA FastAPI function triggers use a consumer derived from service~entrypoint;
+# the Workflow SDK registers "default". Bind the same SDK callback to the
+# platform's actual group, preserving its queue authentication and wire codec.
+for _subscription in get_subscriptions():
+    if _subscription.consumer_group == "default" and _subscription.topic.startswith("__wkf_"):
+        subscribe(
+            topic=TopicPattern(_subscription.topic, transport=_WorkflowQueueTransport()),
+            consumer_group=WORKFLOW_CONSUMER_GROUP,
+        )(_subscription.func)
 
 
 # 并发上限可用 AGENT_WORKER_STEP_CONCURRENCY 调整；模块级创建在 Python 3.10+ 安全
