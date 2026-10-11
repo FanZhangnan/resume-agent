@@ -25,7 +25,7 @@
 ## 1. 先决条件
 
 - Vercel 账号（Hobby 即可）、`npx`（Node 18+）。
-- 构建环境 Python **3.12**（`pyproject.toml` 已限定 `>=3.12,<3.13`；`requirements.txt` 用版本标记只在 3.12 装 `vercel==0.6.0`）。
+- 构建环境 Python **3.12**（`pyproject.toml` 已限定 `>=3.12,<3.13`；`requirements.txt` 用版本标记只在 3.12 装 `vercel==0.11.6`）。
 - 得否 OpenAI 兼容网关及**已轮换**的密钥；本次生产服务端地址为 `https://api.defou.ai/v1`。
 
 ## 2. 安全：先轮换密钥（务必第一步）
@@ -158,7 +158,7 @@ npx vercel@latest deploy --target=production
 
 - **无 JD 在招岗位发现**：本预览未启用；`POST /api/runs` 无 JD 时返回 422，工作流图会把阶段 3 标为 `not_enabled` 并产出明确的部分报告。后续接 `tools/job_sources.py`（Greenhouse/Lever/Ashby/Adzuna）再开放。
 - **并发步**：结构化+JD 分析用 `asyncio.gather`，属 SDK 运行时支持但未文档化的行为，需部署冒烟确认；不行就设 `AGENT_WORKFLOW_PARALLEL=0` 顺序执行（仍在预算内）。
-- **Python Workflows 为 beta**：`vercel==0.6.0` API 可能变化；应用运行时只使用公开 Workflow API（`Workflows`/`@wf.step`/`@wf.workflow`/`get_step_metadata`/`start`/`Run`），未引用 `vercel._internal` 或 `vercel.blob`。
+- **Python Workflows 为 beta**：`vercel==0.11.6` API 可能变化；应用运行时只使用公开 Workflow API（`Workflows`/`@wf.step`/`@wf.workflow`/`get_step_metadata`/`start`/`Run`），未引用 `vercel._internal` 或 `vercel.blob`。
 
 
 ## 2026-10 API 域名维护

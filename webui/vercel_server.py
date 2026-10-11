@@ -10,6 +10,7 @@ URL are never exposed to the browser.
 
 import asyncio
 import io
+import logging
 import os
 import secrets
 import tempfile
@@ -625,7 +626,14 @@ async def create_run(
             session_hash=session_hash,
         )
         return _quota_unavailable_response()
-    except Exception:
+    except Exception as error:
+        # SDK response schemas can change independently of the app. Record only
+        # the class/status, never the exception body, request or credentials.
+        logging.getLogger(__name__).error(
+            "run_start_failed error_class=%s http_status=%s",
+            type(error).__name__,
+            getattr(error, "status_code", None) if isinstance(getattr(error, "status_code", None), int) else None,
+        )
         await _rollback_create(
             quota=quota,
             backend=backend,

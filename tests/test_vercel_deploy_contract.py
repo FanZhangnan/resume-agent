@@ -87,7 +87,7 @@ def test_pyproject_declares_all_runtime_dependencies():
 
 
 def test_workflow_body_has_no_blob_client_io():
-    from vercel._internal.workflow.py_sandbox import workflow_sandbox
+    from vercel.workflow._internal.py_sandbox import Sandbox
     from workflows import resume_workflow as module
 
     source = inspect.getsource(module.resume_workflow.func)
@@ -95,7 +95,7 @@ def test_workflow_body_has_no_blob_client_io():
     assert hasattr(module, "step_trace_stage")
     assert hasattr(module, "step_trace_cancelled")
 
-    with workflow_sandbox(random_seed="deploy-contract"):
+    with Sandbox().enter():
         sandboxed_module = importlib.import_module("workflows.resume_workflow")
         trace = sandboxed_module.RunTrace("run-contract")
     assert trace._run_id == "run-contract"
@@ -478,14 +478,17 @@ def test_ga_worker_adapter_registers_workflow_subscriptions():
     assert os.path.isfile(source_path)
     env = os.environ.copy()
     env.pop("AGENT_WORKFLOW_TEST", None)
+    env["VERCEL_DEPLOYMENT_ID"] = "dpl_unit_test"
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             (
-                "from vercel.workers import has_subscriptions; "
                 "import workflows.vercel_worker as worker; "
-                "assert has_subscriptions(); assert callable(worker.app)"
+                "from workflows.runtime import wf; "
+                "from vercel.queue import get_subscriptions; "
+                "assert callable(wf.http_handler); assert callable(worker.app); "
+                "assert any(subscription.topic == '__wkf_workflow_*' for subscription in get_subscriptions())"
             ),
         ],
         cwd=ROOT,
@@ -496,6 +499,26 @@ def test_ga_worker_adapter_registers_workflow_subscriptions():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_worker_adapts_streaming_request_to_public_workflow_handler():
+    from unittest.mock import PropertyMock
+    from fastapi.testclient import TestClient
+    from vercel.workflow import HTTPResponse
+    from workflows import vercel_worker as worker
+
+    seen = []
+
+    async def handler(request):
+        body = b"".join([chunk async for chunk in request.aiter_bytes()])
+        seen.append((request.method, request.url, request.headers["x-test-message"], body))
+        return HTTPResponse(204, b"", {"x-worker": "handled"})
+
+    with patch.object(type(worker.wf), "http_handler", new_callable=PropertyMock, return_value=handler):
+        response = TestClient(worker.app).post("/?queue=1", content=b"opaque-queue-message", headers={"x-test-message": "test"})
+    assert response.status_code == 204
+    assert response.headers["x-worker"] == "handled"
+    assert seen == [("POST", "/?queue=1", "test", b"opaque-queue-message")]
 
 
 def test_worker_guard_limits_post_concurrency_with_asyncio_context():
