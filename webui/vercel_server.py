@@ -245,6 +245,9 @@ _ADMISSION_MESSAGES = {
     "hourly_limit": "请求过于频繁，请稍后再试",
     "ip_concurrent": "当前网络已有运行中的任务",
     "global_concurrent": "当前运行任务已满，请稍后再试",
+    "provider_check_busy": "当前网络正在检测连接，请等待检测完成",
+    "provider_check_limit": "当前网络本小时连接检测已达20次，请稍后重试",
+    "provider_check_expired": "连接检测已过期，请重新检测并提交",
 }
 
 
@@ -490,12 +493,58 @@ async def _check_provider_connection(provider, model, reasoning, key):
     return await asyncio.to_thread(providers.check_connection, provider, model, reasoning, key)
 
 
+_pending_provider_checks = set()
+_PROVIDER_CHECK_TIMEOUT = 20
+
+
+async def _guarded_provider_check(request, provider, model, reasoning, key, *, reserve_run=False):
+    quota = _quota()
+    ip_hash = _client_ip_hash(request)
+    probe_id = await quota.acquire_probe(ip_hash, for_run=reserve_run)
+    check = asyncio.create_task(_check_provider_connection(provider, model, reasoning, key))
+    _pending_provider_checks.add(check)
+    detached = False
+    reserved = False
+
+    async def settle_finished_check(task):
+        try:
+            task.result()
+        except BaseException:
+            pass
+        try:
+            await quota.release_probe(ip_hash, probe_id)
+        except QuotaUnavailable:
+            pass  # 短租约到期自动释放；不打印原始异常或Key。
+        finally:
+            _pending_provider_checks.discard(task)
+
+    try:
+        result = await asyncio.wait_for(asyncio.shield(check), timeout=_PROVIDER_CHECK_TIMEOUT)
+        if reserve_run:
+            reserved = True
+            return probe_id
+        return result
+    except asyncio.TimeoutError:
+        detached = True
+        check.add_done_callback(lambda task: asyncio.create_task(settle_finished_check(task)))
+        raise providers.ProviderError("provider_timeout", "连接检测在20秒内未完成，请稍后重试", 504) from None
+    except asyncio.CancelledError:
+        detached = True
+        check.add_done_callback(lambda task: asyncio.create_task(settle_finished_check(task)))
+        raise
+    finally:
+        if not detached:
+            _pending_provider_checks.discard(check)
+            if not reserved and not await quota.release_probe(ip_hash, probe_id):
+                raise QuotaUnavailable()
+
+
 def _provider_error_response(error):
     return JSONResponse({"error": str(error), "code": error.code}, status_code=error.status, headers=_PRIVATE_NO_STORE)
 
 
 @app.post("/api/providers/check")
-async def provider_check(provider: str = Form("defou"), model: str = Form(""),
+async def provider_check(request: Request, provider: str = Form("defou"), model: str = Form(""),
                          reasoning: str = Form(""), api_key: str = Form("")):
     if not config.LIVE_ENABLED:
         return JSONResponse({"error": "真实调用维护中", "code": "service_unavailable"}, status_code=503)
@@ -507,7 +556,11 @@ async def provider_check(provider: str = Form("defou"), model: str = Form(""),
         key = providers.validate_key_binding(provider, api_key)
         if not key:
             raise providers.ProviderError("provider_key_required", "检测连接需要填写自己的 API Key")
-        result = await _check_provider_connection(provider, model, reasoning, key)
+        result = await _guarded_provider_check(request, provider, model, reasoning, key)
+    except AdmissionDenied as error:
+        return _admission_error_response(error)
+    except QuotaUnavailable:
+        return _quota_unavailable_response()
     except providers.ProviderError as error:
         return _provider_error_response(error)
     except ValueError:
@@ -584,12 +637,17 @@ async def create_run(
             status_code=400,
         )
 
-    now = time.time()
+    probe_id = None
     if byok:
         try:
-            await _check_provider_connection(provider, model, reasoning, supplied_key)
+            probe_id = await _guarded_provider_check(request, provider, model, reasoning, supplied_key, reserve_run=True)
         except providers.ProviderError as error:
             return _provider_error_response(error)
+        except AdmissionDenied as error:
+            return _admission_error_response(error)
+        except QuotaUnavailable:
+            return _quota_unavailable_response()
+    now = time.time()
     quota = _quota()
     session_hash = _session_hash(request)
     try:
@@ -599,10 +657,18 @@ async def create_run(
             kind="mock" if mock_enabled else "real",
             funded=not mock_enabled and not byok,
             now=now,
+            probe_id=probe_id,
         )
     except AdmissionDenied as error:
+        if probe_id:
+            await quota.release_probe(ip_hash, probe_id)
         return _admission_error_response(error)
     except QuotaUnavailable:
+        if probe_id:
+            try:
+                await quota.release_probe(ip_hash, probe_id)
+            except QuotaUnavailable:
+                pass
         return _quota_unavailable_response()
 
     admission_id = admission["admission_id"]

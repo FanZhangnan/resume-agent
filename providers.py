@@ -89,6 +89,7 @@ def check_connection(provider, model, reasoning, key):
         raise ProviderError("provider_key_required", "检测连接需要填写自己的 API Key")
     try:
         client = LLMClient(model=model, reasoning=reasoning, api_key=key, mock=False, provider=provider)
+        client.streaming = False
         result = client.chat(
             [{"role": "user", "content": '只输出JSON对象：{"status":"ok"}'}],
             temperature=0, max_tokens=256, operation="provider_check",

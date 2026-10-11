@@ -199,6 +199,113 @@ def test_connection_route_uses_caller_key_without_starting_or_storing_run():
     assert "nvapi-unit" not in response.text
 
 
+def test_probe_admission_reserves_capacity_converts_atomically_and_has_separate_limit():
+    from quota_store import QuotaStore, AdmissionDenied
+    from test_quota_store import FakeRedisExecutor
+
+    async def check():
+        redis = FakeRedisExecutor()
+        quota = QuotaStore("https://redis.example", "unit", executor=redis, max_concurrent=1, runs_per_hour=1)
+        probe = await quota.acquire_probe("ip", now=1000, for_run=True)
+        try:
+            await quota.acquire("ip", "session", funded=False, now=1000)
+        except AdmissionDenied as error:
+            assert error.code == "provider_check_busy"
+        else:
+            raise AssertionError("run stole probe reservation")
+        admission = await quota.acquire("ip", "session", funded=False, now=1000, probe_id=probe)
+        assert admission["free_left"] == 2 and not redis.probe_active
+        try:
+            await quota.acquire_probe("ip", now=1000)
+        except AdmissionDenied as error:
+            assert error.code == "ip_concurrent"
+        else:
+            raise AssertionError("probe bypassed running task")
+        await quota.release(admission["admission_id"])
+        try:
+            await quota.acquire_probe("ip", now=1000, for_run=True)
+        except AdmissionDenied as error:
+            assert error.code == "hourly_limit"
+        else:
+            raise AssertionError("start probed past hourly limit")
+        for _ in range(19):
+            probe = await quota.acquire_probe("ip", now=1000)
+            assert await quota.release_probe("ip", probe)
+        try:
+            await quota.acquire_probe("ip", now=1000)
+        except AdmissionDenied as error:
+            assert error.code == "provider_check_limit"
+        else:
+            raise AssertionError("unlimited checks accepted")
+
+    asyncio.run(check())
+
+
+def test_active_run_rejects_check_and_start_before_calling_vendor():
+    from test_vercel_api import _client, _start_ok, server
+    client, backend, _, _, _ = _client()
+    assert _start_ok(client).status_code == 202
+    vendor = AsyncMock(return_value={"ok": True})
+    with patch.object(server, "_check_provider_connection", new=vendor):
+        response = client.post("/api/providers/check", data={"api_key": "unit-key", "model": "gpt-5.5", "reasoning": "high"})
+        assert response.status_code == 429 and response.json()["code"] == "ip_concurrent"
+        response = _start_ok(client, data={"api_key": "unit-key"})
+        assert response.status_code == 429 and response.json()["code"] == "ip_concurrent"
+    vendor.assert_not_awaited()
+    assert len(backend.started) == 1
+
+
+def test_probe_response_deadline_keeps_reservation_until_underlying_check_finishes():
+    from test_vercel_api import _client, server
+    client, _, _, quota, _ = _client()
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"), headers={})
+
+    async def check():
+        finish = asyncio.Event()
+
+        async def slow(*args):
+            await finish.wait()
+            return {"ok": True}
+
+        with patch.object(server, "_check_provider_connection", new=slow), patch.object(server, "_PROVIDER_CHECK_TIMEOUT", 0.01):
+            try:
+                await server._guarded_provider_check(request, providers.DEFOU, "gpt-5.5", "high", "unit-key")
+            except providers.ProviderError as error:
+                assert error.code == "provider_timeout"
+            else:
+                raise AssertionError("unbounded check response")
+            assert server._pending_provider_checks
+            try:
+                await quota.acquire_probe(server._client_ip_hash(request))
+            except Exception as error:
+                assert getattr(error, "code", None) == "provider_check_busy"
+            else:
+                raise AssertionError("timed-out in-flight probe lost its lease")
+            finish.set()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not server._pending_provider_checks
+
+    asyncio.run(check())
+
+
+def test_default_durable_step_arguments_remain_legacy_compatible():
+    from workflows import resume_workflow as workflow
+
+    async def check():
+        default = workflow.VercelOperations("gpt-5.5", "high", 1234)
+        vendor = workflow.VercelOperations(providers.NIM_MODEL_OPTIONS[0]["id"], "", 1234, provider=providers.NIM)
+        step = AsyncMock(return_value={})
+        with patch.object(workflow, "step_extract", new=step):
+            await default.extract("resume")
+            assert step.call_args.kwargs == {}
+            assert len(step.call_args.args) == 6
+            await vendor.extract("resume")
+            assert step.call_args.kwargs == {"provider": providers.NIM}
+
+    asyncio.run(check())
+
+
 def test_cohort_warning_compares_only_explicit_dates_without_changing_facts():
     info = {"education": [{"school": "UQ", "end_date": "2026年6月"}, {"school": "QUT", "end_date": "2024年11月"}]}
     warning, mismatch = graduation_warning("2027届校园招聘", info)

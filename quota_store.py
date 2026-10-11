@@ -65,7 +65,18 @@ local free_left = math.max(0, free_limit - daily_used)
 if redis.call('EXISTS', KEYS[2]) == 1 then
     return {0, 'ip_concurrent', free_left}
 end
-if redis.call('ZCARD', KEYS[1]) >= max_concurrent then
+local held_probe = redis.call('GET', KEYS[7])
+local owns_probe = held_probe and held_probe == ARGV[13]
+if ARGV[13] ~= '' and not owns_probe then
+    return {0, 'provider_check_expired', free_left}
+end
+if held_probe and not owns_probe then
+    return {0, 'provider_check_busy', free_left}
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[8], '-inf', now)
+local occupied = redis.call('ZCARD', KEYS[1]) + redis.call('ZCARD', KEYS[8])
+if owns_probe then occupied = occupied - 1 end
+if occupied >= max_concurrent then
     return {0, 'global_concurrent', free_left}
 end
 if tonumber(redis.call('GET', KEYS[3]) or '0') >= hourly_limit then
@@ -79,6 +90,10 @@ if funded == '1' and tonumber(redis.call('GET', KEYS[5]) or '0') >= site_limit t
 end
 
 local hourly_count = redis.call('INCR', KEYS[3])
+if owns_probe then
+    redis.call('DEL', KEYS[7])
+    redis.call('ZREM', KEYS[8], ARGV[13])
+end
 if hourly_count == 1 then
     redis.call('EXPIRE', KEYS[3], hourly_ttl)
 end
@@ -144,6 +159,37 @@ if refund_daily == '1' and redis.call('HGET', KEYS[2], 'funded') == '1' then
     end
 end
 
+redis.call('DEL', KEYS[2])
+return 1
+"""
+
+_PROBE_ACQUIRE_SCRIPT = r"""
+-- quota-probe-acquire-v1
+local now = tonumber(ARGV[2])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now)
+if redis.call('EXISTS', KEYS[2]) == 1 then return {0, 'ip_concurrent'} end
+if redis.call('EXISTS', KEYS[4]) == 1 then return {0, 'provider_check_busy'} end
+if redis.call('ZCARD', KEYS[1]) + redis.call('ZCARD', KEYS[3]) >= tonumber(ARGV[5]) then
+    return {0, 'global_concurrent'}
+end
+if tonumber(redis.call('GET', KEYS[5]) or '0') >= tonumber(ARGV[4]) then
+    return {0, 'provider_check_limit'}
+end
+if ARGV[7] == '1' and tonumber(redis.call('GET', KEYS[6]) or '0') >= tonumber(ARGV[8]) then
+    return {0, 'hourly_limit'}
+end
+local count = redis.call('INCR', KEYS[5])
+if count == 1 then redis.call('EXPIRE', KEYS[5], 3600) end
+redis.call('SET', KEYS[4], ARGV[1], 'EX', tonumber(ARGV[6]))
+redis.call('ZADD', KEYS[3], tonumber(ARGV[3]), ARGV[1])
+return {1, ARGV[1]}
+"""
+
+_PROBE_RELEASE_SCRIPT = r"""
+-- quota-probe-release-v1
+redis.call('ZREM', KEYS[1], ARGV[1])
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
 redis.call('DEL', KEYS[2])
 return 1
 """
@@ -274,6 +320,7 @@ class QuotaStore:
         kind="real",
         funded=True,
         now=None,
+        probe_id=None,
     ):
         ip_hash = self._required_text(ip_hash, "ip_hash")
         session_hash = self._required_text(session_hash, "session_hash")
@@ -292,6 +339,8 @@ class QuotaStore:
             self._key("ra:quota:ip-day", ip_hash, day_bucket),
             self._key("ra:quota:site-day", day_bucket),
             self._key("ra:quota:admission", admission_id),
+            self._key("ra:quota:probe-ip", ip_hash),
+            "ra:quota:probe-active",
         ]
         args = [
             admission_id,
@@ -306,6 +355,7 @@ class QuotaStore:
             str(_DAILY_COUNTER_TTL),
             session_hash,
             str(self.max_concurrent),
+            str(probe_id or ""),
         ]
         result = await self._execute(
             ["EVAL", _ACQUIRE_SCRIPT, len(keys), *keys, *args]
@@ -323,9 +373,35 @@ class QuotaStore:
             "hourly_limit",
             "ip_concurrent",
             "global_concurrent",
+            "provider_check_busy",
+            "provider_check_expired",
         }:
             raise AdmissionDenied(code_or_id, free_left)
         raise QuotaUnavailable()
+
+    async def acquire_probe(self, ip_hash, now=None, *, for_run=False):
+        ip_hash = self._required_text(ip_hash, "ip_hash")
+        current = self._timestamp(now)
+        probe_id = secrets.token_urlsafe(24)
+        keys = ["ra:quota:active", self._key("ra:quota:ip-lease", ip_hash),
+                "ra:quota:probe-active", self._key("ra:quota:probe-ip", ip_hash),
+                self._key("ra:quota:probe-hour", ip_hash, current // 3600),
+                self._key("ra:quota:hour", "real", ip_hash, current // 3600)]
+        args = [probe_id, str(current), str(current + 35), "20", str(self.max_concurrent), "35", "1" if for_run else "0", str(self.runs_per_hour)]
+        result = await self._execute(["EVAL", _PROBE_ACQUIRE_SCRIPT, len(keys), *keys, *args])
+        if not isinstance(result, (list, tuple)) or len(result) != 2:
+            raise QuotaUnavailable()
+        code = self._as_text(result[1])
+        if self._as_int(result[0]) == 1 and code == probe_id:
+            return probe_id
+        if self._as_int(result[0]) == 0 and code in {"ip_concurrent", "global_concurrent", "provider_check_busy", "provider_check_limit", "hourly_limit"}:
+            raise AdmissionDenied(code)
+        raise QuotaUnavailable()
+
+    async def release_probe(self, ip_hash, probe_id):
+        keys = ["ra:quota:probe-active", self._key("ra:quota:probe-ip", self._required_text(ip_hash, "ip_hash"))]
+        result = await self._execute(["EVAL", _PROBE_RELEASE_SCRIPT, len(keys), *keys, self._required_text(probe_id, "probe_id")])
+        return self._as_int(result) == 1
 
     async def release(self, admission_id, refund_daily=False):
         admission_id = str(admission_id or "")

@@ -290,36 +290,40 @@ class VercelOperations:
         self._mock = mock
         self._provider = provider
 
+    def _provider_kwargs(self):
+        # 旧持久步骤未记录默认provider，不为旧输入显式追加新字段。
+        return {"provider": self._provider} if self._provider and self._provider != "defou" else {}
+
     async def extract(self, resume_text):
         return await step_extract(
             resume_text, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock, self._provider,
+            self._credential_ref, self._mock, **self._provider_kwargs(),
         )
 
     async def analyze_jd(self, jd_text):
         return await step_analyze_jd(
             jd_text, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock, self._provider,
+            self._credential_ref, self._mock, **self._provider_kwargs(),
         )
 
     async def match(self, resume_info, jd_analysis):
         return await step_match(
             resume_info, jd_analysis, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock, self._provider,
+            self._credential_ref, self._mock, **self._provider_kwargs(),
         )
 
     async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
         return await step_suggest(
             resume_info, jd_analysis, match_result, fix_instructions,
             self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock, self._provider,
+            self._credential_ref, self._mock, **self._provider_kwargs(),
         )
 
     async def verify(self, resume_info, jd_analysis, match_result, suggestions):
         return await step_verify(
             resume_info, jd_analysis, match_result, suggestions,
             self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock, self._provider,
+            self._credential_ref, self._mock, **self._provider_kwargs(),
         )
 
 
