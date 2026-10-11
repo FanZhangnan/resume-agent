@@ -335,6 +335,10 @@ def test_related_major_requirement_is_supported_by_education_not_projects():
         requirements[0]["requirement"] = prefix + requirement
         resolved = requirement_ledger_from_match_result(match, requirements, evidence_catalog=catalog)
         assert resolved[0]["status"] != "met", prefix
+        project_catalog = normalize_resume_evidence({"projects": [{"name": requirement + "项目"}]})
+        project_match = {"requirement_evidence": [{"requirement_id": "hard-001", "status": "met", "evidence_ids": [project_catalog[0]["evidence_id"]]}]}
+        resolved = requirement_ledger_from_match_result(project_match, requirements, evidence_catalog=project_catalog)
+        assert resolved[0]["status"] != "met", "project is not degree evidence: " + prefix
 
 
 def test_original_portfolio_and_target_role_survive_fallback_and_docx():

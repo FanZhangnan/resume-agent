@@ -502,7 +502,7 @@ def _is_degree_requirement(requirement_text):
     return bool(
         _requirement_credential_terms(requirement_text)
         or "degree" in requirement_terms
-        or _is_pure_major_requirement(requirement_text)
+        or "相关专业" in _normalize_technical_text(requirement_text)
     )
 
 
