@@ -26,6 +26,13 @@ import webui.vercel_server as server  # noqa: E402
 # API contract tests use an injected backend and never contact the gateway.
 server.config.API_KEY = "unit-test-gateway-key"
 
+
+async def _offline_connection_check(provider, model, reasoning, key):
+    return {"ok": True, "provider": provider, "model": model}
+
+
+server._check_provider_connection = _offline_connection_check
+
 VALID_PUBLIC_RESUME = {
     "basic_info": {
         "name": "Candidate", "phone": "", "email": "c@example.com",
@@ -467,7 +474,7 @@ def test_start_uses_cookie_session_and_safe_workflow_payload():
     assert set(payload) <= {
         "resume_text", "jd_text", "model", "reasoning", "job_search",
         "deadline_epoch", "admission_id", "credential_ref", "session_hash",
-        "mock",
+        "mock", "provider",
     }
     serialized = json.dumps(payload, ensure_ascii=False)
     assert secret not in serialized

@@ -13,6 +13,8 @@ import re
 import time
 
 import config
+import providers
+from cohort_check import graduation_warning
 from contracts import (
     delivery_is_complete,
     suggestions_are_usable,
@@ -56,6 +58,7 @@ def _new_state(payload):
         "user_clarifications": [],
         "mock": payload.get("mock") is True,
         "byok": bool(payload.get("credential_ref")),
+        "provider": providers.normalize_provider(payload.get("provider")),
     }
 
 
@@ -395,12 +398,19 @@ def _final_resume_struct(state):
     normalized = normalize_public_resume(
         suggestions.get("optimized_resume_struct")
     )
-    if normalized is not None:
-        return normalized
-    parsed = parse_resume_text_to_struct(
-        suggestions.get("optimized_resume") or ""
-    )
-    return normalize_public_resume(parsed)
+    if normalized is None:
+        parsed = parse_resume_text_to_struct(suggestions.get("optimized_resume") or "")
+        normalized = normalize_public_resume(parsed)
+    if normalized is None:
+        return None
+    # 原文明确提供的作品链接保留为文本，不请求外部地址，也不生成新链接。
+    serialized = str(normalized)
+    for line in str(state.get("resume_text") or "").splitlines():
+        if re.match(r"^(?:个人作品集|作品集|个人网站|GitHub|Portfolio|Website|LinkedIn)\s*[:：]", line.strip(), re.IGNORECASE):
+            link = re.search(r"https?://\S+", line)
+            if link and link.group() not in serialized and len(normalized["extras"]) < 24:
+                normalized["extras"].append(line.strip())
+    return normalize_public_resume(normalized)
 
 
 async def _finalize(trace, state, raw_status, model, reasoning):
@@ -427,6 +437,8 @@ async def _finalize(trace, state, raw_status, model, reasoning):
             render_status,
             unresolved or None,
         )
+        if state.get("cohort_warning"):
+            report += "\n\n## 毕业届别核对\n\n" + state["cohort_warning"] + "\n"
         await trace.stage(
             STAGE_REPORT, "completed",
             reason=final_status, safe_to_deliver=deliverable,
@@ -438,6 +450,8 @@ async def _finalize(trace, state, raw_status, model, reasoning):
         "unresolved_fixes": unresolved,
         "model": model,
         "reasoning": reasoning,
+        "provider": state.get("provider", providers.DEFOU),
+        "delivery_mode": "original_text" if (state.get("suggestions") or {}).get("generation_mode") == "conservative_fallback" else "ai_rewrite" if deliverable else "unverified",
         "optimized_resume_struct": _final_resume_struct(state),
         "delivery_summary": build_delivery_summary(state, verified=deliverable),
         "mock": state.get("mock", False),
@@ -458,7 +472,8 @@ async def run_workflow_graph(
     durable_boundaries = clock is None and hasattr(trace, "check_boundary")
     if clock is None and not durable_boundaries:
         clock = time.time
-    model, reasoning = config.validate_model_reasoning(
+    model, reasoning = providers.resolve_model(
+        payload.get("provider"),
         payload.get("model"), payload.get("reasoning")
     )
     deadline_epoch = payload.get("deadline_epoch")
@@ -582,6 +597,16 @@ async def run_workflow_graph(
     if s5 != "completed":
         return await _finalize(trace, state, "partial", model, reasoning)
     state["match_result"] = v5
+    warning, mismatch = graduation_warning(jd_text, state["resume_info"])
+    state["cohort_warning"] = warning
+    if warning:
+        state["match_result"]["risks"] = [warning] + list(state["match_result"].get("risks") or [])
+    if mismatch:
+        state["match_result"]["eligible"] = False
+        state["match_result"]["gate_failures"] = list(dict.fromkeys(
+            list(state["match_result"].get("gate_failures") or []) + ["graduation_cohort"]
+        ))
+        state["match_result"]["recommendation"] = "先核对应届资格。" + warning
 
     term = await boundary()
     if term:
@@ -780,10 +805,10 @@ class ToolOperations:
     (see ``workflows.resume_workflow``) that expose the same method surface.
     """
 
-    def __init__(self, model, reasoning, deadline_epoch=None):
+    def __init__(self, model, reasoning, deadline_epoch=None, *, provider="defou", api_key=None, mock=None):
         from runtime_context import RunSettings
 
-        self._settings = RunSettings(model, reasoning, deadline_epoch)
+        self._settings = RunSettings(model, reasoning, deadline_epoch, provider=provider, api_key=api_key, mock=mock)
 
     async def _run(self, tool_name, arguments):
         settings = self._settings

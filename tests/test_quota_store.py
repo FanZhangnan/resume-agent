@@ -21,6 +21,7 @@ class FakeRedisExecutor:
         self.runs = {}
         self.history = {}
         self.credentials = {}
+        self.probe_active = {}
 
     async def __call__(self, command):
         self.commands.append(command)
@@ -34,6 +35,15 @@ class FakeRedisExecutor:
                 return self._acquire(keys, args)
             if "quota-release-v1" in script:
                 return self._release(keys, args)
+            if "quota-probe-acquire-v1" in script:
+                return self._acquire_probe(keys, args)
+            if "quota-probe-release-v1" in script:
+                self.probe_active.pop(args[0], None)
+                lease = self.leases.get(keys[1])
+                if not lease or lease[0] != args[0]:
+                    return 0
+                del self.leases[keys[1]]
+                return 1
             if "quota-bind-run-v1" in script:
                 return self._bind_run(keys, args)
             if "quota-update-run-v1" in script:
@@ -98,6 +108,9 @@ class FakeRedisExecutor:
         for admission_id, expiry in list(self.active.items()):
             if expiry <= now:
                 del self.active[admission_id]
+        for probe_id, expiry in list(self.probe_active.items()):
+            if expiry <= now:
+                del self.probe_active[probe_id]
         for key, (_, expiry) in list(self.leases.items()):
             if expiry <= now:
                 del self.leases[key]
@@ -110,7 +123,7 @@ class FakeRedisExecutor:
                 self.history.pop(key, None)
 
     def _acquire(self, keys, args):
-        global_key, lease_key, hourly_key, daily_key, site_key, admission_key = keys
+        global_key, lease_key, hourly_key, daily_key, site_key, admission_key = keys[:6]
         (
             admission_id,
             raw_now,
@@ -124,7 +137,8 @@ class FakeRedisExecutor:
             raw_daily_ttl,
             session_hash,
             raw_max_concurrent,
-        ) = args
+        ) = args[:12]
+        probe_id = args[12] if len(args) > 12 else ""
         now = int(raw_now)
         expiry = int(raw_expiry)
         hourly_limit = int(raw_hourly_limit)
@@ -136,7 +150,13 @@ class FakeRedisExecutor:
 
         if lease_key in self.leases:
             return [0, "ip_concurrent", free_left]
-        if len(self.active) >= int(raw_max_concurrent):
+        held_probe = self.leases.get(keys[6]) if len(keys) > 6 else None
+        owns_probe = bool(held_probe and held_probe[0] == probe_id)
+        if probe_id and not owns_probe:
+            return [0, "provider_check_expired", free_left]
+        if held_probe and not owns_probe:
+            return [0, "provider_check_busy", free_left]
+        if len(self.active) + len(self.probe_active) - int(owns_probe) >= int(raw_max_concurrent):
             return [0, "global_concurrent", free_left]
         if self.counts.get(hourly_key, 0) >= hourly_limit:
             return [0, "hourly_limit", free_left]
@@ -146,6 +166,9 @@ class FakeRedisExecutor:
             return [0, "site_quota_exhausted", free_left]
 
         self.counts[hourly_key] = self.counts.get(hourly_key, 0) + 1
+        if owns_probe:
+            del self.leases[keys[6]]
+            self.probe_active.pop(probe_id, None)
         self.expiries[hourly_key] = now + int(raw_hourly_ttl)
         if funded:
             self.counts[daily_key] = self.counts.get(daily_key, 0) + 1
@@ -167,6 +190,25 @@ class FakeRedisExecutor:
             "expiry": now + int(raw_admission_ttl),
         }
         return [1, admission_id, free_left]
+
+    def _acquire_probe(self, keys, args):
+        probe_id, now, expiry, limit, maximum, ttl, for_run, run_limit = args
+        self._purge(int(now))
+        if keys[1] in self.leases:
+            return [0, "ip_concurrent"]
+        if keys[3] in self.leases:
+            return [0, "provider_check_busy"]
+        if len(self.active) + len(self.probe_active) >= int(maximum):
+            return [0, "global_concurrent"]
+        if self.counts.get(keys[4], 0) >= int(limit):
+            return [0, "provider_check_limit"]
+        if for_run == "1" and self.counts.get(keys[5], 0) >= int(run_limit):
+            return [0, "hourly_limit"]
+        self.counts[keys[4]] = self.counts.get(keys[4], 0) + 1
+        self.expiries[keys[4]] = int(now) + 3600
+        self.leases[keys[3]] = (probe_id, int(now) + int(ttl))
+        self.probe_active[probe_id] = int(expiry)
+        return [1, probe_id]
 
     def _release(self, keys, args):
         global_key, admission_key, lease_key, daily_key, site_key = keys
@@ -426,15 +468,17 @@ class QuotaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[0], "EVAL")
         self.assertIn("ZREMRANGEBYSCORE", command[1])
         self.assertIn("quota-acquire-v1", command[1])
-        self.assertEqual(command[2], 6)
-        keys = command[3:9]
+        self.assertEqual(command[2], 8)
+        keys = command[3:11]
         self.assertTrue(any("ip-hash" in key for key in keys))
         self.assertTrue(any("admission" in key for key in keys))
-        args = command[9:]
+        self.assertTrue(any("probe-ip" in key for key in keys))
+        args = command[11:]
         self.assertIn("900", args)
         self.assertIn("3600", args)
         self.assertIn("86400", args)
-        self.assertEqual(args[-1], "3")
+        self.assertEqual(args[-2], "3")
+        self.assertEqual(args[-1], "")
 
         await store.release(admission["admission_id"], refund_daily=True)
         release_command = executor.commands[-1]

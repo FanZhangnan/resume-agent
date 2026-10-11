@@ -89,6 +89,7 @@ def get_client():
     effective_api_key = None if effective_mock else config.API_KEY
     key = (
         settings.model,
+        settings.provider,
         settings.reasoning,
         mock_key,
         _api_key_fingerprint(effective_api_key),

@@ -10,7 +10,7 @@ _ALLOWED_KEYS = frozenset({
     "model", "reasoning", "attempt", "tokens_prompt", "tokens_completion",
     "retry_category", "validation_status", "output_shape", "error_category",
     "started_at", "completed_at", "created_at", "revision_round", "reason",
-    "safe_to_deliver", "terminal", "elapsed_ms", "mock", "byok",
+    "safe_to_deliver", "terminal", "elapsed_ms", "mock", "byok", "provider",
 })
 _MAX_STR = 240
 

@@ -114,6 +114,7 @@ def build_delivery_summary(state, verified=False):
             _join_fields(item, ("requirement", "impact")) for item in missing
         ],
         "priority_actions": [
+            source.get("cohort_warning"),
             suggestions.get("overall_strategy"), match.get("recommendation"),
         ] + _rows(suggestions.get("honesty_boundaries")) + [
             _text(item.get("improvement"))

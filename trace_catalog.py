@@ -36,7 +36,7 @@ _SENSITIVE_KEYS = {
     "user_answer",
 }
 _CREDENTIAL_RE = re.compile(
-    r"(?i)(bearer\s+\S+|sk-[a-z0-9_-]{8,}|(?:api[_-]?key|token|password)=\S+)"
+    r"(?i)(bearer\s+\S+|(?:sk|nvapi)-[a-z0-9_-]{8,}|(?:api[_-]?key|token|password)=\S+)"
 )
 
 

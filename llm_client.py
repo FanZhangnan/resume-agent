@@ -11,6 +11,7 @@ import time
 import uuid
 from openai import OpenAI
 import config
+import providers
 from runtime_context import current_settings
 from trace_catalog import emit_trace
 
@@ -23,6 +24,15 @@ class ExternalRunDeadlineExceeded(CallDeadlineExceeded):
     """The owning Agent run deadline expired during an LLM call."""
 
     is_run_deadline = True
+
+
+class LLMRequestError(RuntimeError):
+    """保留安全的错误类型/状态，原始服务商正文不越过客户端边界。"""
+
+    def __init__(self, message, *, status_code=None, is_timeout=False):
+        super().__init__(message)
+        self.status_code = status_code if isinstance(status_code, int) else None
+        self.is_timeout = bool(is_timeout)
 
 
 _STREAM_UNSUPPORTED_PATTERNS = (
@@ -78,15 +88,17 @@ class LLMClient:
         )
         return CallDeadlineExceeded(message)
 
-    def __init__(self, model=None, reasoning=None, api_key=None, mock=None):
+    def __init__(self, model=None, reasoning=None, api_key=None, mock=None, provider=None):
         active = current_settings()
+        self.provider = providers.normalize_provider(active.provider if provider is None else provider)
         selected_model = active.model if model is None else model
         selected_reasoning = active.reasoning if reasoning is None else reasoning
         selected_api_key = active.api_key if api_key is None else str(api_key).strip()
         selected_mock = active.mock if mock is None else mock
         if selected_mock is not None and not isinstance(selected_mock, bool):
             raise TypeError("mock 必须是 bool 或 None")
-        self.model, self.reasoning = config.validate_model_reasoning(
+        self.model, self.reasoning = providers.resolve_model(
+            self.provider,
             selected_model,
             selected_reasoning,
         )
@@ -99,7 +111,7 @@ class LLMClient:
             if selected_mock is None
             else selected_mock
         )
-        model_option = config.MODEL_OPTION_BY_ID[self.model]
+        model_option = next(item for item in providers.model_options(self.provider) if item["id"] == self.model)
         self.streaming = config.STREAMING and model_option.get("supports_streaming", True)
         if self.mock_mode:
             from mock_data import reset_mock_counters
@@ -111,6 +123,9 @@ class LLMClient:
         effective_api_key = (
             config.API_KEY if selected_api_key is None else selected_api_key
         )
+        if self.provider == providers.NIM and selected_api_key is None:
+            effective_api_key = ""
+        providers.validate_key_binding(self.provider, effective_api_key)
         if not effective_api_key:
             raise ValueError(
                 "未检测到API密钥！请先在终端执行：\n"
@@ -118,7 +133,7 @@ class LLMClient:
                 "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo"
             )
         self.client = OpenAI(
-            base_url=config.API_BASE_URL,
+            base_url=providers.base_url(self.provider),
             api_key=effective_api_key,
             default_headers={"User-Agent": "curl/8.7.1"},
             timeout=min(config.REQUEST_TIMEOUT, config.CALL_DEADLINE),
@@ -195,7 +210,7 @@ class LLMClient:
 
         model = getattr(self, "model", config.MODEL_NAME)
         reasoning = getattr(self, "reasoning", config.REASONING_EFFORT)
-        model_option = config.MODEL_OPTION_BY_ID.get(model, {})
+        model_option = next((item for item in providers.model_options(getattr(self, "provider", providers.DEFOU)) if item["id"] == model), {})
         base_kwargs = {
             "model": model,
             "messages": messages,
@@ -208,6 +223,8 @@ class LLMClient:
             base_kwargs["tool_choice"] = "auto"
         if reasoning:
             base_kwargs["reasoning_effort"] = reasoning
+        if model_option.get("extra_body"):
+            base_kwargs["extra_body"] = model_option["extra_body"]
 
         last_error = None
         max_attempts = max(1, config.MAX_RETRIES)
@@ -353,8 +370,10 @@ class LLMClient:
                 }
                 if isinstance(last_error, CallDeadlineExceeded):
                     raise last_error
-                raise RuntimeError(
-                    f"模型调用在{attempt}次尝试后失败：{_brief_error(last_error)}"
+                raise LLMRequestError(
+                    f"模型调用在{attempt}次尝试后失败：{_brief_error(last_error)}",
+                    status_code=getattr(last_error, "status_code", None),
+                    is_timeout=isinstance(last_error, TimeoutError) or "Timeout" in type(last_error).__name__,
                 ) from None
 
         raise RuntimeError("未知LLM调用错误")
@@ -378,42 +397,45 @@ class LLMClient:
         """
         kwargs["stream"] = True
         stream = self.client.chat.completions.create(**kwargs)
-        self._check_deadline()
-
         content_parts = []
         tool_calls_acc = {}  # index -> {"id", "name", "arguments": [分片列表]}
         finish_reason = None
         usage = None
-        for chunk in stream:
+        try:
             self._check_deadline()
-            if self._last_ttft_ms is None:
-                self._last_ttft_ms = _elapsed_ms(self._attempt_started)
-            # 部分网关会在尾块携带usage（无需stream_options），能拿到就记录
-            if getattr(chunk, "usage", None):
-                usage = chunk.usage
-                self._last_usage = _usage_fields(usage)
-            if not getattr(chunk, "choices", None):
-                continue
-            choice = chunk.choices[0]
-            delta = getattr(choice, "delta", None)
-            if delta is not None:
-                if getattr(delta, "content", None):
-                    content_parts.append(delta.content)
-                for tc in getattr(delta, "tool_calls", None) or []:
-                    index = getattr(tc, "index", 0) or 0
-                    acc = tool_calls_acc.setdefault(index, {"id": None, "name": "", "arguments": []})
-                    if getattr(tc, "id", None):
-                        acc["id"] = tc.id
-                    function = getattr(tc, "function", None)
-                    if function is not None:
-                        if getattr(function, "name", None):
-                            acc["name"] = function.name
-                        if getattr(function, "arguments", None):
-                            acc["arguments"].append(function.arguments)
-                    self._last_tool_call_count = len(tool_calls_acc)
-            if getattr(choice, "finish_reason", None):
-                finish_reason = choice.finish_reason
-                self.last_finish_reason = finish_reason
+            for chunk in stream:
+                self._check_deadline()
+                if self._last_ttft_ms is None:
+                    self._last_ttft_ms = _elapsed_ms(self._attempt_started)
+                if getattr(chunk, "usage", None):
+                    usage = chunk.usage
+                    self._last_usage = _usage_fields(usage)
+                if not getattr(chunk, "choices", None):
+                    continue
+                choice = chunk.choices[0]
+                delta = getattr(choice, "delta", None)
+                if delta is not None:
+                    if getattr(delta, "content", None):
+                        content_parts.append(delta.content)
+                    for tc in getattr(delta, "tool_calls", None) or []:
+                        index = getattr(tc, "index", 0) or 0
+                        acc = tool_calls_acc.setdefault(index, {"id": None, "name": "", "arguments": []})
+                        if getattr(tc, "id", None):
+                            acc["id"] = tc.id
+                        function = getattr(tc, "function", None)
+                        if function is not None:
+                            if getattr(function, "name", None):
+                                acc["name"] = function.name
+                            if getattr(function, "arguments", None):
+                                acc["arguments"].append(function.arguments)
+                        self._last_tool_call_count = len(tool_calls_acc)
+                if getattr(choice, "finish_reason", None):
+                    finish_reason = choice.finish_reason
+                    self.last_finish_reason = finish_reason
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
         self.last_finish_reason = finish_reason
         if finish_reason == "length":
@@ -561,7 +583,7 @@ def _error_fields(error):
     status = getattr(error, "status_code", None)
     if getattr(error, "is_run_deadline", False):
         category = "run_timeout"
-    elif isinstance(error, (CallDeadlineExceeded, TimeoutError)):
+    elif isinstance(error, (CallDeadlineExceeded, TimeoutError)) or getattr(error, "is_timeout", False):
         category = "timeout"
     elif isinstance(status, int) and status >= 500:
         category = "upstream"
