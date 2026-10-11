@@ -331,6 +331,10 @@ def test_related_major_requirement_is_supported_by_education_not_projects():
     match = {"requirement_evidence": [{"requirement_id": "hard-001", "status": "under_evidenced", "evidence_ids": [catalog[0]["evidence_id"]]}]}
     resolved = requirement_ledger_from_match_result(match, requirements, evidence_catalog=catalog)
     assert resolved[0]["status"] == "met"
+    for prefix in ("具备电商背景，", "有电商项目，", "应届毕业生，", "2027届，", "本科及以上，"):
+        requirements[0]["requirement"] = prefix + requirement
+        resolved = requirement_ledger_from_match_result(match, requirements, evidence_catalog=catalog)
+        assert resolved[0]["status"] != "met", prefix
 
 
 def test_original_portfolio_and_target_role_survive_fallback_and_docx():

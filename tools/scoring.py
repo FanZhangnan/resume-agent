@@ -484,12 +484,25 @@ def _requirement_credential_terms(requirement_text):
     return credentials
 
 
+def _is_pure_major_requirement(requirement_text):
+    text = _normalize_technical_text(requirement_text).strip(" .。")
+    match = re.fullmatch(r"(.+?)(?:等)?相关专业(?:优先)?", text)
+    if not match:
+        return False
+    subjects = re.split(r"\s*(?:、|[,，/]|\bor\b|或)\s*", match.group(1))
+    allowed = {
+        "数据科学", "计算机", "计算机科学", "人工智能", "ai", "信息技术", "软件工程", "数学", "统计学",
+        "data science", "computer science", "artificial intelligence", "information technology", "software engineering",
+    }
+    return bool(subjects) and all(subject in allowed for subject in subjects)
+
+
 def _is_degree_requirement(requirement_text):
     requirement_terms = _semantic_terms(requirement_text)
     return bool(
         _requirement_credential_terms(requirement_text)
         or "degree" in requirement_terms
-        or "相关专业" in _clean_text(requirement_text)
+        or _is_pure_major_requirement(requirement_text)
     )
 
 
@@ -1107,12 +1120,7 @@ def requirement_ledger_from_match_result(match_result, requirements,
     if evidence_by_id is not None:
         for requirement in requirements:
             text = requirement["requirement"]
-            major_only = (
-                "相关专业" in text and text.endswith(("相关专业", "相关专业优先"))
-                and not _requirement_credential_terms(text)
-                and not re.search(r"\d|经验|工作|业务|能力|技能|成绩|GPA|英语|实践|经历|兴趣|认证|证书", text, re.IGNORECASE)
-            )
-            if not major_only:
+            if not _is_pure_major_requirement(text):
                 continue
             supported = [
                 evidence_id for evidence_id, item in evidence_by_id.items()
