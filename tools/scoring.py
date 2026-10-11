@@ -317,6 +317,17 @@ def _subject_terms(value):
         for sequence in re.findall(r"[\u4e00-\u9fff]+", cjk_text)
         if len(sequence) >= 2
     )
+    # 同一专业的中英文名称是等价证据；不把不同专业视作同一个学历。
+    for english, chinese in (
+        ("computer science", "计算机科学"),
+        ("information technology", "信息技术"),
+        ("data science", "数据科学"),
+        ("software engineering", "软件工程"),
+        ("artificial intelligence", "人工智能"),
+    ):
+        if english in text or chinese in text:
+            terms.update(english.split())
+            terms.add("cjk:" + chinese)
     return terms
 
 
@@ -1091,6 +1102,28 @@ def requirement_ledger_from_match_result(match_result, requirements,
             "status": status,
             "evidence_ids": evidence_ids,
         }
+
+    # 纯粹的专业优先条件可由明确学历记录直接核对，避免模型把已满足的专业降为差距。
+    if evidence_by_id is not None:
+        for requirement in requirements:
+            text = requirement["requirement"]
+            major_only = (
+                "相关专业" in text and text.endswith(("相关专业", "相关专业优先"))
+                and not _requirement_credential_terms(text)
+                and not re.search(r"\d|经验|工作|业务|能力|技能|成绩|GPA|英语|实践|经历|兴趣|认证|证书", text, re.IGNORECASE)
+            )
+            if not major_only:
+                continue
+            supported = [
+                evidence_id for evidence_id, item in evidence_by_id.items()
+                if _evidence_type_from_catalog_item(item) == "education"
+                and _education_supports_degree_requirement(text, item.get("content"))
+            ]
+            if supported:
+                by_requirement[requirement["requirement_id"]] = {
+                    "requirement_id": requirement["requirement_id"],
+                    "status": "met", "evidence_ids": supported,
+                }
 
     return [
         by_requirement.get(requirement["requirement_id"], {

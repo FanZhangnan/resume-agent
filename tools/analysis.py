@@ -274,6 +274,10 @@ status只能是met、under_evidenced、missing。met/under_evidenced必须引用
 
 
 def generate_suggestions(resume_info, jd_analysis, match_result, fix_instructions=None):
+    from runtime_context import current_settings
+    compact_nim = current_settings().provider == "nvidia-nim"
+    advice_limit = 2 if compact_nim else 4
+    star_instruction = "必须为空数组[]，本模式仅生成完整简历与少量逐段修改" if compact_nim else "最多3项；仅在原文提供明确情景、动作和结果时生成，不得为凑STAR补充事实"
     system = "你是资深简历优化顾问。只输出JSON。必须遵守诚实边界：不能虚构公司、职位、数据、项目职责或成果；不得把'参与/协助'升级为'主导/负责'。"
 
     fix_block = ""
@@ -286,8 +290,8 @@ def generate_suggestions(resume_info, jd_analysis, match_result, fix_instruction
     prompt = f"""
 请基于简历、JD和匹配分析生成优化建议，只输出紧凑JSON。不要复述输入，不要解释推理过程。字段必须包含：
 overall_strategy: 150字以内总体优化策略
-rewrite_suggestions最多4项: 只保留影响最大的逐段建议，每项包含 section, problem, suggestion, before, after；problem和suggestion各80字以内，before和after各180字以内
-star_rewrites最多3项: 用STAR法则改写最关键经历，每项包含 original, situation, task, action, result, rewritten；每个字段160字以内
+rewrite_suggestions最多{advice_limit}项: 只保留影响最大的逐段建议，每项包含 section, problem, suggestion, before, after；problem和suggestion各80字以内，before和after各180字以内。after不得新增原文未提供的动作、职责或成果，需要用户补充的信息只写在suggestion中。
+star_rewrites{star_instruction}: 每项字段 original, situation, task, action, result, rewritten；每个字段160字以内
 keyword_injection最多8项: 可自然补充的关键词及放置位置，每项包含 keyword, placement
 honesty_boundaries最多6项: 明确哪些内容不能夸大或编造，每项100字以内
 optimized_resume_struct: 结构化的完整优化版简历（主要输出，供排版渲染），字段：
@@ -295,10 +299,11 @@ optimized_resume_struct: 结构化的完整优化版简历（主要输出，供�
   summary: 个人简介字符串（100字以内）
   education: 数组 [{{school, degree, major, start, end, highlights: [要点数组]}}]
   experience: 数组 [{{company, title, start, end, bullets: [职责与成果要点数组]}}]
-  projects: 数组 [{{name, role, bullets: [要点数组]}}]
+  projects: 数组 [{{name, role, start, end, bullets: [要点数组]}}]
   skills: 数组 [{{group: 分组名, items: [技能数组]}}]
   extras: 数组（证书/奖项/语言等字符串，可为空数组）
   内容必须覆盖原简历全部经历段落并体现本次优化建议，不得新增编造
+  保留学校、学位、教育和项目日期、已有数字、作品链接及语言能力的原始强度；不得为了满足JD更改毕业年份或补造业务经验。
 optimized_resume: 留空字符串即可——系统会从optimized_resume_struct自动生成文本版；仅当无法输出结构化时才在此给完整文本
 {fix_block}
 简历信息：

@@ -322,8 +322,15 @@ def test_related_major_requirement_is_supported_by_education_not_projects():
     requirement = "数据科学、计算机、AI等相关专业优先"
     education = {"degree": "Master of Computer Science", "major": "计算机科学"}
     assert _evidence_supports_requirement(requirement, "education", education)
+    assert _evidence_supports_requirement(requirement, "education", {"degree": "Master of Computer Science", "major": "Computer Science"})
     assert not _evidence_supports_requirement(requirement, "project", {"name": "计算机科学AI项目"})
     assert not _evidence_supports_requirement(requirement, "education", {"degree": "Bachelor", "major": "市场营销"})
+    from tools.scoring import normalize_resume_evidence, requirement_ledger_from_match_result
+    catalog = normalize_resume_evidence({"education": [education]})
+    requirements = [{"requirement_id": "hard-001", "category": "hard", "requirement": requirement}]
+    match = {"requirement_evidence": [{"requirement_id": "hard-001", "status": "under_evidenced", "evidence_ids": [catalog[0]["evidence_id"]]}]}
+    resolved = requirement_ledger_from_match_result(match, requirements, evidence_catalog=catalog)
+    assert resolved[0]["status"] == "met"
 
 
 def test_original_portfolio_and_target_role_survive_fallback_and_docx():
