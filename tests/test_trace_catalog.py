@@ -1323,16 +1323,19 @@ def test_direct_agent_run_enforces_total_wall_clock_timeout():
             "private JD",
             output_dir=str(Path(temp_dir) / "reports"),
         )
-        resume_agent._loop = lambda: time.sleep(0.1)
-        started = time.monotonic()
+        completed = []
+
+        def delayed_loop():
+            time.sleep(0.1)
+            completed.append(True)
+
+        resume_agent._loop = delayed_loop
         with (
             patch.object(config, "ORCHESTRATOR", "react"),
             patch.object(config, "RUN_TIMEOUT", 0.02),
         ):
             _assert_raises(TimeoutError, resume_agent.run)
-        elapsed = time.monotonic() - started
-
-        assert elapsed < 0.08
+        assert not completed, "deadline must interrupt the unfinished loop"
         events = _read_trace(Path(temp_dir) / "traces")
         assert events[-1]["event"] == "run.error"
         assert events[-1]["data"]["stage"] == "analysis"
@@ -1346,8 +1349,13 @@ def test_run_timeout_is_not_delayed_by_llm_retry_handler():
     )
     response = SimpleNamespace(choices=[choice], usage=None)
 
+    attempts = []
+    returned = []
+
     def delayed_response(**kwargs):
+        attempts.append(True)
         time.sleep(0.1)
+        returned.append(True)
         return response
 
     with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
@@ -1371,7 +1379,6 @@ def test_run_timeout_is_not_delayed_by_llm_retry_handler():
             )
         )
         resume_agent.client = real_client
-        started = time.monotonic()
         with (
             patch.object(config, "ORCHESTRATOR", "react"),
             patch.object(config, "RUN_TIMEOUT", 0.02),
@@ -1382,7 +1389,8 @@ def test_run_timeout_is_not_delayed_by_llm_retry_handler():
         ):
             _assert_raises(TimeoutError, resume_agent.run)
 
-        assert time.monotonic() - started < 0.08
+        assert len(attempts) == 1, "expired runs must not retry the LLM call"
+        assert not returned, "deadline must interrupt the pending response"
         events = _read_trace(Path(temp_dir) / "traces")
         assert [event["event"] for event in events] == [
             "run.started",
