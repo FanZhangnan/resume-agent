@@ -511,7 +511,8 @@ def status(request: Request):
         "models": agent_config.MODEL_OPTIONS,
         "default_model": agent_config.DEFAULT_MODEL,
         "default_reasoning": agent_config.DEFAULT_REASONING_BY_MODEL,
-        "base_url": agent_config.API_BASE_URL,
+        "base_url": None if PUBLIC else agent_config.API_BASE_URL,
+        "service": {"available": bool(agent_config.LIVE_ENABLED), "provider_name": agent_config.PROVIDER_NAME},
         "has_key": bool(agent_config.API_KEY),
         "mock_env": os.environ.get("AGENT_MOCK") == "1",
         "max_steps": agent_config.MAX_STEPS,
@@ -540,6 +541,8 @@ def run(request: Request,
     sid, _ = _get_session(request)
     ip = _client_ip(request)
     is_mock = mock == "1"
+    if not is_mock and not agent_config.LIVE_ENABLED:
+        raise HTTPException(503, "真实分析暂时维护中，请使用示例演示或稍后重试")
     api_key = api_key.strip()[:200]
     base_url = _resolve_gateway_base_url(base_url.strip()[:300])
     model = model.strip()[:100]

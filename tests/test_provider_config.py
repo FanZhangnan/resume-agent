@@ -22,6 +22,13 @@ def test_new_domain_is_the_default():
     assert result.stdout.strip() == "https://api.defou.ai/v1"
 
 
+def test_blank_default_model_uses_the_first_configured_model():
+    for value in ("", "   "):
+        result = run_config("import config; print(config.MODEL_NAME)", AGENT_MODEL=value)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "gpt-5.5"
+
+
 def test_admin_can_configure_an_https_provider():
     result = run_config("import config; print(config.API_BASE_URL)", AGENT_BASE_URL="https://gateway.example.org/openai/v1/")
     assert result.returncode == 0, result.stderr
@@ -53,6 +60,12 @@ def test_duplicate_model_ids_and_invalid_defaults_are_rejected():
     for options in [[{"id": "one"}, {"id": "one"}], [{"id": "one", "reasoning_levels": ["high"], "default_reasoning": "low"}], [{"id": "one", "token_parameter": "api_key"}], [{"id": "one", "supports_temperature": "false"}]]:
         result = run_config("import config", AGENT_MODEL_OPTIONS=json.dumps(options))
         assert result.returncode != 0, options
+
+
+def test_malformed_reasoning_capabilities_are_not_silently_removed():
+    for value in (False, 0, "", {}, None):
+        result = run_config("import config", AGENT_MODEL_OPTIONS=json.dumps([{"id": "one", "reasoning_levels": value}]))
+        assert result.returncode != 0, value
 
 
 def test_client_sends_only_declared_request_parameters():
@@ -109,6 +122,25 @@ assert len(calls) == 1
 assert 'secret-credential' not in output.getvalue()
 '''
     result = run_config(code, AGENT_MOCK="0")
+    assert result.returncode == 0, result.stderr
+
+
+def test_local_public_server_obeys_maintenance_and_hides_gateway():
+    code = '''
+from unittest.mock import patch
+from fastapi.testclient import TestClient
+from webui import server
+client = TestClient(server.app)
+with patch.object(server, 'PUBLIC', True), patch.object(server.agent_config, 'LIVE_ENABLED', False), patch.object(server, '_quota_left', return_value=2), patch.object(server, '_rate_check') as rate:
+    status = client.get('/api/status').json()
+    assert status['base_url'] is None
+    assert status['service']['available'] is False
+    assert 'api.defou.ai' not in str(status)
+    response = client.post('/api/run', data={'resume_text':'sample', 'jd_text':'job', 'model':'gpt-5.5'})
+    assert response.status_code == 503
+    rate.assert_not_called()
+'''
+    result = run_config(code, AGENT_MOCK="1")
     assert result.returncode == 0, result.stderr
 
 

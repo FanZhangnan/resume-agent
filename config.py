@@ -111,9 +111,10 @@ def _load_model_options():
         if not isinstance(model_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}", model_id) or model_id in seen:
             raise ValueError("模型 ID 无效或重复")
         seen.add(model_id)
-        levels = item.get("reasoning_levels", []) or [""]
+        levels = item.get("reasoning_levels", [])
         if not isinstance(levels, (list, tuple)) or len(levels) > 6 or any(not isinstance(level, str) or level not in allowed_reasoning for level in levels) or len(set(levels)) != len(levels):
             raise ValueError("模型推理档位配置无效")
+        levels = levels or [""]
         default_reasoning = item.get("default_reasoning", levels[0])
         if default_reasoning not in levels:
             raise ValueError("模型默认推理档位不在允许列表中")
@@ -173,7 +174,7 @@ def validate_model_reasoning(model, reasoning=None):
     return selected_model, selected_reasoning
 
 
-_MODEL = os.environ.get("AGENT_MODEL", DEFAULT_MODEL).strip()
+_MODEL = DEFAULT_MODEL
 _EFFORT = os.environ.get("AGENT_REASONING_EFFORT", "").strip()
 try:
     MODEL_NAME, REASONING_EFFORT = validate_model_reasoning(_MODEL, _EFFORT)
