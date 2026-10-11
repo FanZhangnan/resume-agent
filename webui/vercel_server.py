@@ -637,6 +637,8 @@ async def create_run(
                 "reasoning": reasoning,
                 "status": "running",
                 "created_at": int(now),
+                "mock": mock_enabled,
+                "byok": byok,
             },
             created_epoch=now,
         )
@@ -708,7 +710,8 @@ async def get_run(run_id: str, request: Request):
     trace = _trace()
     try:
         sdk_status = await backend.status(run_id)
-        stage_docs = await trace.read_stages(run_id)
+        snapshot = await trace.read_status(run_id)
+        stage_docs = snapshot["stages"]
     except Exception:
         return JSONResponse(
             {"error": "运行状态暂不可用", "code": "status_unavailable"},
@@ -723,6 +726,8 @@ async def get_run(run_id: str, request: Request):
         "run_id": run_id,
         "status": overall,
         "stages": _stage_rows(stage_docs),
+        "mock": snapshot["meta"].get("mock") if isinstance(snapshot["meta"].get("mock"), bool) else None,
+        "byok": snapshot["meta"].get("byok") if isinstance(snapshot["meta"].get("byok"), bool) else None,
     }
     if sdk_status == "completed":
         try:

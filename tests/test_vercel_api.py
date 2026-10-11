@@ -201,6 +201,15 @@ def test_delivery_summary_is_private_bounded_and_keeps_mock_provenance():
     assert other.get(f"/api/runs/{run_id}").status_code == 404
 
 
+def test_active_mock_mode_survives_history_status_reload():
+    client, _, _, _, _ = _client()
+    run_id = _start_ok(client, data={"mock": "1"}).json()["run_id"]
+    status = client.get(f"/api/runs/{run_id}").json()
+    assert status["status"] == "running"
+    assert status["mock"] is True
+    assert status["byok"] is False
+
+
 def test_owned_verified_resume_downloads_as_real_docx():
     client, backend, trace, quota, _ = _client()
     run_id = _start_ok(client).json()["run_id"]

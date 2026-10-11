@@ -24,7 +24,7 @@ pip install -r requirements.txt
 
 ```bash
 export OPENAI_API_KEY=你的得否网关密钥
-export AGENT_BASE_URL=https://api.wangdefou.studio/v1
+export AGENT_BASE_URL=https://api.defou.ai/v1
 ```
 
 没有密钥也可以先体验完整流程（离线演示模式，不联网）：
@@ -149,10 +149,10 @@ Web UI 支持：上传/粘贴简历、粘贴JD（留空自动进入岗位推荐�
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
 | `OPENAI_API_KEY` | 无 | 得否网关密钥（除非使用 Mock 模式，否则必填） |
-| `AGENT_BASE_URL` | `https://api.wangdefou.studio/v1` | 固定的得否 OpenAI 兼容 API 地址；不接受其他网关 |
-| `AGENT_MODEL` | `gpt-5.5` | 模型名。仅支持稳定基线 `gpt-5.5` 和实验引擎 `gpt-5.6-terra` |
+| `AGENT_BASE_URL` | `https://api.defou.ai/v1` | 服务端 OpenAI 兼容 API 地址；公网表单不能覆盖 |
+| `AGENT_MODEL` | `gpt-5.5` | 默认模型，必须存在于管理员配置的模型目录中 |
 | `AGENT_MOCK` | 关 | `=1` 开启离线演示模式 |
-| `AGENT_REASONING_EFFORT` | `xhigh` | 两个模型均仅支持 `high`/`xhigh`。非法组合会直接拒绝，不会静默降级 |
+| `AGENT_REASONING_EFFORT` | `xhigh` | 默认目录支持 `high`/`xhigh`；其他模型按明确能力配置，不会遇错后静默降级 |
 | `AGENT_ORCHESTRATOR` | `pipeline` | 默认确定性八阶段流水线；`react` 仅用于诊断旧调度路径 |
 | `AGENT_MAX_STEPS` | `20` | 仅 ReAct 诊断模式使用的最大循环步数 |
 | `AGENT_MAX_REVISIONS` | `1` | 自我验证不通过时的自动修正轮数 |
@@ -166,7 +166,7 @@ Web UI 支持：上传/粘贴简历、粘贴JD（留空自动进入岗位推荐�
 得否网关与模型配置示例：
 
 ```bash
-export AGENT_BASE_URL=https://api.wangdefou.studio/v1
+export AGENT_BASE_URL=https://api.defou.ai/v1
 export AGENT_MODEL=gpt-5.5
 export AGENT_REASONING_EFFORT=xhigh
 export OPENAI_API_KEY=你的得否网关密钥
@@ -242,3 +242,38 @@ AGENT_MOCK=1 .venv312/bin/python tests/test_vercel_ui.py        # 前端源契�
 - **交互模式怎么结束粘贴？** 粘贴完成后另起一行输入 `END` 再回车。
 - **Agent中途提问怎么办？** 直接回答即可；直接回车表示跳过，Agent会基于现有信息继续并在报告中标注信息缺失。
 - **验证不通过会怎样？** Agent自动把问题清单交回给建议生成工具重写一版并复检（默认1轮）；如果仍不通过，报告里会如实标注，不会假装没问题。
+
+## 2026-10 维护：API 迁移与结果交付
+
+默认网关已迁移到 `https://api.defou.ai/v1`。原生产网址为 https://resume.defou.ai/。
+公网请求始终使用服务端 `AGENT_BASE_URL`；访客不能通过表单把站点密钥转发给其他网关。
+
+新增结果摘要与逐项修改对照。完整结果通过真实性审查后，可以下载可编辑的 A4 单栏 Word 简历；
+PDF / HTML 使用浏览器模板，Word 使用服务端单栏样式，照片仍只在浏览器处理。
+所有导出保留提供的事实，不保证任意长度内容一定能排为一页。匹配分数不是面试或录用概率。
+
+可选服务端配置：
+
+| 变量 | 作用 |
+| --- | --- |
+| `AGENT_PROVIDER_NAME` | 界面显示的模型服务名称，默认“得否 API” |
+| `AGENT_LIVE_ENABLED` | `0` 暂停真实分析并保留明确标识的演示；默认开启 |
+| `AGENT_MODEL_OPTIONS` | 管理员配置的 JSON 模型数组；缺省保留当前两个模型 |
+
+模型目录配置示例（只设在服务端，不是浏览器任意模型输入）：
+
+```json
+[{"id":"gpt-5.5","label":"GPT-5.5","reasoning_levels":["high","xhigh"],"default_reasoning":"high","supports_temperature":true,"token_parameter":"max_tokens"}]
+```
+
+无推理参数的模型应明确配置 `"reasoning_levels":[]`；对应请求不会发送 `reasoning_effort`。
+`supports_temperature:false` 和 `token_parameter:"max_completion_tokens"` 分别控制温度和输出上限参数。
+配置变化不代表新模型已验证，生产目录应只开放完成真实验收的模型。
+
+依赖固定在 requirements.txt / requirements-lock.txt / uv.lock。GitHub Actions 运行离线检查：
+
+```bash
+python scripts/check.py
+```
+
+该检查不调用真实 API；线上模型和 Vercel 工作流需按部署文档单独验证。

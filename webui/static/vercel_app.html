@@ -295,7 +295,7 @@ const runState = {
   phase: PHASES.idle,
   runId:"", startedAt:0, status:"", stages:[], report:"",
   safeToDeliver:false, unresolvedFixes:[], resumeStruct:null, deliverySummary:null, startFailed:false,
-  model:"", reasoning:"", mock:false, byok:false
+  model:"", reasoning:"", mock:null, byok:false
 };
 let publicConfig = null;
 let selectedModel = "";
@@ -597,7 +597,7 @@ function renderMeta(){
     ["运行 ID", runState.runId || "—"],
     ["状态", humanStatus(runState.status) || "待命"],
     ["模型", runState.model || selectedModel || "—"],
-    ["模式", runState.mock ? "离线演示（Mock）" : "真实分析"]
+    ["模式", runState.mock === true ? "离线演示（Mock）" : runState.mock === false ? "真实分析" : "历史任务 · 模式未知"]
   ];
   rows.forEach(function(row){
     const line = document.createElement("div");
@@ -636,7 +636,8 @@ function renderDeliverySummary(){
   $("summaryFallback").classList.toggle("hidden", Boolean(hasSummary));
   $("summary-grid").classList.toggle("hidden", !hasSummary);
   $("changes-block").classList.toggle("hidden", !hasSummary);
-  $("summaryVerified").textContent = runState.mock ? "示例数据 · 请勿用于投递"
+  $("summaryVerified").textContent = runState.mock === true ? "示例数据 · 请勿用于投递"
+    : runState.mock === null && runState.runId ? "历史任务 · 模式未知，请核对后使用"
     : hasSummary ? (summary.verified === true && canExportResume() ? "已完成真实性审查 · 请核对后投递" : "修改建议待核对") : "";
   const changes = $("summaryChanges");
   changes.textContent = "";
@@ -750,7 +751,9 @@ function applyStatus(data){
   }
   if(data.model){ runState.model = data.model; }
   if(typeof data.reasoning === "string"){ runState.reasoning = data.reasoning; }
-  if(typeof data.mock === "boolean"){ runState.mock = data.mock; }
+  if(Object.prototype.hasOwnProperty.call(data, "mock")){
+    runState.mock = typeof data.mock === "boolean" ? data.mock : null;
+  }
   if(typeof data.byok === "boolean"){ runState.byok = data.byok; }
   if(terminal(runState.status)){
     runState.phase = PHASES.terminal;
@@ -914,7 +917,7 @@ async function startRun(useDemo){
     runState.stages = Array.isArray(data.stages) ? data.stages : [];
     runState.model = data.model || selectedModel;
     runState.reasoning = typeof data.reasoning === "string" ? data.reasoning : selectedReasoning;
-    runState.mock = Boolean(data.mock);
+    runState.mock = typeof data.mock === "boolean" ? data.mock : null;
     runState.byok = Boolean(data.byok);
     updateQuota(data.free_left, publicConfig && publicConfig.free_per_day);
     renderRunState();
@@ -1020,7 +1023,7 @@ async function openRun(runId, summary){
   runState.startFailed = false;
   runState.model = summary && summary.model ? summary.model : "";
   runState.reasoning = summary && typeof summary.reasoning === "string" ? summary.reasoning : "";
-  runState.mock = Boolean(summary && summary.mock);
+  runState.mock = summary && typeof summary.mock === "boolean" ? summary.mock : null;
   runState.byok = Boolean(summary && summary.byok);
   setTab("stream");
   renderRunState();
@@ -1056,7 +1059,7 @@ async function deleteRun(runId){
       stopPolling();
       Object.assign(runState, {
         phase:PHASES.idle,runId:"",startedAt:0,status:"",stages:[],report:"",
-        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,deliverySummary:null,startFailed:false,model:"",reasoning:"",mock:false,byok:false
+        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,deliverySummary:null,startFailed:false,model:"",reasoning:"",mock:null,byok:false
       });
       renderRunState();
     }

@@ -26,7 +26,7 @@
 
 - Vercel 账号（Hobby 即可）、`npx`（Node 18+）。
 - 构建环境 Python **3.12**（`pyproject.toml` 已限定 `>=3.12,<3.13`；`requirements.txt` 用版本标记只在 3.12 装 `vercel==0.6.0`）。
-- 得否 OpenAI 兼容网关及**已轮换**的密钥；服务端地址固定为 `https://api.wangdefou.studio/v1`。
+- 得否 OpenAI 兼容网关及**已轮换**的密钥；本次生产服务端地址为 `https://api.defou.ai/v1`。
 
 ## 2. 安全：先轮换密钥（务必第一步）
 
@@ -41,7 +41,7 @@
 | 变量 | 必填 | 示例 / 说明 |
 |------|------|-------------|
 | `OPENAI_API_KEY` | ✅ | 轮换后的得否网关密钥 |
-| `AGENT_BASE_URL` | ✅ | `https://api.wangdefou.studio/v1`；仅允许该服务端网关 |
+| `AGENT_BASE_URL` | ✅ | `https://api.defou.ai/v1`；由服务端管理员配置；公网请求不能覆盖 |
 | `AGENT_RUN_SIGNING_KEY` | ✅ | Cookie/HMAC 与 BYOK 加密根密钥（随机 32+ 字节，独立于网关密钥） |
 | `KV_REST_API_URL` | ✅ | Upstash 连接自动生成，不下发浏览器 |
 | `KV_REST_API_TOKEN` | ✅ | Upstash 连接自动生成，标记 Sensitive |
@@ -63,7 +63,7 @@
 
 ```dotenv
 OPENAI_API_KEY=你的得否网关密钥
-AGENT_BASE_URL=https://api.wangdefou.studio/v1
+AGENT_BASE_URL=https://api.defou.ai/v1
 AGENT_FREE_PER_DAY=2
 AGENT_SITE_FREE_PER_DAY=20
 AGENT_RUNS_PER_HOUR=6
@@ -74,7 +74,7 @@ AGENT_SESSION_REPORT_CAP=5
 AGENT_ADMISSION_TTL=900
 ```
 
-> **禁止**出现 `sol`、`max`、`low`、`medium` 等档位，或把网关密钥/base_url 暴露到浏览器。`AGENT_WORKFLOW_TEST` 只用于本地测试，**不要**在 Vercel 设置。
+> 只开放管理员配置并完成真实验收的模型和参数组合。禁止把网关密钥/base_url 暴露到浏览器。`AGENT_WORKFLOW_TEST` 只用于本地测试，**不要**在 Vercel 设置。
 
 ## 5. 本地离线验证（部署前跑一遍）
 
@@ -159,3 +159,21 @@ npx vercel@latest deploy --target=production
 - **无 JD 在招岗位发现**：本预览未启用；`POST /api/runs` 无 JD 时返回 422，工作流图会把阶段 3 标为 `not_enabled` 并产出明确的部分报告。后续接 `tools/job_sources.py`（Greenhouse/Lever/Ashby/Adzuna）再开放。
 - **并发步**：结构化+JD 分析用 `asyncio.gather`，属 SDK 运行时支持但未文档化的行为，需部署冒烟确认；不行就设 `AGENT_WORKFLOW_PARALLEL=0` 顺序执行（仍在预算内）。
 - **Python Workflows 为 beta**：`vercel==0.6.0` API 可能变化；应用运行时只使用公开 Workflow API（`Workflows`/`@wf.step`/`@wf.workflow`/`get_step_metadata`/`start`/`Run`），未引用 `vercel._internal` 或 `vercel.blob`。
+
+
+## 2026-10 API 域名维护
+
+原供应商域名到期，本次迁移到同一公司的 `https://api.defou.ai/v1`，保留 Vercel 内的现有 API Key。
+先在 Preview 设置新 Base URL 并完成完整真实运行，再更新 Production 配置和部署。
+`AGENT_BASE_URL` 只在新的部署中生效，不能把修改环境变量本身当作恢复完成。
+
+模型配置见 README 的 `AGENT_MODEL_OPTIONS`。`AGENT_LIVE_ENABLED=0` 可暂时关闭真实调用；
+API 会在配额准入前返回 `503 service_unavailable`，演示仍然明确标为示例。
+
+新的交付接口：`GET /api/runs/{id}/resume.docx`。必须验证当前 Cookie 归属、完成态、
+`safe_to_deliver=true`、没有未解决问题和有效结构化简历；所有跨会话读取都应返回 404。
+报告摘要由现有匹配和建议事实生成，不增加模型调用，不是面试或录用概率。
+
+发布前：运行 `python scripts/check.py`，确认锁定依赖、Preview 的真实模型运行与 DOCX 下载，
+并检查 `vercel deploy --dry --format=json` 中没有 `.env*`、`.venv312`、`.superpowers`、上传文件或报告。
+GitHub Actions 只跑离线检查；它不能证明新供应商及 Vercel durable worker 的线上可用性。

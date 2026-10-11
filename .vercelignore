@@ -8,6 +8,9 @@ node_modules/
 package.json
 package-lock.json
 .playwright-cli/
+.superpowers/
+.github/
+scripts/
 
 # Caches and OS cruft
 __pycache__/

@@ -1,0 +1,35 @@
+name: Offline checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked runtime
+        run: python -m pip install -r requirements-lock.txt
+      - name: Run offline workflow, API, model and UI checks
+        run: python scripts/check.py
+      - name: Check Python syntax and whitespace
+        run: |
+          python -m compileall -q agent.py config.py llm_client.py delivery_summary.py resume_export.py tools webui workflows
+          git diff --check
