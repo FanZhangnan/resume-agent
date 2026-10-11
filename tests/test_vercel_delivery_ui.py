@@ -22,7 +22,7 @@ def test_delivery_interactions_without_browser_or_credentials():
     globalThis.ui = {
       runState, PHASES, renderRunState, renderDeliverySummary, renderReasoningOptions,
       startRun, retryRun, downloadResumeWord, openRun, applyStatus, syncMockControl,
-      changeProvider, checkConnection, requestJson,
+      changeProvider, checkConnection, requestJson, bindEvents,
       setConfig(config, model, reasoning){ publicConfig = config; selectedModel = model; selectedReasoning = reasoning; },
       getReasoning(){ return selectedReasoning; }
     };
@@ -228,6 +228,12 @@ const settle = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
   assert(get("providerCheckBanner").textContent.includes("超时"));
   assert.equal(get("connectionBanner").textContent,"");
   forcedResponse = null;
+  ui.bindEvents();
+  get("connectionBanner").textContent = "连接暂时中断，保留进度并自动重连";
+  get("byok-key").value = "nvapi-replacement-test-key";
+  get("byok-key").listeners.input();
+  assert.equal(get("providerCheckBanner").textContent,"");
+  assert(get("connectionBanner").textContent.includes("自动重连"));
   get("provider-select").value = "defou"; ui.changeProvider();
   get("byok-key").value = "nvapi-unit-test-key";
   const beforeMismatchedKey = requests.length;

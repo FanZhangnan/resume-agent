@@ -1381,7 +1381,7 @@ function bindEvents(){
   $("mockMode").addEventListener("change", syncMockControl);
   $("provider-select").addEventListener("change", changeProvider);
   $("checkConnectionBtn").addEventListener("click", checkConnection);
-  $("byok-key").addEventListener("input", function(){ setBanner("connectionBanner", "", "info"); });
+  $("byok-key").addEventListener("input", function(){ setBanner("providerCheckBanner", "", "info"); });
   $("startBtn").addEventListener("click", function(){ startRun(false); });
   $("demoBtn").addEventListener("click", function(){ startRun(true); });
   $("cancelBtn").addEventListener("click", cancelRun);
