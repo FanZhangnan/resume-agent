@@ -423,6 +423,10 @@ def _subject_alternative_matches(required, evidence):
 
 
 def _education_supports_degree_requirement(requirement_text, content):
+    from cohort_check import graduation_warning
+    cohort_warning, _ = graduation_warning(requirement_text, {"education": [content]})
+    if cohort_warning:
+        return False
     requirement_terms = _semantic_terms(requirement_text)
     required_credentials = _requirement_credential_terms(requirement_text)
     evidence_credentials = _evidence_credential_terms("education", content)

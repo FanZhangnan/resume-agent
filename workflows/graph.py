@@ -14,7 +14,7 @@ import time
 
 import config
 import providers
-from cohort_check import graduation_warning
+from cohort_check import graduation_warning, job_grounded_risks
 from contracts import (
     delivery_is_complete,
     suggestions_are_usable,
@@ -597,6 +597,7 @@ async def run_workflow_graph(
     if s5 != "completed":
         return await _finalize(trace, state, "partial", model, reasoning)
     state["match_result"] = v5
+    state["match_result"]["risks"] = job_grounded_risks(jd_text, v5.get("risks"))
     warning, mismatch = graduation_warning(jd_text, state["resume_info"])
     state["cohort_warning"] = warning
     if warning:

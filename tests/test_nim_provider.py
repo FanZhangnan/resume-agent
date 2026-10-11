@@ -355,6 +355,27 @@ def test_original_portfolio_and_target_role_survive_fallback_and_docx():
     assert "https://example.com/portfolio" in xml and "AI应用开发工程师" in xml
 
 
+def test_cohort_degree_cannot_be_met_by_a_different_or_unknown_graduation_year():
+    from tools.scoring import normalize_resume_evidence, requirement_ledger_from_match_result
+    requirement = {"requirement_id": "hard-001", "category": "hard", "requirement": "2027届本科及以上学历"}
+    for end, expected in (("2026年6月", "missing"), ("2027年6月", "met"), ("", "missing")):
+        catalog = normalize_resume_evidence({"education": [{"degree": "Master of Computer Science", "major": "计算机科学", "end_date": end}]})
+        model_row = {"requirement_evidence": [{"requirement_id": "hard-001", "status": "met", "evidence_ids": [catalog[0]["evidence_id"]]}]}
+        result = requirement_ledger_from_match_result(model_row, [requirement], evidence_catalog=catalog)
+        assert result[0]["status"] == expected, end
+    requirement["requirement"] = "2026/2027届本科及以上学历"
+    catalog[0]["content"]["end_date"] = "2026年6月"
+    assert requirement_ledger_from_match_result(model_row, [requirement], evidence_catalog=catalog)[0]["status"] == "met"
+
+
+def test_grade_risks_require_a_grade_requirement_in_the_actual_jd():
+    from cohort_check import job_grounded_risks
+    risks = ["硕士GPA低于阈值（6.2/7.0）", "绩点不满足最低要求", "缺少电商业务实践证据"]
+    assert job_grounded_risks("计算机相关专业，2027届", risks) == risks[2:]
+    assert job_grounded_risks("GPA至少6.5/7.0", risks) == risks
+    assert job_grounded_risks("绩点要求", None) == []
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
