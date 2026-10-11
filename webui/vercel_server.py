@@ -10,6 +10,7 @@ URL are never exposed to the browser.
 
 import asyncio
 import io
+import logging
 import os
 import secrets
 import tempfile
@@ -17,9 +18,10 @@ import time
 import zipfile
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
+from delivery_summary import normalize_delivery_summary
 from public_resume import normalize_public_resume
 from public_security import (
     encrypt_api_key,
@@ -188,6 +190,29 @@ def _quota():
 # --------------------------------------------------------------------- helpers
 def _model_catalog():
     return {item["id"]: list(item["reasoning_levels"]) for item in config.MODEL_OPTIONS}
+
+
+def _service_config():
+    available = bool(config.LIVE_ENABLED)
+    site_funded = bool(config.API_KEY.strip())
+    message = ""
+    if not available:
+        message = "真实分析暂时维护中，仍可使用示例演示。请稍后重试。"
+    elif not site_funded:
+        message = "站点免费分析暂未配置，可使用自有 API Key 或体验示例。"
+    return {"available": available, "provider_name": config.PROVIDER_NAME,
+            "site_funded": site_funded, "message": message}
+
+
+def _result_is_deliverable(result):
+    """Use one strict gate for status badges and every resume export."""
+    return (
+        isinstance(result, dict)
+        and result.get("status") == "completed"
+        and result.get("safe_to_deliver") is True
+        and isinstance(result.get("unresolved_fixes"), list)
+        and not result["unresolved_fixes"]
+    )
 
 
 def _session_hash(request):
@@ -448,13 +473,14 @@ async def api_config(request: Request):
         "job_search_enabled": False,
         "free_left": free_left,
         "free_per_day": quota.free_per_day,
+        "service": _service_config(),
     }
 
 
 @app.get("/api/status")
 def api_status():
     return {"deployment_mode": "vercel", "public": True,
-            "default_model": config.DEFAULT_MODEL}
+            "default_model": config.DEFAULT_MODEL, "service": _service_config()}
 
 
 @app.post("/api/runs")
@@ -476,6 +502,11 @@ async def create_run(
         return JSONResponse({"error": str(error)}, status_code=400)
 
     supplied_key = "" if mock_enabled else str(api_key or "").strip()
+    if not mock_enabled and not config.LIVE_ENABLED:
+        return JSONResponse(
+            {"error": "真实分析暂时维护中，请使用示例演示或稍后重试", "code": "service_unavailable"},
+            status_code=503,
+        )
     if len(supplied_key) > MAX_API_KEY_CHARS:
         return JSONResponse(
             {
@@ -595,7 +626,14 @@ async def create_run(
             session_hash=session_hash,
         )
         return _quota_unavailable_response()
-    except Exception:
+    except Exception as error:
+        # SDK response schemas can change independently of the app. Record only
+        # the class/status, never the exception body, request or credentials.
+        logging.getLogger(__name__).error(
+            "run_start_failed error_class=%s http_status=%s",
+            type(error).__name__,
+            getattr(error, "status_code", None) if isinstance(getattr(error, "status_code", None), int) else None,
+        )
         await _rollback_create(
             quota=quota,
             backend=backend,
@@ -618,6 +656,8 @@ async def create_run(
                 "reasoning": reasoning,
                 "status": "running",
                 "created_at": int(now),
+                "mock": mock_enabled,
+                "byok": byok,
             },
             created_epoch=now,
         )
@@ -689,7 +729,8 @@ async def get_run(run_id: str, request: Request):
     trace = _trace()
     try:
         sdk_status = await backend.status(run_id)
-        stage_docs = await trace.read_stages(run_id)
+        snapshot = await trace.read_status(run_id)
+        stage_docs = snapshot["stages"]
     except Exception:
         return JSONResponse(
             {"error": "运行状态暂不可用", "code": "status_unavailable"},
@@ -704,6 +745,8 @@ async def get_run(run_id: str, request: Request):
         "run_id": run_id,
         "status": overall,
         "stages": _stage_rows(stage_docs),
+        "mock": snapshot["meta"].get("mock") if isinstance(snapshot["meta"].get("mock"), bool) else None,
+        "byok": snapshot["meta"].get("byok") if isinstance(snapshot["meta"].get("byok"), bool) else None,
     }
     if sdk_status == "completed":
         try:
@@ -713,12 +756,32 @@ async def get_run(run_id: str, request: Request):
                 {"error": "运行结果暂不可用", "code": "status_unavailable"},
                 status_code=503,
             )
+        if not isinstance(result, dict):
+            return JSONResponse({"error": "运行结果格式暂不可用", "code": "status_unavailable"}, status_code=503, headers=_PRIVATE_NO_STORE)
         response["status"] = result.get("status", "completed")
         response["report"] = result.get("report", "")
-        response["safe_to_deliver"] = bool(result.get("safe_to_deliver"))
-        response["unresolved_fixes"] = result.get("unresolved_fixes", [])
+        response["safe_to_deliver"] = _result_is_deliverable(result)
+        fixes = result.get("unresolved_fixes")
+        response["unresolved_fixes"] = (
+            [item[:600] for item in fixes[:12]]
+            if isinstance(fixes, list) and all(isinstance(item, str) for item in fixes)
+            else ["结果审查信息不完整，请重新分析"]
+        )
+        if response["status"] == "completed" and not response["safe_to_deliver"]:
+            response["status"] = "partial"
         response["model"] = result.get("model", "")
         response["reasoning"] = result.get("reasoning", "")
+        response["mock"] = result.get("mock") if isinstance(result.get("mock"), bool) else None
+        response["byok"] = result.get("byok") if isinstance(result.get("byok"), bool) else None
+        summary = result.get("delivery_summary")
+        response["delivery_summary"] = normalize_delivery_summary(summary) if isinstance(summary, dict) else None
+        if response["delivery_summary"] is not None:
+            response["delivery_summary"]["verified"] = bool(
+                response["delivery_summary"]["verified"]
+                and response["status"] == "completed"
+                and response["safe_to_deliver"]
+                and not response["unresolved_fixes"]
+            )
         response["optimized_resume_struct"] = normalize_public_resume(
             result.get("optimized_resume_struct")
         )
@@ -737,6 +800,35 @@ async def get_run(run_id: str, request: Request):
         if not updated:
             return _run_not_found_response()
     return JSONResponse(response, headers=_PRIVATE_NO_STORE)
+
+
+@app.get("/api/runs/{run_id}/resume.docx")
+async def download_resume_docx(run_id: str, request: Request):
+    try:
+        if not await _owns_run(request, run_id):
+            return _run_not_found_response()
+    except QuotaUnavailable:
+        return _quota_unavailable_response()
+    try:
+        backend = _backend()
+        if await backend.status(run_id) != "completed":
+            return JSONResponse({"error": "任务完成并通过真实性审查后才能导出 Word", "code": "resume_not_deliverable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+        result = await backend.result(run_id) or {}
+    except Exception:
+        return JSONResponse({"error": "运行结果暂不可用，请稍后重试", "code": "status_unavailable"}, status_code=503, headers=_PRIVATE_NO_STORE)
+    if not _result_is_deliverable(result):
+        return JSONResponse({"error": "本次简历尚未满足交付条件，请先核对报告", "code": "resume_not_deliverable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+    resume = normalize_public_resume(result.get("optimized_resume_struct"))
+    if resume is None:
+        return JSONResponse({"error": "本次结果缺少可导出的结构化简历", "code": "resume_unavailable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+    from resume_export import render_resume_docx
+
+    content = await asyncio.to_thread(render_resume_docx, resume)
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={**_PRIVATE_NO_STORE, "Content-Disposition": 'attachment; filename="resume.docx"'},
+    )
 
 
 @app.post("/api/runs/{run_id}/cancel")

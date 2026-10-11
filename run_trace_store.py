@@ -10,7 +10,7 @@ _ALLOWED_KEYS = frozenset({
     "model", "reasoning", "attempt", "tokens_prompt", "tokens_completion",
     "retry_category", "validation_status", "output_shape", "error_category",
     "started_at", "completed_at", "created_at", "revision_round", "reason",
-    "safe_to_deliver", "terminal", "elapsed_ms",
+    "safe_to_deliver", "terminal", "elapsed_ms", "mock", "byok",
 })
 _MAX_STR = 240
 
@@ -97,6 +97,12 @@ class TraceStore:
 
     async def read_stages(self, run_id):
         return _decode_stage_fields(await self._quota.read_trace_fields(run_id))
+
+    async def read_status(self, run_id):
+        """Read stage progress and safe mode metadata in one Redis operation."""
+        fields = await self._quota.read_trace_fields(run_id)
+        return {"stages": _decode_stage_fields(fields),
+                "meta": _decode_json(fields.get("trace:meta", "{}"))}
 
     async def write_meta(self, run_id, doc, *, created_epoch=None):
         payload = json.dumps(

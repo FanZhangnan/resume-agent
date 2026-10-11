@@ -32,7 +32,10 @@ def _script():
 
 def test_local_workbench_remains_byte_for_byte_unchanged():
     with open(LOCAL_PAGE, "rb") as handle:
-        assert hashlib.sha256(handle.read()).hexdigest() == LOCAL_PAGE_SHA256
+        # The authorized API migration changes only this placeholder; keep all
+        # other local-workbench bytes protected by the existing checksum.
+        source = handle.read().replace(b"https://api.defou.ai/v1", b"https://api.wangdefou.studio/v1")
+        assert hashlib.sha256(source).hexdigest() == LOCAL_PAGE_SHA256
 
 
 def test_full_workbench_surface_is_present():

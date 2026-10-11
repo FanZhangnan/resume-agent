@@ -1,4 +1,8 @@
+import ipaddress
+import json
 import os
+import re
+from urllib.parse import urlsplit, urlunsplit
 
 
 def _load_env_file():
@@ -25,8 +29,8 @@ def _load_env_file():
 _load_env_file()
 
 # ===== API配置 =====
-# 生产基线与实验引擎共用唯一允许的得否网关。
-DEFOU_API_ORIGIN = "https://api.wangdefou.studio"
+# 地址只由服务端管理员配置，浏览器不能改变凭据的发送目的地。
+DEFOU_API_ORIGIN = "https://api.defou.ai"
 DEFOU_API_BASE_URL = f"{DEFOU_API_ORIGIN}/v1"
 
 
@@ -34,16 +38,35 @@ def normalize_gateway_base_url(value=None):
     candidate = str(value or "").strip().rstrip("/")
     if not candidate or candidate == DEFOU_API_ORIGIN:
         return DEFOU_API_BASE_URL
-    if candidate == DEFOU_API_BASE_URL:
-        return DEFOU_API_BASE_URL
-    raise ValueError("API 网关仅支持 https://api.wangdefou.studio/v1")
+    try:
+        parsed = urlsplit(candidate)
+        host = (parsed.hostname or "").lower()
+        if (
+            parsed.scheme != "https" or not host or parsed.username
+            or parsed.password or parsed.query or parsed.fragment
+            or any(character.isspace() for character in candidate)
+            or host == "localhost" or host.endswith((".localhost", ".local", ".internal"))
+            or parsed.port is not None and not 1 <= parsed.port <= 65535
+        ):
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ValueError
+    except ValueError:
+        raise ValueError("AGENT_BASE_URL 必须是无凭据、无查询参数的 HTTPS 公共 API 地址") from None
+    return urlunsplit(("https", parsed.netloc, parsed.path.rstrip("/") or "/v1", "", ""))
 
 
 API_BASE_URL = normalize_gateway_base_url(os.environ.get("AGENT_BASE_URL"))
 API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+PROVIDER_NAME = os.environ.get("AGENT_PROVIDER_NAME", "得否 API").strip()[:80] or "模型服务"
+LIVE_ENABLED = os.environ.get("AGENT_LIVE_ENABLED", "1") != "0"
 
 # status 表示质量/稳定性政策，tier 表示商业分档，两者不可混用。
-MODEL_OPTIONS = (
+_DEFAULT_MODEL_OPTIONS = (
     {
         "id": "gpt-5.5",
         "label": "GPT-5.5",
@@ -65,16 +88,68 @@ MODEL_OPTIONS = (
         "reasoning_levels": ("high", "xhigh"),
     },
 )
+
+
+def _load_model_options():
+    raw = os.environ.get("AGENT_MODEL_OPTIONS", "").strip()
+    if not raw:
+        options = [dict(item) for item in _DEFAULT_MODEL_OPTIONS]
+    else:
+        try:
+            options = json.loads(raw)
+        except (TypeError, ValueError):
+            raise ValueError("AGENT_MODEL_OPTIONS 必须是有效 JSON 模型数组") from None
+        if not isinstance(options, list) or not 1 <= len(options) <= 12:
+            raise ValueError("AGENT_MODEL_OPTIONS 必须包含 1 至 12 个模型")
+    normalized = []
+    seen = set()
+    allowed_reasoning = {"", "minimal", "low", "medium", "high", "xhigh"}
+    for item in options:
+        if not isinstance(item, dict):
+            raise ValueError("模型目录条目必须是对象")
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}", model_id) or model_id in seen:
+            raise ValueError("模型 ID 无效或重复")
+        seen.add(model_id)
+        levels = item.get("reasoning_levels", [])
+        if not isinstance(levels, (list, tuple)) or len(levels) > 6 or any(not isinstance(level, str) or level not in allowed_reasoning for level in levels) or len(set(levels)) != len(levels):
+            raise ValueError("模型推理档位配置无效")
+        levels = levels or [""]
+        default_reasoning = item.get("default_reasoning", levels[0])
+        if default_reasoning not in levels:
+            raise ValueError("模型默认推理档位不在允许列表中")
+        supports_temperature = item.get("supports_temperature", True)
+        supports_streaming = item.get("supports_streaming", True)
+        token_parameter = item.get("token_parameter", "max_tokens")
+        if not isinstance(supports_temperature, bool) or not isinstance(supports_streaming, bool) or token_parameter not in ("max_tokens", "max_completion_tokens"):
+            raise ValueError("模型请求参数能力配置无效")
+        normalized.append({
+            "id": model_id,
+            "label": str(item.get("label") or model_id)[:80],
+            "tier": str(item.get("tier") or "unassigned")[:40],
+            "tier_label": str(item.get("tier_label") or "按服务商计费")[:40],
+            "status": str(item.get("status") or "configured")[:40],
+            "status_label": str(item.get("status_label") or "已配置")[:40],
+            "reasoning_levels": tuple(levels),
+            "default_reasoning": default_reasoning,
+            "supports_temperature": supports_temperature,
+            "supports_streaming": supports_streaming,
+            "token_parameter": token_parameter,
+        })
+    return tuple(normalized)
+
+
+MODEL_OPTIONS = _load_model_options()
 SUPPORTED_MODELS = tuple(item["id"] for item in MODEL_OPTIONS)
 MODEL_OPTION_BY_ID = {item["id"]: item for item in MODEL_OPTIONS}
 MODEL_REASONING_LEVELS = {
     item["id"]: item["reasoning_levels"] for item in MODEL_OPTIONS
 }
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "").strip() or SUPPORTED_MODELS[0]
 DEFAULT_REASONING_BY_MODEL = {
     item["id"]: item["default_reasoning"] for item in MODEL_OPTIONS
 }
-REASONING_LEVELS = ("high", "xhigh")
+REASONING_LEVELS = tuple(dict.fromkeys(level for item in MODEL_OPTIONS for level in item["reasoning_levels"]))
 
 
 def reasoning_levels_for_model(model):
@@ -99,7 +174,7 @@ def validate_model_reasoning(model, reasoning=None):
     return selected_model, selected_reasoning
 
 
-_MODEL = os.environ.get("AGENT_MODEL", DEFAULT_MODEL).strip()
+_MODEL = DEFAULT_MODEL
 _EFFORT = os.environ.get("AGENT_REASONING_EFFORT", "").strip()
 try:
     MODEL_NAME, REASONING_EFFORT = validate_model_reasoning(_MODEL, _EFFORT)

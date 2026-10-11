@@ -35,20 +35,20 @@ def test_model_catalog():
 
 
 def test_gateway_policy_uses_defou_v1_only():
-    expected = "https://api.wangdefou.studio/v1"
+    expected = "https://api.defou.ai/v1"
     assert config.DEFOU_API_BASE_URL == expected
     assert config.normalize_gateway_base_url("") == expected
-    assert config.normalize_gateway_base_url("https://api.wangdefou.studio") == expected
-    assert config.normalize_gateway_base_url("https://api.wangdefou.studio/") == expected
+    assert config.normalize_gateway_base_url("https://api.defou.ai") == expected
+    assert config.normalize_gateway_base_url("https://api.defou.ai/") == expected
     assert config.normalize_gateway_base_url(expected + "/") == expected
 
 
 def test_gateway_policy_rejects_other_hosts_and_paths():
     for value in (
-        "http://api.wangdefou.studio/v1",
-        "https://example.com/v1",
-        "https://api.wangdefou.studio/v2",
-        "https://api.wangdefou.studio/v1?debug=1",
+        "http://api.defou.ai/v1",
+        "https://127.0.0.1/v1",
+        "https://api.defou.ai/v1#debug",
+        "https://api.defou.ai/v1?debug=1",
     ):
         try:
             config.normalize_gateway_base_url(value)
@@ -67,7 +67,7 @@ def test_runtime_source_reads_only_the_generic_key():
 def test_web_gateway_resolution_normalizes_defou_root():
     expected = config.DEFOU_API_BASE_URL
     assert server._resolve_gateway_base_url("") == expected
-    assert server._resolve_gateway_base_url("https://api.wangdefou.studio") == expected
+    assert server._resolve_gateway_base_url("https://api.defou.ai") == expected
     assert server._resolve_gateway_base_url(expected) == expected
 
 
@@ -77,7 +77,7 @@ def test_web_gateway_resolution_rejects_other_hosts():
     except HTTPException as error:
         assert error.status_code == 400
         return
-    raise AssertionError("非得否网关应被拒绝")
+    raise AssertionError("表单不能覆盖服务端网关")
 
 
 def test_model_reasoning_resolution():
@@ -112,7 +112,7 @@ def test_frontend_exposes_model_specific_reasoning():
     assert 'fd.append("model", selectedModel)' in html
     assert "renderEffortOptions" in html
     assert 'id="byok-model"' not in html
-    assert 'placeholder="https://api.wangdefou.studio/v1"' in html
+    assert 'placeholder="https://api.defou.ai/v1"' in html
     assert "任意 OpenAI 兼容网关" not in html
 
 

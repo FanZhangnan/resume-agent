@@ -159,6 +159,101 @@ def test_status_reports_vercel_mode():
     assert body["deployment_mode"] == "vercel"
 
 
+def test_service_maintenance_stops_real_runs_before_admission_but_keeps_demo():
+    client, backend, _, _, _ = _client()
+    with patch.object(server.config, "LIVE_ENABLED", False):
+        configuration = client.get("/api/config").json()
+        assert configuration["service"]["available"] is False
+        assert "api.defou.ai" not in str(configuration)
+        denied = _start_ok(client)
+        assert denied.status_code == 503
+        assert denied.json()["code"] == "service_unavailable"
+        assert backend.started == []
+        demo = _start_ok(client, data={"mock": "1"})
+        assert demo.status_code == 202
+
+
+def test_byok_can_run_without_site_funding():
+    client, _, _, _, _ = _client()
+    with patch.object(server.config, "API_KEY", ""):
+        configuration = client.get("/api/config").json()
+        assert configuration["service"]["available"] is True
+        assert configuration["service"]["site_funded"] is False
+        accepted = _start_ok(client, data={"api_key": "unit-test-user-key"})
+        assert accepted.status_code == 202
+
+
+def test_delivery_summary_is_private_bounded_and_keeps_mock_provenance():
+    client, backend, trace, quota, _ = _client()
+    run_id = _start_ok(client, data={"mock": "1"}).json()["run_id"]
+    backend.complete(run_id, {
+        "status": "completed", "safe_to_deliver": True, "unresolved_fixes": [],
+        "report": "report", "mock": True, "byok": False,
+        "delivery_summary": {"match_score": 77, "strengths": ["Evidence"], "verified": True, "private_debug": "hidden-value"},
+    })
+    response = client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    assert response.json()["mock"] is True
+    assert response.json()["delivery_summary"]["match_score"] == 77
+    assert response.json()["delivery_summary"]["verified"] is True
+    assert "hidden-value" not in response.text
+    other = _second_client(backend, trace, quota, client_ip="203.0.113.11")
+    assert other.get(f"/api/runs/{run_id}").status_code == 404
+
+
+def test_active_mock_mode_survives_history_status_reload():
+    client, _, _, _, _ = _client()
+    run_id = _start_ok(client, data={"mock": "1"}).json()["run_id"]
+    status = client.get(f"/api/runs/{run_id}").json()
+    assert status["status"] == "running"
+    assert status["mock"] is True
+    assert status["byok"] is False
+
+
+def test_owned_verified_resume_downloads_as_real_docx():
+    client, backend, trace, quota, _ = _client()
+    run_id = _start_ok(client).json()["run_id"]
+    backend.complete(run_id, {
+        "status": "completed", "safe_to_deliver": True, "unresolved_fixes": [],
+        "optimized_resume_struct": VALID_PUBLIC_RESUME,
+    })
+    response = client.get(f"/api/runs/{run_id}/resume.docx")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument")
+    assert response.headers["cache-control"] == "private, no-store"
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        xml = archive.read("word/document.xml").decode()
+    assert "Candidate" in xml and "Improved reporting accuracy." in xml
+    other = _second_client(backend, trace, quota, client_ip="203.0.113.11")
+    assert other.get(f"/api/runs/{run_id}/resume.docx").status_code == 404
+
+
+def test_word_download_rejects_pending_partial_and_unverified_results():
+    client, backend, _, _, _ = _client()
+    run_id = _start_ok(client).json()["run_id"]
+    assert client.get(f"/api/runs/{run_id}/resume.docx").status_code == 409
+    for overrides in [{"status": "partial"}, {"safe_to_deliver": False}, {"safe_to_deliver": "true"}, {"unresolved_fixes": ["Fix unsupported claim"]}, {"optimized_resume_struct": None}]:
+        result = {"status": "completed", "safe_to_deliver": True, "unresolved_fixes": [], "optimized_resume_struct": VALID_PUBLIC_RESUME}
+        result.update(overrides)
+        backend.complete(run_id, result)
+        assert client.get(f"/api/runs/{run_id}/resume.docx").status_code == 409
+
+
+def test_malformed_delivery_flags_never_enable_badges_or_exports():
+    client, backend, _, _, _ = _client()
+    run_id = _start_ok(client).json()["run_id"]
+    for overrides in [{"safe_to_deliver": "false", "unresolved_fixes": None}, {"safe_to_deliver": "true"}, {"unresolved_fixes": {}}, {"unresolved_fixes": [False]}]:
+        result = {"status": "completed", "safe_to_deliver": True, "unresolved_fixes": [], "optimized_resume_struct": VALID_PUBLIC_RESUME, "report": "report", "delivery_summary": {"verified": True}}
+        result.update(overrides)
+        backend.complete(run_id, result)
+        status = client.get(f"/api/runs/{run_id}").json()
+        assert status["status"] == "partial"
+        assert status["safe_to_deliver"] is False
+        assert isinstance(status["unresolved_fixes"], list)
+        assert status["delivery_summary"]["verified"] is False
+        assert client.get(f"/api/runs/{run_id}/resume.docx").status_code == 409
+
+
 def test_entry_responses_issue_secure_http_only_session_and_rotate_invalid_cookie():
     client, _, _, _, _ = _client()
     first = client.get("/api/config")

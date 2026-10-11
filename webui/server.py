@@ -88,11 +88,14 @@ def _resolve_model_reasoning(model, reasoning):
 
 
 def _resolve_gateway_base_url(value):
-    """规范化并校验本次运行的得否网关地址。"""
+    """运行只能使用服务端已配置的网关，不能通过表单转发站点密钥。"""
     try:
-        return agent_config.normalize_gateway_base_url(value)
+        selected = agent_config.normalize_gateway_base_url(value or agent_config.API_BASE_URL)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
+    if selected != agent_config.API_BASE_URL:
+        raise HTTPException(400, "网关地址仅由服务端 AGENT_BASE_URL 配置")
+    return selected
 
 
 # ==================== 会话 / 身份 ====================
@@ -508,7 +511,8 @@ def status(request: Request):
         "models": agent_config.MODEL_OPTIONS,
         "default_model": agent_config.DEFAULT_MODEL,
         "default_reasoning": agent_config.DEFAULT_REASONING_BY_MODEL,
-        "base_url": agent_config.API_BASE_URL,
+        "base_url": None if PUBLIC else agent_config.API_BASE_URL,
+        "service": {"available": bool(agent_config.LIVE_ENABLED), "provider_name": agent_config.PROVIDER_NAME},
         "has_key": bool(agent_config.API_KEY),
         "mock_env": os.environ.get("AGENT_MOCK") == "1",
         "max_steps": agent_config.MAX_STEPS,
@@ -537,6 +541,9 @@ def run(request: Request,
     sid, _ = _get_session(request)
     ip = _client_ip(request)
     is_mock = mock == "1"
+    if not is_mock and not agent_config.LIVE_ENABLED:
+        message = "真实分析暂时维护中，请使用示例演示或稍后重试"
+        return JSONResponse({"error": message, "detail": message, "code": "service_unavailable"}, status_code=503)
     api_key = api_key.strip()[:200]
     base_url = _resolve_gateway_base_url(base_url.strip()[:300])
     model = model.strip()[:100]

@@ -314,10 +314,10 @@ def test_supplied_jd_happy_path_completes():
 
 
 def test_graph_runs_inside_real_workflow_sandbox():
-    from vercel._internal.workflow.py_sandbox import workflow_sandbox
+    from vercel.workflow._internal.py_sandbox import Sandbox
 
     async def scenario():
-        with workflow_sandbox(random_seed="graph-sandbox"):
+        with Sandbox().enter():
             sandboxed_graph = importlib.import_module("workflows.graph")
             return await sandboxed_graph.run_workflow_graph(
                 _payload(), FakeOps(), FakeTrace()
@@ -328,12 +328,12 @@ def test_graph_runs_inside_real_workflow_sandbox():
 
 
 def test_fact_only_fallback_runs_inside_cold_workflow_sandbox():
-    from vercel._internal.workflow.py_sandbox import workflow_sandbox
+    from vercel.workflow._internal.py_sandbox import Sandbox
 
     loaded_analysis = sys.modules.pop("tools.analysis", None)
 
     async def scenario():
-        with workflow_sandbox(random_seed="fallback-sandbox"):
+        with Sandbox().enter():
             sandboxed_graph = importlib.import_module("workflows.graph")
             return await sandboxed_graph.run_workflow_graph(
                 _payload(),
