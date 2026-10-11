@@ -111,8 +111,8 @@ def check_connection(provider, model, reasoning, key):
             failure = ("provider_model_unavailable", "所选模型已停用或当前不可调用", 422)
         elif status == 429:
             failure = ("provider_rate_limited", "服务商当前限流，请稍后重试", 429)
-        elif isinstance(error, TimeoutError) or "Timeout" in type(error).__name__:
-            failure = ("provider_timeout", "服务商未在20秒内返回检测结果，请稍后重试", 504)
+        elif isinstance(error, TimeoutError) or getattr(error, "is_timeout", False) or "Timeout" in type(error).__name__ or status in (408, 504):
+            failure = ("provider_timeout", "服务商连接或响应超时，请稍后重试（检测上限20秒）", 504)
         elif status in (400, 422):
             failure = ("provider_parameters_rejected", "所选模型不接受当前请求参数", 422)
         elif isinstance(error, (ValueError, TypeError, AttributeError)):

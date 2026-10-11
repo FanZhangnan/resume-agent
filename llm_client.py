@@ -26,6 +26,15 @@ class ExternalRunDeadlineExceeded(CallDeadlineExceeded):
     is_run_deadline = True
 
 
+class LLMRequestError(RuntimeError):
+    """保留安全的错误类型/状态，原始服务商正文不越过客户端边界。"""
+
+    def __init__(self, message, *, status_code=None, is_timeout=False):
+        super().__init__(message)
+        self.status_code = status_code if isinstance(status_code, int) else None
+        self.is_timeout = bool(is_timeout)
+
+
 _STREAM_UNSUPPORTED_PATTERNS = (
     re.compile(
         r"\b(?:stream|streaming)\b.{0,60}\b(?:not supported|unsupported|unavailable)\b",
@@ -361,8 +370,10 @@ class LLMClient:
                 }
                 if isinstance(last_error, CallDeadlineExceeded):
                     raise last_error
-                raise RuntimeError(
-                    f"模型调用在{attempt}次尝试后失败：{_brief_error(last_error)}"
+                raise LLMRequestError(
+                    f"模型调用在{attempt}次尝试后失败：{_brief_error(last_error)}",
+                    status_code=getattr(last_error, "status_code", None),
+                    is_timeout=isinstance(last_error, TimeoutError) or "Timeout" in type(last_error).__name__,
                 ) from None
 
         raise RuntimeError("未知LLM调用错误")
@@ -572,7 +583,7 @@ def _error_fields(error):
     status = getattr(error, "status_code", None)
     if getattr(error, "is_run_deadline", False):
         category = "run_timeout"
-    elif isinstance(error, (CallDeadlineExceeded, TimeoutError)):
+    elif isinstance(error, (CallDeadlineExceeded, TimeoutError)) or getattr(error, "is_timeout", False):
         category = "timeout"
     elif isinstance(status, int) and status >= 500:
         category = "upstream"

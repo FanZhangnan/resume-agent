@@ -98,6 +98,29 @@ def test_connection_check_rejects_auth_model_and_invalid_output_safely():
                 raise AssertionError("invalid response accepted")
 
 
+def test_real_transport_failure_preserves_safe_status_for_connection_check():
+    class Failure(Exception):
+        def __init__(self, status):
+            self.status_code = status
+            super().__init__("nvapi-sensitive-transport-marker")
+
+    for status, code in ((401, "provider_auth_failed"), (403, "provider_access_denied"), (404, "provider_model_unavailable"), (410, "provider_model_unavailable"), (429, "provider_rate_limited")):
+        def create(**kwargs):
+            raise Failure(status)
+
+        transport = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        output = io.StringIO()
+        with patch("llm_client.OpenAI", return_value=transport), patch.object(config, "MAX_RETRIES", 1), contextlib.redirect_stdout(output):
+            try:
+                providers.check_connection(providers.NIM, providers.NIM_MODEL_OPTIONS[0]["id"], "", "nvapi-unit-test-key")
+            except providers.ProviderError as error:
+                assert error.code == code
+                assert "sensitive-transport-marker" not in str(error)
+            else:
+                raise AssertionError("transport failure accepted")
+        assert "sensitive-transport-marker" not in output.getvalue()
+
+
 def test_unknown_provider_model_and_reasoning_are_rejected():
     for provider, model, reasoning in (("https://untrusted.example", "", ""), (providers.NIM, "gpt-5.5", ""), (providers.NIM, providers.NIM_MODEL_OPTIONS[0]["id"], "high")):
         try:
