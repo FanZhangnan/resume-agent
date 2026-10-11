@@ -521,6 +521,26 @@ def test_worker_adapts_streaming_request_to_public_workflow_handler():
     assert seen == [("POST", "/?queue=1", "test", b"opaque-queue-message")]
 
 
+def test_worker_settles_unavailable_queue_messages_but_propagates_other_errors():
+    from unittest.mock import PropertyMock
+    from fastapi.testclient import TestClient
+    from vercel.queue import MessageNotFoundError, UnauthorizedError, CommunicationError
+    from workflows import vercel_worker as worker
+
+    for error, expected_status in (
+        (MessageNotFoundError("gone-message"), 204),
+        (UnauthorizedError(), 500),
+        (CommunicationError("queue connection failed"), 500),
+        (RuntimeError("step execution failed"), 500),
+    ):
+        handler = AsyncMock(side_effect=error)
+        with patch.object(type(worker.wf), "http_handler", new_callable=PropertyMock, return_value=handler):
+            response = TestClient(worker.app, raise_server_exceptions=False).post("/", content=b"queue-delivery")
+        assert response.status_code == expected_status, type(error).__name__
+        handler.assert_awaited_once()
+        assert "gone-message" not in response.text
+
+
 def test_worker_consumer_matches_declared_ga_service_and_preserves_wire_bytes():
     import cbor2
     from vercel.queue import sanitize_name

@@ -9,7 +9,7 @@ import sniffio
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from vercel.workflow import ENDPOINT_PATH, MANIFEST_PATH
-from vercel.queue import TopicPattern, get_subscriptions, sanitize_name, subscribe
+from vercel.queue import MessageNotFoundError, TopicPattern, get_subscriptions, sanitize_name, subscribe
 
 # Importing the workflow registry registers both durable workflow and step
 # consumers with vercel.workers before the ASGI callback app is created.
@@ -122,7 +122,13 @@ async def workflow_manifest(request: Request):
 async def workflow_delivery(request: Request, path: str):
     # The queue trigger can deliver to the function root; SDK health probes use
     # ENDPOINT_PATH. Both go through the same authenticated SDK queue handler.
-    result = await wf.http_handler(_WorkflowRequest(request))
+    try:
+        result = await wf.http_handler(_WorkflowRequest(request))
+    except MessageNotFoundError:
+        # An expired/already-settled message cannot be executed by retrying its
+        # delivery. The SDK still validates and receives the queue request;
+        # auth, transport and execution failures continue to propagate.
+        return Response(status_code=204)
     return Response(result.body, status_code=result.status, headers=result.headers)
 
 
