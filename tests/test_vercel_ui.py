@@ -40,6 +40,8 @@ def test_local_workbench_remains_byte_for_byte_unchanged():
 
 def test_full_workbench_surface_is_present():
     html = _html()
+    ids = re.findall(r'id="([^"\s]+)"', html)
+    assert len(ids) == len(set(ids)), "duplicate element IDs hide status messages"
     for element_id in (
         "app-shell", "formPane", "resume-drop", "resume-file", "resume-text",
         "jdText", "model-seg", "effort-seg", "byok-key", "mockMode",
