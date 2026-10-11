@@ -542,7 +542,8 @@ def run(request: Request,
     ip = _client_ip(request)
     is_mock = mock == "1"
     if not is_mock and not agent_config.LIVE_ENABLED:
-        raise HTTPException(503, "真实分析暂时维护中，请使用示例演示或稍后重试")
+        message = "真实分析暂时维护中，请使用示例演示或稍后重试"
+        return JSONResponse({"error": message, "detail": message, "code": "service_unavailable"}, status_code=503)
     api_key = api_key.strip()[:200]
     base_url = _resolve_gateway_base_url(base_url.strip()[:300])
     model = model.strip()[:100]

@@ -138,6 +138,7 @@ with patch.object(server, 'PUBLIC', True), patch.object(server.agent_config, 'LI
     assert 'api.defou.ai' not in str(status)
     response = client.post('/api/run', data={'resume_text':'sample', 'jd_text':'job', 'model':'gpt-5.5'})
     assert response.status_code == 503
+    assert response.json()['code'] == 'service_unavailable'
     rate.assert_not_called()
 '''
     result = run_config(code, AGENT_MOCK="1")

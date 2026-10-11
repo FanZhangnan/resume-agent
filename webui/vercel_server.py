@@ -17,9 +17,10 @@ import time
 import zipfile
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
+from delivery_summary import normalize_delivery_summary
 from public_resume import normalize_public_resume
 from public_security import (
     encrypt_api_key,
@@ -737,6 +738,17 @@ async def get_run(run_id: str, request: Request):
         response["unresolved_fixes"] = result.get("unresolved_fixes", [])
         response["model"] = result.get("model", "")
         response["reasoning"] = result.get("reasoning", "")
+        response["mock"] = result.get("mock") if isinstance(result.get("mock"), bool) else None
+        response["byok"] = result.get("byok") if isinstance(result.get("byok"), bool) else None
+        summary = result.get("delivery_summary")
+        response["delivery_summary"] = normalize_delivery_summary(summary) if isinstance(summary, dict) else None
+        if response["delivery_summary"] is not None:
+            response["delivery_summary"]["verified"] = bool(
+                response["delivery_summary"]["verified"]
+                and response["status"] == "completed"
+                and response["safe_to_deliver"]
+                and not response["unresolved_fixes"]
+            )
         response["optimized_resume_struct"] = normalize_public_resume(
             result.get("optimized_resume_struct")
         )
@@ -755,6 +767,40 @@ async def get_run(run_id: str, request: Request):
         if not updated:
             return _run_not_found_response()
     return JSONResponse(response, headers=_PRIVATE_NO_STORE)
+
+
+@app.get("/api/runs/{run_id}/resume.docx")
+async def download_resume_docx(run_id: str, request: Request):
+    try:
+        if not await _owns_run(request, run_id):
+            return _run_not_found_response()
+    except QuotaUnavailable:
+        return _quota_unavailable_response()
+    try:
+        backend = _backend()
+        if await backend.status(run_id) != "completed":
+            return JSONResponse({"error": "任务完成并通过真实性审查后才能导出 Word", "code": "resume_not_deliverable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+        result = await backend.result(run_id) or {}
+    except Exception:
+        return JSONResponse({"error": "运行结果暂不可用，请稍后重试", "code": "status_unavailable"}, status_code=503, headers=_PRIVATE_NO_STORE)
+    if (
+        result.get("status") != "completed"
+        or result.get("safe_to_deliver") is not True
+        or not isinstance(result.get("unresolved_fixes"), list)
+        or result["unresolved_fixes"]
+    ):
+        return JSONResponse({"error": "本次简历尚未满足交付条件，请先核对报告", "code": "resume_not_deliverable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+    resume = normalize_public_resume(result.get("optimized_resume_struct"))
+    if resume is None:
+        return JSONResponse({"error": "本次结果缺少可导出的结构化简历", "code": "resume_unavailable"}, status_code=409, headers=_PRIVATE_NO_STORE)
+    from resume_export import render_resume_docx
+
+    content = await asyncio.to_thread(render_resume_docx, resume)
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={**_PRIVATE_NO_STORE, "Content-Disposition": 'attachment; filename="resume.docx"'},
+    )
 
 
 @app.post("/api/runs/{run_id}/cancel")

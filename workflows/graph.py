@@ -18,6 +18,7 @@ from contracts import (
     suggestions_are_usable,
     verification_is_deliverable,
 )
+from delivery_summary import build_delivery_summary
 from public_resume import normalize_public_resume
 from report_renderer import render_report
 from utils import parse_resume_text_to_struct
@@ -53,6 +54,8 @@ def _new_state(payload):
         "job_recommendations": None,
         "correction_log": [],
         "user_clarifications": [],
+        "mock": payload.get("mock") is True,
+        "byok": bool(payload.get("credential_ref")),
     }
 
 
@@ -436,6 +439,9 @@ async def _finalize(trace, state, raw_status, model, reasoning):
         "model": model,
         "reasoning": reasoning,
         "optimized_resume_struct": _final_resume_struct(state),
+        "delivery_summary": build_delivery_summary(state, verified=deliverable),
+        "mock": state.get("mock", False),
+        "byok": state.get("byok", False),
     }
 
 
