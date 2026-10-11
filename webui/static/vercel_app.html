@@ -144,7 +144,7 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
           <input type="password" id="byok-key" placeholder="sk-…" autocomplete="off" spellcheck="false">
           <div class="note">密钥仅用于本次分析，提交后即清空；重试时需重新填写。</div>
           <button class="btn" id="checkConnectionBtn" type="button">检测连接</button>
-          <div class="banner info" id="connectionBanner" role="status"></div>
+          <div class="banner info" id="providerCheckBanner" role="status"></div>
         </details>
 
         <label class="switch-row" for="mockMode">
@@ -350,8 +350,14 @@ async function requestJson(url, options){
   let data = {};
   try{ data = await response.json(); }catch(_error){ data = {}; }
   if(!response.ok){
-    const failure = new Error(data.error || "请求失败");
-    failure.code = data.code || "request_failed";
+    const fallback = {
+      429:["当前请求过于频繁，请稍后重试", "request_rate_limited"],
+      502:["模型或托管服务暂时不可用，请稍后重试", "service_unavailable"],
+      503:["服务暂时不可用，请稍后重试", "service_unavailable"],
+      504:["服务响应超时，请稍后重试；连接检测通过也不保证完整分析成功", "request_timeout"]
+    }[response.status] || ["请求失败，请稍后重试", "request_failed"];
+    const failure = new Error(data && data.error || fallback[0]);
+    failure.code = data && data.code || fallback[1];
     failure.status = response.status;
     throw failure;
   }
@@ -434,7 +440,7 @@ function changeProvider(){
   const provider = providerOption();
   selectedModel = provider && provider.default_model || publicConfig.default_model;
   $("byok-key").value = "";
-  setBanner("connectionBanner", "", "info");
+  setBanner("providerCheckBanner", "", "info");
   if(provider && provider.requires_key){ $("advanced-settings").open = true; }
   renderProviderOptions();
   renderModelOptions();
@@ -444,9 +450,9 @@ function changeProvider(){
 
 async function checkConnection(){
   const key = $("byok-key").value.trim();
-  if(!key){ setBanner("connectionBanner", "请填写所选服务商的 API Key", "bad"); return; }
+  if(!key){ setBanner("providerCheckBanner", "请填写所选服务商的 API Key", "bad"); return; }
   if(selectedProvider === "defou" && key.startsWith("nvapi-")){
-    setBanner("connectionBanner", "这是 NVIDIA NIM Key，请先选择 NVIDIA NIM 服务商", "bad"); return;
+    setBanner("providerCheckBanner", "这是 NVIDIA NIM Key，请先选择 NVIDIA NIM 服务商", "bad"); return;
   }
   const provider = selectedProvider, model = selectedModel;
   const fd = new FormData();
@@ -454,15 +460,15 @@ async function checkConnection(){
   fd.append("reasoning", selectedReasoning); fd.append("api_key", key);
   connectionChecking = true;
   renderRunState();
-  setBanner("connectionBanner", "正在检测所选模型的 JSON 响应……", "info");
+  setBanner("providerCheckBanner", "正在检测所选模型的 JSON 响应……", "info");
   try{
     const result = await requestJson("/api/providers/check", {method:"POST",body:fd});
     if(provider === selectedProvider && model === selectedModel && key === $("byok-key").value.trim()){
-      setBanner("connectionBanner", result.message || "检测通过", "info");
+      setBanner("providerCheckBanner", result.message || "检测通过", "info");
     }
   }catch(error){
     if(provider === selectedProvider && model === selectedModel && key === $("byok-key").value.trim()){
-      setBanner("connectionBanner", publicMessage(error.message), "bad");
+      setBanner("providerCheckBanner", publicMessage(error.message), "bad");
     }
   }
   finally{ connectionChecking = false; renderRunState(); }

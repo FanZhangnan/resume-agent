@@ -9,7 +9,7 @@ NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NIM_MODEL_OPTIONS = ({
     "id": "nvidia/nemotron-3.5-lightning-30b-a3b", "label": "Nemotron 3.5 Lightning",
     "tier": "byok", "tier_label": "自带 NIM Key",
-    "status": "configured", "status_label": "已验证",
+    "status": "configured", "status_label": "实验接入",
     "reasoning_levels": ("",), "default_reasoning": "",
     "supports_temperature": True, "supports_streaming": True,
     "token_parameter": "max_tokens",

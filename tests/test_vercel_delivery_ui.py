@@ -22,7 +22,7 @@ def test_delivery_interactions_without_browser_or_credentials():
     globalThis.ui = {
       runState, PHASES, renderRunState, renderDeliverySummary, renderReasoningOptions,
       startRun, retryRun, downloadResumeWord, openRun, applyStatus, syncMockControl,
-      changeProvider, checkConnection,
+      changeProvider, checkConnection, requestJson,
       setConfig(config, model, reasoning){ publicConfig = config; selectedModel = model; selectedReasoning = reasoning; },
       getReasoning(){ return selectedReasoning; }
     };
@@ -68,9 +68,11 @@ class FormData {
 }
 const requests = [], downloads = [];
 let nextStatus = {};
+let forcedResponse = null;
 let wordResponse = {ok:true, blob:async () => ({})};
 const fetch = async (url,options = {}) => {
   requests.push({url,...options});
+  if(forcedResponse) return forcedResponse;
   if(url.endsWith("/resume.docx")) return wordResponse;
   let data = url === "/api/runs" && options.method === "POST"
     ? {run_id:"fresh", model:"auto", reasoning:"", mock:get("mockMode").checked, byok:Boolean(options.body.get("api_key"))}
@@ -213,7 +215,19 @@ const settle = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
   assert.equal(probe.body.get("provider"),"nvidia-nim");
   assert.equal(probe.body.get("model"),"nim-model");
   assert.equal(get("byok-key").value,"nvapi-unit-test-key");
-  assert(!get("connectionBanner").textContent.includes("nvapi-"));
+  assert(get("providerCheckBanner").textContent.includes("模型检测通过"));
+  assert(!get("providerCheckBanner").textContent.includes("nvapi-"));
+  for(const status of [429,502,503,504]){
+    forcedResponse = {ok:false,status,json:async () => { throw new SyntaxError("empty hosting response"); }};
+    await assert.rejects(ui.requestJson("/api/providers/check"), error => error.status === status && error.message !== "请求失败");
+  }
+  forcedResponse = {ok:false,status:403,json:async () => ({error:"此 Key 没有调用所选模型的权限",code:"provider_access_denied"})};
+  await assert.rejects(ui.requestJson("/api/providers/check"), error => error.code === "provider_access_denied" && error.message.includes("权限"));
+  forcedResponse = {ok:false,status:504,json:async () => null};
+  await ui.checkConnection();
+  assert(get("providerCheckBanner").textContent.includes("超时"));
+  assert.equal(get("connectionBanner").textContent,"");
+  forcedResponse = null;
   get("provider-select").value = "defou"; ui.changeProvider();
   get("byok-key").value = "nvapi-unit-test-key";
   const beforeMismatchedKey = requests.length;
