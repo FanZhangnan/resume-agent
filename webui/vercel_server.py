@@ -190,6 +190,18 @@ def _model_catalog():
     return {item["id"]: list(item["reasoning_levels"]) for item in config.MODEL_OPTIONS}
 
 
+def _service_config():
+    available = bool(config.LIVE_ENABLED)
+    site_funded = bool(config.API_KEY.strip())
+    message = ""
+    if not available:
+        message = "真实分析暂时维护中，仍可使用示例演示。请稍后重试。"
+    elif not site_funded:
+        message = "站点免费分析暂未配置，可使用自有 API Key 或体验示例。"
+    return {"available": available, "provider_name": config.PROVIDER_NAME,
+            "site_funded": site_funded, "message": message}
+
+
 def _session_hash(request):
     return str(getattr(request.state, "session_hash", ""))
 
@@ -448,13 +460,14 @@ async def api_config(request: Request):
         "job_search_enabled": False,
         "free_left": free_left,
         "free_per_day": quota.free_per_day,
+        "service": _service_config(),
     }
 
 
 @app.get("/api/status")
 def api_status():
     return {"deployment_mode": "vercel", "public": True,
-            "default_model": config.DEFAULT_MODEL}
+            "default_model": config.DEFAULT_MODEL, "service": _service_config()}
 
 
 @app.post("/api/runs")
@@ -476,6 +489,11 @@ async def create_run(
         return JSONResponse({"error": str(error)}, status_code=400)
 
     supplied_key = "" if mock_enabled else str(api_key or "").strip()
+    if not mock_enabled and not config.LIVE_ENABLED:
+        return JSONResponse(
+            {"error": "真实分析暂时维护中，请使用示例演示或稍后重试", "code": "service_unavailable"},
+            status_code=503,
+        )
     if len(supplied_key) > MAX_API_KEY_CHARS:
         return JSONResponse(
             {

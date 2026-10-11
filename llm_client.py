@@ -99,7 +99,8 @@ class LLMClient:
             if selected_mock is None
             else selected_mock
         )
-        self.streaming = config.STREAMING
+        model_option = config.MODEL_OPTION_BY_ID[self.model]
+        self.streaming = config.STREAMING and model_option.get("supports_streaming", True)
         if self.mock_mode:
             from mock_data import reset_mock_counters
             self._mock_step = 0
@@ -113,7 +114,7 @@ class LLMClient:
         if not effective_api_key:
             raise ValueError(
                 "未检测到API密钥！请先在终端执行：\n"
-                "export OPENAI_API_KEY=你的得否网关密钥\n"
+                "export OPENAI_API_KEY=你的模型服务密钥\n"
                 "不联网体验演示模式：AGENT_MOCK=1 python agent.py --demo"
             )
         self.client = OpenAI(
@@ -194,12 +195,14 @@ class LLMClient:
 
         model = getattr(self, "model", config.MODEL_NAME)
         reasoning = getattr(self, "reasoning", config.REASONING_EFFORT)
+        model_option = config.MODEL_OPTION_BY_ID.get(model, {})
         base_kwargs = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
-            "max_tokens": token_limit,
+            model_option.get("token_parameter", "max_tokens"): token_limit,
         }
+        if model_option.get("supports_temperature", True):
+            base_kwargs["temperature"] = temperature
         if tools:
             base_kwargs["tools"] = tools
             base_kwargs["tool_choice"] = "auto"
@@ -293,7 +296,13 @@ class LLMClient:
                     )
                     continue
                 print(f"⚠️  LLM调用失败（第{attempt}/{max_attempts}次尝试）：{_brief_error(e)}")
-                if not is_deadline and attempt < max_attempts:
+                status_code = getattr(e, "status_code", None)
+                permanent_request_error = (
+                    isinstance(status_code, int)
+                    and 400 <= status_code < 500
+                    and status_code not in (408, 409, 429)
+                )
+                if not is_deadline and not permanent_request_error and attempt < max_attempts:
                     # 指数退避：3s → 15s → 60s，给过载的网关恢复时间
                     delay = min(config.RETRY_DELAY * (5 ** (attempt - 1)), config.RETRY_DELAY_CAP)
                     try:
@@ -345,8 +354,8 @@ class LLMClient:
                 if isinstance(last_error, CallDeadlineExceeded):
                     raise last_error
                 raise RuntimeError(
-                    f"LLM调用连续{max_attempts}次失败：{_brief_error(last_error)}"
-                ) from last_error
+                    f"模型调用在{attempt}次尝试后失败：{_brief_error(last_error)}"
+                ) from None
 
         raise RuntimeError("未知LLM调用错误")
 
@@ -501,11 +510,21 @@ class LLMClient:
 
 
 def _brief_error(error):
-    """把冗长的网关错误压缩成一行可读信息"""
-    text = str(error)
-    if len(text) > 300:
-        text = text[:300] + "...(已截断)"
-    return text
+    """只使用状态码解释故障，不把上游正文或凭据写入日志。"""
+    status = getattr(error, "status_code", None)
+    if status in (401, 403):
+        return "模型服务认证失败，请检查 API Key 和服务权限"
+    if status == 404:
+        return "模型或 API 路径不可用，请检查服务端配置"
+    if status == 429:
+        return "模型服务额度不足或请求过多，请稍后重试"
+    if isinstance(status, int) and status >= 500:
+        return "模型服务暂时不可用，请稍后重试"
+    if isinstance(status, int) and status >= 400:
+        return "模型服务拒绝请求，请检查模型和参数配置"
+    if isinstance(error, (CallDeadlineExceeded, TimeoutError)):
+        return "模型调用超时，请稍后重试"
+    return "模型服务通信失败，请检查连接或稍后重试"
 
 
 def _elapsed_ms(started):

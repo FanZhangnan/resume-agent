@@ -88,11 +88,14 @@ def _resolve_model_reasoning(model, reasoning):
 
 
 def _resolve_gateway_base_url(value):
-    """规范化并校验本次运行的得否网关地址。"""
+    """运行只能使用服务端已配置的网关，不能通过表单转发站点密钥。"""
     try:
-        return agent_config.normalize_gateway_base_url(value)
+        selected = agent_config.normalize_gateway_base_url(value or agent_config.API_BASE_URL)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
+    if selected != agent_config.API_BASE_URL:
+        raise HTTPException(400, "网关地址仅由服务端 AGENT_BASE_URL 配置")
+    return selected
 
 
 # ==================== 会话 / 身份 ====================

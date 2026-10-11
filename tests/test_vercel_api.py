@@ -159,6 +159,30 @@ def test_status_reports_vercel_mode():
     assert body["deployment_mode"] == "vercel"
 
 
+def test_service_maintenance_stops_real_runs_before_admission_but_keeps_demo():
+    client, backend, _, _, _ = _client()
+    with patch.object(server.config, "LIVE_ENABLED", False):
+        configuration = client.get("/api/config").json()
+        assert configuration["service"]["available"] is False
+        assert "api.defou.ai" not in str(configuration)
+        denied = _start_ok(client)
+        assert denied.status_code == 503
+        assert denied.json()["code"] == "service_unavailable"
+        assert backend.started == []
+        demo = _start_ok(client, data={"mock": "1"})
+        assert demo.status_code == 202
+
+
+def test_byok_can_run_without_site_funding():
+    client, _, _, _, _ = _client()
+    with patch.object(server.config, "API_KEY", ""):
+        configuration = client.get("/api/config").json()
+        assert configuration["service"]["available"] is True
+        assert configuration["service"]["site_funded"] is False
+        accepted = _start_ok(client, data={"api_key": "unit-test-user-key"})
+        assert accepted.status_code == 202
+
+
 def test_entry_responses_issue_secure_http_only_session_and_rotate_invalid_cookie():
     client, _, _, _, _ = _client()
     first = client.get("/api/config")
