@@ -21,6 +21,7 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
+import providers
 from delivery_summary import normalize_delivery_summary
 from public_resume import normalize_public_resume
 from public_security import (
@@ -468,6 +469,8 @@ async def api_config(request: Request):
         ],
         "default_model": config.DEFAULT_MODEL,
         "default_reasoning": config.DEFAULT_REASONING_BY_MODEL,
+        "providers": providers.public_catalog(),
+        "default_provider": providers.DEFOU,
         "deployment_mode": "vercel",
         "max_upload_bytes": MAX_UPLOAD_BYTES,
         "job_search_enabled": False,
@@ -483,6 +486,35 @@ def api_status():
             "default_model": config.DEFAULT_MODEL, "service": _service_config()}
 
 
+async def _check_provider_connection(provider, model, reasoning, key):
+    return await asyncio.to_thread(providers.check_connection, provider, model, reasoning, key)
+
+
+def _provider_error_response(error):
+    return JSONResponse({"error": str(error), "code": error.code}, status_code=error.status, headers=_PRIVATE_NO_STORE)
+
+
+@app.post("/api/providers/check")
+async def provider_check(provider: str = Form("defou"), model: str = Form(""),
+                         reasoning: str = Form(""), api_key: str = Form("")):
+    if not config.LIVE_ENABLED:
+        return JSONResponse({"error": "真实调用维护中", "code": "service_unavailable"}, status_code=503)
+    if len(api_key) > MAX_API_KEY_CHARS:
+        return JSONResponse({"error": "API Key 超过200字符上限", "code": "api_key_too_long"}, status_code=413)
+    try:
+        provider = providers.normalize_provider(provider)
+        model, reasoning = providers.resolve_model(provider, model, reasoning)
+        key = providers.validate_key_binding(provider, api_key)
+        if not key:
+            raise providers.ProviderError("provider_key_required", "检测连接需要填写自己的 API Key")
+        result = await _check_provider_connection(provider, model, reasoning, key)
+    except providers.ProviderError as error:
+        return _provider_error_response(error)
+    except ValueError:
+        return JSONResponse({"error": "服务商或模型参数无效", "code": "unsupported_model"}, status_code=400)
+    return JSONResponse(result, headers=_PRIVATE_NO_STORE)
+
+
 @app.post("/api/runs")
 async def create_run(
     request: Request,
@@ -492,12 +524,16 @@ async def create_run(
     reasoning: str = Form(""),
     job_search: str = Form("0"),
     api_key: str = Form(""),
+    provider: str = Form("defou"),
     mock: str = Form("0"),
     resume_file: UploadFile = File(None),
 ):
     try:
-        model, reasoning = config.validate_model_reasoning(model, reasoning)
+        provider = providers.normalize_provider(provider)
+        model, reasoning = providers.resolve_model(provider, model, reasoning)
         mock_enabled = _parse_mock(mock)
+    except providers.ProviderError as error:
+        return _provider_error_response(error)
     except ValueError as error:
         return JSONResponse({"error": str(error)}, status_code=400)
 
@@ -516,6 +552,11 @@ async def create_run(
             status_code=413,
         )
     byok = bool(supplied_key)
+    if not mock_enabled:
+        try:
+            providers.validate_key_binding(provider, supplied_key)
+        except providers.ProviderError as error:
+            return _provider_error_response(error)
     if not mock_enabled and not byok and not config.API_KEY.strip():
         return JSONResponse(
             {
@@ -544,6 +585,11 @@ async def create_run(
         )
 
     now = time.time()
+    if byok:
+        try:
+            await _check_provider_connection(provider, model, reasoning, supplied_key)
+        except providers.ProviderError as error:
+            return _provider_error_response(error)
     quota = _quota()
     session_hash = _session_hash(request)
     try:
@@ -586,6 +632,7 @@ async def create_run(
             "resume_text": text,
             "jd_text": jd_text.strip(),
             "model": model,
+            "provider": provider,
             "reasoning": reasoning,
             "job_search": False,
             "deadline_epoch": now + float(config.RUN_TIMEOUT),
@@ -653,6 +700,7 @@ async def create_run(
             run_id,
             {
                 "model": model,
+                "provider": provider,
                 "reasoning": reasoning,
                 "status": "running",
                 "created_at": int(now),
@@ -679,6 +727,7 @@ async def create_run(
             "deadline_epoch": payload["deadline_epoch"],
             "stages": stage_rows,
             "model": model,
+            "provider": provider,
             "reasoning": reasoning,
             "free_left": admission["free_left"],
             "mock": mock_enabled,
@@ -747,6 +796,7 @@ async def get_run(run_id: str, request: Request):
         "stages": _stage_rows(stage_docs),
         "mock": snapshot["meta"].get("mock") if isinstance(snapshot["meta"].get("mock"), bool) else None,
         "byok": snapshot["meta"].get("byok") if isinstance(snapshot["meta"].get("byok"), bool) else None,
+        "provider": snapshot["meta"].get("provider", providers.DEFOU),
     }
     if sdk_status == "completed":
         try:
@@ -770,6 +820,8 @@ async def get_run(run_id: str, request: Request):
         if response["status"] == "completed" and not response["safe_to_deliver"]:
             response["status"] = "partial"
         response["model"] = result.get("model", "")
+        response["provider"] = result.get("provider", providers.DEFOU)
+        response["delivery_mode"] = result.get("delivery_mode") if result.get("delivery_mode") in ("original_text", "ai_rewrite", "unverified") else "unknown"
         response["reasoning"] = result.get("reasoning", "")
         response["mock"] = result.get("mock") if isinstance(result.get("mock"), bool) else None
         response["byok"] = result.get("byok") if isinstance(result.get("byok"), bool) else None

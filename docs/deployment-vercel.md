@@ -185,3 +185,16 @@ GitHub Actions 只跑离线检查；它不能证明新供应商及 Vercel durabl
 隐私文案中的 24 小时只表示本项目的 Cookie、历史查看入口、Redis 元数据和脱敏轨迹的访问窗口。
 Workflow 输入和结果的物理保留由托管平台政策决定；Redis 到期或删除历史入口不能证明平台已删除 Workflow 内容。
 不得把该访问窗口宣传成输入或结果在 24 小时内物理删除的保证。
+# NVIDIA NIM BYOK 接入
+
+服务商字段为 `provider=defou` 或 `provider=nvidia-nim`。旧请求省略字段时继续使用得否。
+NIM 的官方接口与已实测模型由服务端固定目录管理，不能通过表单覆盖目的地址。
+NIM 使用调用者自己的 Key，保留现有 AES-GCM 临时凭据及归属校验；不新增生产 NIM 密钥。
+
+`POST /api/providers/check` 接收服务商、模型、分析参数和调用者 Key，执行小型 JSON 检测，
+返回 `no-store` 的安全结论；不返回供应商原始异常体。`POST /api/runs` 的 BYOK 路径同样在
+配额准入前检测。模型列表、接口响应200或一次小型JSON成功不能替代完整流程验收。
+
+验收至少覆盖：NIM Key 不发往得否、NIM 不借用站点 Key、未知服务商/模型/参数拒绝、
+坏 Key 不启动任务与不消耗站点额度、完整简历/JD/NIM 工作流及实际 Word 下载、
+原供应商兼容、跨会话隔离、日志脱敏和已合并分支自动清理。

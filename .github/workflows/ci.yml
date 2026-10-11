@@ -31,5 +31,5 @@ jobs:
         run: python scripts/check.py
       - name: Check Python syntax and whitespace
         run: |
-          python -m compileall -q agent.py config.py llm_client.py delivery_summary.py resume_export.py tools webui workflows
+          python -m compileall -q agent.py config.py llm_client.py providers.py cohort_check.py delivery_summary.py resume_export.py tools webui workflows
           git diff --check

@@ -128,6 +128,9 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
         <label class="field" for="jdText">目标岗位 JD <em>（必填）</em></label>
         <textarea id="jdText" rows="6" placeholder="粘贴岗位职责、任职要求与加分项，内容越完整，建议越具体。" autocomplete="off"></textarea>
 
+        <label class="field" for="provider-select">模型服务商</label>
+        <select id="provider-select" style="width:100%;padding:10px;border:1px solid #d4d4d4;border-radius:4px;background:white;font:inherit"></select>
+        <div class="note" id="provider-hint"></div>
         <label class="field">分析模型</label>
         <div class="model-seg" id="model-seg" role="group" aria-label="模型引擎"></div>
         <div id="reasoning-control">
@@ -140,6 +143,8 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
           <label class="field" for="byok-key">API Key <em>（仅本次请求使用）</em></label>
           <input type="password" id="byok-key" placeholder="sk-…" autocomplete="off" spellcheck="false">
           <div class="note">密钥仅用于本次分析，提交后即清空；重试时需重新填写。</div>
+          <button class="btn" id="checkConnectionBtn" type="button">检测连接</button>
+          <div class="banner info" id="connectionBanner" role="status"></div>
         </details>
 
         <label class="switch-row" for="mockMode">
@@ -295,10 +300,12 @@ const runState = {
   phase: PHASES.idle,
   runId:"", startedAt:0, status:"", stages:[], report:"",
   safeToDeliver:false, unresolvedFixes:[], resumeStruct:null, deliverySummary:null, startFailed:false,
-  model:"", reasoning:"", mock:null, byok:false
+  model:"", reasoning:"", mock:null, byok:false, provider:"defou", deliveryMode:"unknown"
 };
 let publicConfig = null;
 let selectedModel = "";
+let selectedProvider = "defou";
+let connectionChecking = false;
 let selectedReasoning = "";
 let sourceMode = "paste";
 let pickedFile = null;
@@ -360,7 +367,7 @@ function setBanner(id, text, kind){
 function publicMessage(value){
   return String(value || "").replace(/https?:\/\/[^\s]+/gi, "[服务地址]")
     .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/gi, "[服务地址]")
-    .replace(/\bsk-[a-z0-9_-]+/gi, "[密钥已隐藏]");
+    .replace(/\b(?:sk|nvapi)-[a-z0-9_-]+/gi, "[密钥已隐藏]");
 }
 
 function setError(text){ setBanner("errorBanner", publicMessage(text), "bad"); }
@@ -395,16 +402,81 @@ function formatElapsed(milliseconds){
 
 function humanStatus(status){ return STATE_LABEL[status] || status || "待运行"; }
 
+function providerOption(){
+  return publicConfig && Array.isArray(publicConfig.providers)
+    ? publicConfig.providers.find(function(item){ return item.id === selectedProvider; }) : null;
+}
+
+function currentModelOptions(){
+  const provider = providerOption();
+  return provider ? provider.model_options : publicConfig && publicConfig.model_options || [];
+}
+
+function renderProviderOptions(){
+  const select = $("provider-select");
+  select.textContent = "";
+  const providers = publicConfig && Array.isArray(publicConfig.providers)
+    ? publicConfig.providers : [{id:"defou",label:"得否 API"}];
+  providers.forEach(function(provider){
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent = provider.label;
+    select.appendChild(option);
+  });
+  select.value = selectedProvider;
+  const provider = providerOption();
+  $("provider-hint").textContent = provider && provider.description || "使用管理员配置的模型服务";
+  $("byok-key").placeholder = selectedProvider === "nvidia-nim" ? "nvapi-…" : "得否 API Key";
+}
+
+function changeProvider(){
+  selectedProvider = $("provider-select").value;
+  const provider = providerOption();
+  selectedModel = provider && provider.default_model || publicConfig.default_model;
+  $("byok-key").value = "";
+  setBanner("connectionBanner", "", "info");
+  if(provider && provider.requires_key){ $("advanced-settings").open = true; }
+  renderProviderOptions();
+  renderModelOptions();
+  renderReasoningOptions(modelOption(selectedModel).default_reasoning);
+  renderRunState();
+}
+
+async function checkConnection(){
+  const key = $("byok-key").value.trim();
+  if(!key){ setBanner("connectionBanner", "请填写所选服务商的 API Key", "bad"); return; }
+  if(selectedProvider === "defou" && key.startsWith("nvapi-")){
+    setBanner("connectionBanner", "这是 NVIDIA NIM Key，请先选择 NVIDIA NIM 服务商", "bad"); return;
+  }
+  const provider = selectedProvider, model = selectedModel;
+  const fd = new FormData();
+  fd.append("provider", provider); fd.append("model", model);
+  fd.append("reasoning", selectedReasoning); fd.append("api_key", key);
+  connectionChecking = true;
+  renderRunState();
+  setBanner("connectionBanner", "正在检测所选模型的 JSON 响应……", "info");
+  try{
+    const result = await requestJson("/api/providers/check", {method:"POST",body:fd});
+    if(provider === selectedProvider && model === selectedModel && key === $("byok-key").value.trim()){
+      setBanner("connectionBanner", result.message || "检测通过", "info");
+    }
+  }catch(error){
+    if(provider === selectedProvider && model === selectedModel && key === $("byok-key").value.trim()){
+      setBanner("connectionBanner", publicMessage(error.message), "bad");
+    }
+  }
+  finally{ connectionChecking = false; renderRunState(); }
+}
+
 function modelOption(modelId){
   if(!publicConfig || !Array.isArray(publicConfig.model_options)){ return null; }
-  return publicConfig.model_options.find(function(item){ return item.id === modelId; }) || null;
+  return currentModelOptions().find(function(item){ return item.id === modelId; }) || null;
 }
 
 function renderModelOptions(){
   const container = $("model-seg");
   container.textContent = "";
-  const options = publicConfig && Array.isArray(publicConfig.model_options)
-    ? publicConfig.model_options : [];
+  const options = currentModelOptions();
   options.forEach(function(option){
     const button = document.createElement("button");
     button.type = "button";
@@ -416,7 +488,7 @@ function renderModelOptions(){
     meta.textContent = [option.tier_label, option.status_label].filter(Boolean).join(" · ");
     button.append(title, meta);
     button.addEventListener("click", function(){
-      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
+      if(connectionChecking || runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
       selectedModel = option.id;
       const preferred = publicConfig.default_reasoning && publicConfig.default_reasoning[selectedModel];
       renderModelOptions();
@@ -449,7 +521,7 @@ function renderReasoningOptions(preferred){
     button.textContent = labels[level] || "自定义深度";
     button.classList.toggle("on", level === selectedReasoning);
     button.addEventListener("click", function(){
-      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
+      if(connectionChecking || runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
       selectedReasoning = level;
       renderReasoningOptions();
     });
@@ -459,6 +531,8 @@ function renderReasoningOptions(preferred){
 
 async function loadConfig(){
   publicConfig = await requestJson("/api/config");
+  selectedProvider = publicConfig.default_provider || "defou";
+  renderProviderOptions();
   selectedModel = publicConfig.default_model || (
     publicConfig.model_options && publicConfig.model_options[0]
       ? publicConfig.model_options[0].id : ""
@@ -596,6 +670,7 @@ function renderMeta(){
   const rows = [
     ["运行 ID", runState.runId || "—"],
     ["状态", humanStatus(runState.status) || "待命"],
+    ["服务商", runState.provider === "nvidia-nim" ? "NVIDIA NIM" : "得否 API"],
     ["模型", runState.model || selectedModel || "—"],
     ["模式", runState.mock === true ? "离线演示（Mock）" : runState.mock === false ? "真实分析" : "历史任务 · 模式未知"]
   ];
@@ -638,6 +713,7 @@ function renderDeliverySummary(){
   $("changes-block").classList.toggle("hidden", !hasSummary);
   $("summaryVerified").textContent = runState.mock === true ? "示例数据 · 请勿用于投递"
     : runState.mock === null && runState.runId ? "历史任务 · 模式未知，请核对后使用"
+    : runState.deliveryMode === "original_text" ? "仅保留原文 · 未交付 AI 改写"
     : hasSummary ? (summary.verified === true && canExportResume() ? "已完成真实性审查 · 请核对后投递" : "修改建议待核对") : "";
   const changes = $("summaryChanges");
   changes.textContent = "";
@@ -708,9 +784,11 @@ function renderRunState(){
   $("card-pipe").classList.toggle("hidden", !hasRun);
   $("stream-empty").classList.toggle("hidden", hasRun);
   $("stream-content").classList.toggle("hidden", !hasRun);
-  $("startBtn").disabled = active || !publicConfig || (!serviceAvailable() && !$("mockMode").checked);
+  $("startBtn").disabled = active || connectionChecking || !publicConfig || (!serviceAvailable() && !$("mockMode").checked);
   $("retry-control").classList.toggle("hidden", !(terminal(runState.status) || runState.startFailed));
   $("retryBtn").disabled = $("startBtn").disabled;
+  $("provider-select").disabled = active || connectionChecking;
+  $("checkConnectionBtn").disabled = active || connectionChecking || $("mockMode").checked || !serviceAvailable();
   renderServiceState();
   $("demoBtn").disabled = active || !publicConfig;
   $("cancelBtn").classList.toggle("hidden", !active || runState.phase === PHASES.submitting);
@@ -750,6 +828,8 @@ function applyStatus(data){
     runState.deliverySummary = data.delivery_summary || null;
   }
   if(data.model){ runState.model = data.model; }
+  if(data.provider){ runState.provider = data.provider; }
+  if(Object.prototype.hasOwnProperty.call(data, "delivery_mode")){ runState.deliveryMode = data.delivery_mode; }
   if(typeof data.reasoning === "string"){ runState.reasoning = data.reasoning; }
   if(Object.prototype.hasOwnProperty.call(data, "mock")){
     runState.mock = typeof data.mock === "boolean" ? data.mock : null;
@@ -847,6 +927,8 @@ function resetRunForStart(){
   runState.unresolvedFixes = [];
   runState.resumeStruct = null;
   runState.deliverySummary = null;
+  runState.deliveryMode = "unknown";
+  runState.provider = selectedProvider;
   runState.startFailed = false;
   runState.model = selectedModel;
   runState.reasoning = selectedReasoning;
@@ -887,6 +969,13 @@ async function startRun(useDemo){
   const option = modelOption(selectedModel);
   if(!option || !Array.isArray(option.reasoning_levels) || (option.reasoning_levels.length && !option.reasoning_levels.includes(selectedReasoning))){ setError("模型配置尚未加载完成。"); return; }
   if(!$("mockMode").checked && !serviceAvailable()){ setError("模型服务正在维护，可使用离线演示查看流程。"); return; }
+  const suppliedKey = $("byok-key").value.trim();
+  if(!$("mockMode").checked && selectedProvider === "nvidia-nim" && !suppliedKey){
+    setError("NVIDIA NIM 需要填写自己的 API Key"); $("advanced-settings").open = true; $("byok-key").focus(); return;
+  }
+  if(!$("mockMode").checked && selectedProvider === "defou" && suppliedKey.startsWith("nvapi-")){
+    setError("这是 NVIDIA NIM Key，请先选择 NVIDIA NIM 服务商"); return;
+  }
 
   setError("");
   stopPolling();
@@ -898,6 +987,7 @@ async function startRun(useDemo){
   if(sourceMode === "file" && pickedFile){ fd.append("resume_file", pickedFile, pickedFile.name); }
   fd.append("jd_text", jdText);
   fd.append("model", selectedModel);
+  fd.append("provider", selectedProvider);
   if(selectedReasoning !== ""){ fd.append("reasoning", selectedReasoning); }
   fd.append("job_search", "0");
   const mock = $("mockMode").checked;
@@ -916,6 +1006,7 @@ async function startRun(useDemo){
     runState.phase = PHASES.running;
     runState.stages = Array.isArray(data.stages) ? data.stages : [];
     runState.model = data.model || selectedModel;
+    runState.provider = data.provider || selectedProvider;
     runState.reasoning = typeof data.reasoning === "string" ? data.reasoning : selectedReasoning;
     runState.mock = typeof data.mock === "boolean" ? data.mock : null;
     runState.byok = Boolean(data.byok);
@@ -1059,7 +1150,7 @@ async function deleteRun(runId){
       stopPolling();
       Object.assign(runState, {
         phase:PHASES.idle,runId:"",startedAt:0,status:"",stages:[],report:"",
-        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,deliverySummary:null,startFailed:false,model:"",reasoning:"",mock:null,byok:false
+        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,deliverySummary:null,startFailed:false,model:"",reasoning:"",mock:null,byok:false,provider:"defou",deliveryMode:"unknown"
       });
       renderRunState();
     }
@@ -1204,7 +1295,7 @@ async function downloadResumeWord(){
     if(runId !== runState.runId || !canExportResume()){ return; }
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = "优化简历.docx";
+    anchor.download = runState.deliveryMode === "original_text" ? "简历原文排版.docx" : "优化简历.docx";
     anchor.click();
     setTimeout(function(){ URL.revokeObjectURL(anchor.href); }, 1000);
   }catch(error){ setError(error.message || "Word 下载失败，请稍后重试。"); }
@@ -1282,6 +1373,9 @@ function bindEvents(){
     setPickedFile(event.target.files ? event.target.files[0] : null);
   });
   $("mockMode").addEventListener("change", syncMockControl);
+  $("provider-select").addEventListener("change", changeProvider);
+  $("checkConnectionBtn").addEventListener("click", checkConnection);
+  $("byok-key").addEventListener("input", function(){ setBanner("connectionBanner", "", "info"); });
   $("startBtn").addEventListener("click", function(){ startRun(false); });
   $("demoBtn").addEventListener("click", function(){ startRun(true); });
   $("cancelBtn").addEventListener("click", cancelRun);

@@ -31,6 +31,7 @@ _PUBLIC_WORKFLOW_PAYLOAD_FIELDS = (
     "credential_ref",
     "session_hash",
     "mock",
+    "provider",
 )
 
 
@@ -57,6 +58,7 @@ async def _run_tool(
     deadline_epoch,
     credential_ref=None,
     mock=None,
+    provider="defou",
 ):
     from runtime_context import RunSettings
 
@@ -84,6 +86,7 @@ async def _run_tool(
         deadline_epoch,
         api_key=api_key,
         mock=mock,
+        provider=provider,
     )
     started = time.monotonic()
     result = await asyncio.to_thread(_run_tool_sync, tool_name, arguments, settings)
@@ -158,40 +161,40 @@ async def step_require_public_binding(run_id, admission_id, session_hash):
 
 @_paid_llm_step
 async def step_extract(
-    resume_text, model, reasoning, deadline_epoch, credential_ref=None, mock=None,
+    resume_text, model, reasoning, deadline_epoch, credential_ref=None, mock=None, provider="defou",
 ):
     return await _run_tool(
         "extract_resume_info", {"resume_text": resume_text},
-        model, reasoning, deadline_epoch, credential_ref, mock,
+        model, reasoning, deadline_epoch, credential_ref, mock, provider,
     )
 
 
 @_paid_llm_step
 async def step_analyze_jd(
-    jd_text, model, reasoning, deadline_epoch, credential_ref=None, mock=None,
+    jd_text, model, reasoning, deadline_epoch, credential_ref=None, mock=None, provider="defou",
 ):
     return await _run_tool(
         "analyze_jd", {"jd_text": jd_text}, model, reasoning, deadline_epoch,
-        credential_ref, mock,
+        credential_ref, mock, provider,
     )
 
 
 @_paid_llm_step
 async def step_match(
     resume_info, jd_analysis, model, reasoning, deadline_epoch,
-    credential_ref=None, mock=None,
+    credential_ref=None, mock=None, provider="defou",
 ):
     return await _run_tool(
         "calculate_match",
         {"resume_info": resume_info, "jd_analysis": jd_analysis},
-        model, reasoning, deadline_epoch, credential_ref, mock,
+        model, reasoning, deadline_epoch, credential_ref, mock, provider,
     )
 
 
 @_paid_llm_step
 async def step_suggest(resume_info, jd_analysis, match_result, fix_instructions,
                        model, reasoning, deadline_epoch, credential_ref=None,
-                       mock=None):
+                       mock=None, provider="defou"):
     arguments = {
         "resume_info": resume_info,
         "jd_analysis": jd_analysis,
@@ -201,14 +204,14 @@ async def step_suggest(resume_info, jd_analysis, match_result, fix_instructions,
         arguments["fix_instructions"] = list(fix_instructions)
     return await _run_tool(
         "generate_suggestions", arguments, model, reasoning, deadline_epoch,
-        credential_ref, mock,
+        credential_ref, mock, provider,
     )
 
 
 @_paid_llm_step
 async def step_verify(resume_info, jd_analysis, match_result, suggestions,
                       model, reasoning, deadline_epoch, credential_ref=None,
-                      mock=None):
+                      mock=None, provider="defou"):
     return await _run_tool(
         "verify_output",
         {
@@ -217,7 +220,7 @@ async def step_verify(resume_info, jd_analysis, match_result, suggestions,
             "match_result": match_result,
             "suggestions": suggestions,
         },
-        model, reasoning, deadline_epoch, credential_ref, mock,
+        model, reasoning, deadline_epoch, credential_ref, mock, provider,
     )
 
 
@@ -278,44 +281,45 @@ class VercelOperations:
     """Durable-step adapter exposing the graph's operation surface."""
 
     def __init__(
-        self, model, reasoning, deadline_epoch, credential_ref=None, mock=None,
+        self, model, reasoning, deadline_epoch, credential_ref=None, mock=None, provider="defou",
     ):
         self._model = model
         self._reasoning = reasoning
         self._deadline = deadline_epoch
         self._credential_ref = credential_ref
         self._mock = mock
+        self._provider = provider
 
     async def extract(self, resume_text):
         return await step_extract(
             resume_text, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock,
+            self._credential_ref, self._mock, self._provider,
         )
 
     async def analyze_jd(self, jd_text):
         return await step_analyze_jd(
             jd_text, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock,
+            self._credential_ref, self._mock, self._provider,
         )
 
     async def match(self, resume_info, jd_analysis):
         return await step_match(
             resume_info, jd_analysis, self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock,
+            self._credential_ref, self._mock, self._provider,
         )
 
     async def suggest(self, resume_info, jd_analysis, match_result, fix_instructions=None):
         return await step_suggest(
             resume_info, jd_analysis, match_result, fix_instructions,
             self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock,
+            self._credential_ref, self._mock, self._provider,
         )
 
     async def verify(self, resume_info, jd_analysis, match_result, suggestions):
         return await step_verify(
             resume_info, jd_analysis, match_result, suggestions,
             self._model, self._reasoning, self._deadline,
-            self._credential_ref, self._mock,
+            self._credential_ref, self._mock, self._provider,
         )
 
 
@@ -367,6 +371,7 @@ async def resume_workflow(payload):
         payload.get("deadline_epoch"),
         payload.get("credential_ref"),
         payload.get("mock"),
+        payload.get("provider", "defou"),
     )
     try:
         result = await run_workflow_graph(payload, operations, trace)

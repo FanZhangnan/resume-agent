@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import config
+import providers
 
 
 @dataclass(frozen=True)
@@ -16,14 +17,18 @@ class RunSettings:
     deadline_epoch: Optional[float] = None
     api_key: Optional[str] = field(default=None, repr=False)
     mock: Optional[bool] = None
+    provider: str = providers.DEFOU
 
     def __post_init__(self):
-        model, reasoning = config.validate_model_reasoning(
+        provider = providers.normalize_provider(self.provider)
+        model, reasoning = providers.resolve_model(
+            provider,
             self.model,
             self.reasoning,
         )
         object.__setattr__(self, "model", model)
         object.__setattr__(self, "reasoning", reasoning)
+        object.__setattr__(self, "provider", provider)
         if self.deadline_epoch is not None:
             object.__setattr__(self, "deadline_epoch", float(self.deadline_epoch))
         api_key = None if self.api_key is None else str(self.api_key).strip()

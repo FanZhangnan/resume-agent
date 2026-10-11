@@ -106,6 +106,7 @@ def parse_resume_text_to_struct(text):
         "邮箱": "email", "邮件": "email", "所在地": "location",
         "城市": "location", "目标岗位": "target_role",
         "求职意向": "target_role",
+        "求职方向": "target_role",
     }
 
     def _new_entry(line, keys):
@@ -123,6 +124,11 @@ def parse_resume_text_to_struct(text):
         if not line:
             continue
         field_match = re.match(r"^([^:：]+)[:：]\s*(.*)$", line)
+        if section is None and field_match and field_match.group(1).lower() in (
+            "个人作品集", "作品集", "个人网站", "github", "portfolio", "website", "linkedin",
+        ):
+            struct["extras"].append(line)
+            continue
         if section is None and field_match and field_match.group(1) in basic_fields:
             struct["basic_info"][basic_fields[field_match.group(1)]] = (
                 field_match.group(2).strip()

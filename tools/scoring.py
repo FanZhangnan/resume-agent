@@ -478,6 +478,7 @@ def _is_degree_requirement(requirement_text):
     return bool(
         _requirement_credential_terms(requirement_text)
         or "degree" in requirement_terms
+        or "相关专业" in _clean_text(requirement_text)
     )
 
 

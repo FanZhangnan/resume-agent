@@ -22,6 +22,7 @@ def test_delivery_interactions_without_browser_or_credentials():
     globalThis.ui = {
       runState, PHASES, renderRunState, renderDeliverySummary, renderReasoningOptions,
       startRun, retryRun, downloadResumeWord, openRun, applyStatus, syncMockControl,
+      changeProvider, checkConnection,
       setConfig(config, model, reasoning){ publicConfig = config; selectedModel = model; selectedReasoning = reasoning; },
       getReasoning(){ return selectedReasoning; }
     };
@@ -189,6 +190,36 @@ const settle = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
   assert(get("run-meta").textContent.includes("模式未知"));
   ui.runState.reasoning = "high"; ui.applyStatus({reasoning:"",status:"completed"});
   assert.equal(ui.runState.reasoning,"");
+  ready();
+  ui.setConfig({...config, default_model:"auto", providers:[
+    {id:"defou",label:"得否",default_model:"auto",model_options:config.model_options},
+    {id:"nvidia-nim",label:"NVIDIA NIM",requires_key:true,default_model:"nim-model",model_options:[{id:"nim-model",reasoning_levels:[""],default_reasoning:""}]}
+  ]},"auto","");
+  get("provider-select").value = "nvidia-nim";
+  get("byok-key").value = "old-provider-key";
+  ui.changeProvider();
+  assert.equal(get("byok-key").value,"");
+  assert(get("advanced-settings").open);
+  assert(get("reasoning-control").classList.contains("hidden"));
+  const beforeMissingKey = requests.length;
+  await ui.startRun(false);
+  assert.equal(requests.length,beforeMissingKey);
+  assert(get("errorBanner").textContent.includes("NVIDIA NIM"));
+  get("byok-key").value = "nvapi-unit-test-key";
+  nextStatus = {ok:true,message:"模型检测通过；长任务仍可能失败"};
+  await ui.checkConnection();
+  const probe = requests.at(-1);
+  assert.equal(probe.url,"/api/providers/check");
+  assert.equal(probe.body.get("provider"),"nvidia-nim");
+  assert.equal(probe.body.get("model"),"nim-model");
+  assert.equal(get("byok-key").value,"nvapi-unit-test-key");
+  assert(!get("connectionBanner").textContent.includes("nvapi-"));
+  get("provider-select").value = "defou"; ui.changeProvider();
+  get("byok-key").value = "nvapi-unit-test-key";
+  const beforeMismatchedKey = requests.length;
+  await ui.startRun(false);
+  assert.equal(requests.length,beforeMismatchedKey);
+  assert(get("errorBanner").textContent.includes("先选择 NVIDIA NIM"));
   console.log("PASS offline UI interactions: summaries, injection safety, legacy runs, maintenance/Mock/BYOK, empty reasoning, gated Word, retry and stale downloads");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 '''.replace("SCRIPT", json.dumps(script))
