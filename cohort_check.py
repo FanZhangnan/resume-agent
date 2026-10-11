@@ -3,6 +3,14 @@
 import re
 
 
+def job_grounded_risks(jd_text, risks):
+    """JD未提及成绩时，不把模型自行推断的GPA门槛呈现为岗位风险。"""
+    has_grade_requirement = bool(re.search(r"gpa|绩点|成绩", str(jd_text or ""), re.I))
+    return [risk for risk in risks if isinstance(risk, str) and (
+        has_grade_requirement or not re.search(r"gpa|绩点", risk, re.I)
+    )] if isinstance(risks, list) else []
+
+
 def graduation_warning(jd_text, resume_info):
     cohorts = []
     for match in re.finditer(r"((?:20\d{2}\s*(?:[/、,，及和\-–]\s*)?)+)\s*届", str(jd_text or "")):
