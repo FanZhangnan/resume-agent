@@ -1,6 +1,9 @@
 """Private ASGI adapter for Vercel's GA service queue trigger."""
 
 import asyncio
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import wraps
 import json
 import os
 
@@ -9,7 +12,7 @@ import sniffio
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from vercel.workflow import ENDPOINT_PATH, MANIFEST_PATH
-from vercel.queue import MessageNotFoundError, TopicPattern, get_subscriptions, sanitize_name, subscribe
+from vercel.queue import MessageNotFoundError, MessageNotInFlightError, TopicPattern, get_subscriptions, sanitize_name, subscribe
 
 # Importing the workflow registry registers both durable workflow and step
 # consumers with vercel.workers before the ASGI callback app is created.
@@ -20,6 +23,26 @@ from workflows.runtime import wf
 SERVICE_NAME = "resume_workflow"
 WORKER_ENTRYPOINT = "workflows/vercel_worker.py"
 WORKFLOW_CONSUMER_GROUP = sanitize_name(f"{SERVICE_NAME}~{WORKER_ENTRYPOINT}")
+
+
+@dataclass
+class _DeliveryState:
+    callback_completed: bool = False
+
+
+_delivery_state = ContextVar("workflow_queue_delivery_state", default=None)
+
+
+def _track_queue_callback(callback):
+    @wraps(callback)
+    async def tracked(*args, **kwargs):
+        result = await callback(*args, **kwargs)
+        state = _delivery_state.get()
+        if state is not None:
+            state.callback_completed = True
+        return result
+
+    return tracked
 
 
 class _WorkflowQueueTransport:
@@ -50,12 +73,15 @@ class _WorkflowQueueTransport:
 # GA FastAPI function triggers use a consumer derived from service~entrypoint;
 # the Workflow SDK registers "default". Bind the same SDK callback to the
 # platform's actual group, preserving its queue authentication and wire codec.
+_workflow_queue_callbacks = []  # Public subscription registry holds weak refs.
 for _subscription in get_subscriptions():
     if _subscription.consumer_group == "default" and _subscription.topic.startswith("__wkf_"):
+        _tracked_callback = _track_queue_callback(_subscription.func)
+        _workflow_queue_callbacks.append(_tracked_callback)
         subscribe(
             topic=TopicPattern(_subscription.topic, transport=_WorkflowQueueTransport()),
             consumer_group=WORKFLOW_CONSUMER_GROUP,
-        )(_subscription.func)
+        )(_tracked_callback)
 
 
 # 并发上限可用 AGENT_WORKER_STEP_CONCURRENCY 调整；模块级创建在 Python 3.10+ 安全
@@ -122,6 +148,8 @@ async def workflow_manifest(request: Request):
 async def workflow_delivery(request: Request, path: str):
     # The queue trigger can deliver to the function root; SDK health probes use
     # ENDPOINT_PATH. Both go through the same authenticated SDK queue handler.
+    state = _DeliveryState()
+    token = _delivery_state.set(state)
     try:
         result = await wf.http_handler(_WorkflowRequest(request))
     except MessageNotFoundError:
@@ -129,6 +157,14 @@ async def workflow_delivery(request: Request, path: str):
         # delivery. The SDK still validates and receives the queue request;
         # auth, transport and execution failures continue to propagate.
         return Response(status_code=204)
+    except MessageNotInFlightError:
+        # Only an ACK after a successful durable callback may be settled here.
+        # Failure to receive a message or finish its callback must still retry.
+        if not state.callback_completed:
+            raise
+        return Response(status_code=204)
+    finally:
+        _delivery_state.reset(token)
     return Response(result.body, status_code=result.status, headers=result.headers)
 
 

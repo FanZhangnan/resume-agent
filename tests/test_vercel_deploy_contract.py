@@ -541,6 +541,80 @@ def test_worker_settles_unavailable_queue_messages_but_propagates_other_errors()
         assert "gone-message" not in response.text
 
 
+def test_worker_settles_lost_ack_only_after_the_durable_callback_succeeds():
+    from unittest.mock import PropertyMock
+    from fastapi.testclient import TestClient
+    from vercel.queue import MessageNotInFlightError, CommunicationError
+    from workflows import vercel_worker as worker
+
+    async def succeeded(message):
+        return "durable-result"
+
+    async def failed(message):
+        raise MessageNotInFlightError("unit-message")
+
+    for callback, ack_error, expected_status in (
+        (succeeded, MessageNotInFlightError("unit-message"), 204),
+        (failed, None, 500),
+        (succeeded, CommunicationError("ACK connection failed"), 500),
+    ):
+        async def handler(request):
+            assert await worker._track_queue_callback(callback)(object()) == "durable-result"
+            raise ack_error
+
+        with patch.object(type(worker.wf), "http_handler", new_callable=PropertyMock, return_value=handler):
+            response = TestClient(worker.app, raise_server_exceptions=False).post("/", content=b"queue-delivery")
+        assert response.status_code == expected_status
+        assert worker._delivery_state.get() is None
+
+    async def receive_failed(request):
+        raise MessageNotInFlightError("unit-message")
+
+    with patch.object(type(worker.wf), "http_handler", new_callable=PropertyMock, return_value=receive_failed):
+        response = TestClient(worker.app, raise_server_exceptions=False).post("/", content=b"queue-delivery")
+    assert response.status_code == 500
+    assert worker._delivery_state.get() is None
+
+
+def test_worker_delivery_state_is_isolated_for_concurrent_requests():
+    from unittest.mock import PropertyMock
+    from vercel.queue import MessageNotInFlightError
+    from workflows import vercel_worker as worker
+
+    async def check():
+        ready = asyncio.Event()
+        release = asyncio.Event()
+
+        async def succeeded(message):
+            return None
+
+        async def handler(request):
+            if request.url == "/done":
+                await worker._track_queue_callback(succeeded)(object())
+                ready.set()
+                await release.wait()
+            else:
+                await ready.wait()
+                release.set()
+            raise MessageNotInFlightError("unit-message")
+
+        def request(path):
+            return SimpleNamespace(method="POST", url=SimpleNamespace(path=path, query=""), headers={})
+
+        with patch.object(type(worker.wf), "http_handler", new_callable=PropertyMock, return_value=handler):
+            results = await asyncio.gather(
+                worker.workflow_delivery(request("/done"), "done"),
+                worker.workflow_delivery(request("/pending"), "pending"),
+                return_exceptions=True,
+            )
+        assert results[0].status_code == 204
+        assert isinstance(results[1], MessageNotInFlightError)
+        assert worker._delivery_state.get() is None
+
+    from types import SimpleNamespace
+    asyncio.run(check())
+
+
 def test_worker_consumer_matches_declared_ga_service_and_preserves_wire_bytes():
     import cbor2
     from vercel.queue import sanitize_name
