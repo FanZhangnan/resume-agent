@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>简历优化 Agent</title>
+<title>简历优化与交付</title>
 <link rel="icon" href="data:,">
 <style>
 :root{
@@ -60,6 +60,8 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
 .btn-primary{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
 .btn-danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 32%,var(--hair))}
 .btn-icon{width:34px;height:34px;padding:0;display:grid;place-items:center;font-size:18px}
+.input-guide{font-size:12px;line-height:1.7;color:var(--sub);margin:10px 0 0}
+.delivery-summary{padding:20px 18px;border-bottom:1px solid var(--hair)}.summary-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.summary-heading h3{margin:0;font-size:14px}.summary-heading .note{margin:0}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:20px}.delivery-summary h4{font-size:12px;margin:0 0 10px}.summary-grid ul,.summary-grid ol{padding-left:18px;margin:0;font-size:12px;line-height:1.8;color:var(--sub)}.changes-block{margin-top:24px}.change-card{border-top:1px solid var(--hair);padding:14px 0}.change-card h5{margin:0 0 10px;font-size:12px}.change-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.change-grid span{font:10px/1.4 var(--mono);color:var(--faint)}.change-grid p{margin:6px 0 0;white-space:pre-wrap;font-size:12px;line-height:1.7;overflow-wrap:anywhere}.change-reason{color:var(--sub);font-size:11px;line-height:1.7;margin:12px 0 0;overflow-wrap:anywhere}
 .note,.privacy{margin-top:10px;color:var(--faint);font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}
 .banner{display:none;border-radius:6px;padding:10px 11px;margin-top:10px;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}
 .banner.show{display:block}.banner.info{background:var(--signal-soft);color:var(--signal)}.banner.warn{background:#fff7e8;color:var(--warn)}.banner.bad{background:#fff0ed;color:var(--bad)}
@@ -86,6 +88,7 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
 .trace-drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,94vw);background:var(--surface);border-left:1px solid var(--hair-strong);box-shadow:-18px 0 40px rgba(20,22,25,.12);z-index:20;transform:translateX(102%);transition:transform .2s ease;display:grid;grid-template-rows:auto 1fr}.trace-drawer.open{transform:translateX(0)}.drawer-head{display:flex;align-items:center;gap:10px;padding:15px;border-bottom:1px solid var(--hair)}.drawer-head h2{font-size:13px;margin:0}.drawer-head button{margin-left:auto}.drawer-body{padding:18px;white-space:pre-wrap;overflow:auto;font:11px/1.8 var(--mono);color:var(--sub);overflow-wrap:anywhere}
 @media(max-width:1100px){.stream-cols{grid-template-columns:minmax(0,1fr)}.stream-main{border-right:0}.run-rail{grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--hair)}.swarm{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.app-shell{padding:12px}.topbar{height:auto;min-height:54px;flex-wrap:wrap;padding:10px 0}.workspace{grid-template-columns:minmax(0,1fr)}.result-pane{min-height:650px}.stream-cols{min-height:0}.empty{min-height:520px}.layout-grid{grid-template-columns:minmax(0,1fr)}.layout-controls{border-right:0;border-bottom:1px solid var(--hair)}.run-rail{grid-template-columns:minmax(0,1fr)}.tabs{position:sticky;top:0;z-index:5}.tabs button{font-size:10.5px;padding:0 4px}.quota-pill{max-width:170px;overflow:hidden;text-overflow:ellipsis}}
+@media(max-width:650px){.summary-grid,.change-grid{grid-template-columns:minmax(0,1fr)}.report-head{flex-wrap:wrap}.report-head .spacer{display:none}.summary-heading{flex-wrap:wrap}}
 @media(max-width:520px){.app-shell{padding:0}.topbar{padding:12px;margin:0 12px}.workspace{gap:0}.card,.result-pane{border-left:0;border-right:0;border-radius:0}.input-pane{gap:8px}.result-pane{margin-top:8px}.button-row{grid-template-columns:minmax(0,1fr)}.swarm{grid-template-columns:minmax(0,1fr)}.stage-main{grid-template-columns:24px minmax(0,1fr) auto}.stage-open{display:none}.layout-preview{padding:8px}.view-inner,.stream-main{padding:12px}.history-item{grid-template-columns:minmax(0,1fr) auto}.history-meta{display:none}}
 </style>
 </head>
@@ -93,7 +96,7 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
 <main class="app-shell" id="app-shell">
   <header class="topbar">
     <span class="brand-mark" aria-hidden="true"></span>
-    <div class="brand"><h1>简历优化 Agent</h1><small>Evidence-bound delivery</small></div>
+    <div class="brand"><h1>简历优化与交付</h1><small>Evidence-bound delivery</small></div>
     <div class="top-status">
       <span class="status-pill" id="globalStatus" data-state="idle">待命</span>
       <span class="quota-pill" id="quotaText">免费额度 --/--</span>
@@ -103,14 +106,16 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
   <section class="workspace">
     <aside class="input-pane" id="formPane">
       <div class="card" id="card-input">
-        <h2>00 / 输入与引擎</h2>
+        <h2>00 / 准备简历与目标岗位</h2>
+        <p class="input-guide">先提供现有简历，再粘贴目标岗位要求。查看匹配差距、修改依据，审核后下载可编辑简历。</p>
+        <div class="banner info" id="serviceBanner" role="status"></div>
         <div class="source-tabs" id="source-tabs">
           <button type="button" class="on" data-source="paste">粘贴文本</button>
           <button type="button" data-source="file">上传文件</button>
         </div>
         <div class="resume-source" id="paste-source">
           <label class="field" for="resume-text">简历文本 <em>（与文件二选一）</em></label>
-          <textarea id="resume-text" rows="7" placeholder="粘贴简历正文……"></textarea>
+          <textarea id="resume-text" rows="7" placeholder="粘贴教育背景、工作经历、项目与技能。保留原有日期和真实成果。" autocomplete="off"></textarea>
         </div>
         <div class="resume-source hidden" id="file-source">
           <input type="file" id="resume-file" accept=".pdf,.docx,.txt,.md,.text" class="hidden">
@@ -121,30 +126,34 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
         </div>
 
         <label class="field" for="jdText">目标岗位 JD <em>（必填）</em></label>
-        <textarea id="jdText" rows="6" placeholder="粘贴当前正在招聘岗位的完整职位描述……"></textarea>
+        <textarea id="jdText" rows="6" placeholder="粘贴岗位职责、任职要求与加分项，内容越完整，建议越具体。" autocomplete="off"></textarea>
 
-        <label class="field">模型引擎 <em>（选项来自服务端）</em></label>
+        <label class="field">分析模型</label>
         <div class="model-seg" id="model-seg" role="group" aria-label="模型引擎"></div>
-        <label class="field">推理强度 <em>（随模型变化）</em></label>
-        <div class="seg" id="effort-seg" role="group" aria-label="推理强度"></div>
+        <div id="reasoning-control">
+          <label class="field">分析深度</label>
+          <div class="seg" id="effort-seg" role="group" aria-label="分析深度"></div>
+        </div>
 
         <details class="advanced" id="advanced-settings">
           <summary>高级设置 · 自带 API Key（BYOK）</summary>
           <label class="field" for="byok-key">API Key <em>（仅本次请求使用）</em></label>
           <input type="password" id="byok-key" placeholder="sk-…" autocomplete="off" spellcheck="false">
-          <div class="note">网关由服务端固定；密钥不保存在浏览器中。</div>
+          <div class="note">密钥仅用于本次分析，提交后即清空；重试时需重新填写。</div>
         </details>
 
         <label class="switch-row" for="mockMode">
-          <input type="checkbox" id="mockMode"><span>Mock 离线演示（不调用模型）</span>
+          <input type="checkbox" id="mockMode"><span>离线演示（Mock，不调用模型）</span>
         </label>
+        <div class="banner info" id="mockBanner" role="status"></div>
         <div class="button-row">
           <button class="btn btn-primary" id="startBtn" type="button">开始分析</button>
           <button class="btn" id="demoBtn" type="button">示例演示</button>
         </div>
         <button class="btn btn-danger hidden" id="cancelBtn" type="button" style="width:100%;margin-top:8px">取消本次运行</button>
         <div class="banner bad" id="errorBanner" role="alert"></div>
-        <div class="privacy">简历与 JD 用于本次 Workflow；脱敏运行轨迹与历史元数据 24 小时后自动过期。历史仅当前 Cookie 会话可见。</div>
+        <div class="hidden" id="retry-control"><button type="button" class="btn" id="retryBtn" style="width:100%;margin-top:10px">使用当前输入重新分析</button><div class="note">使用左侧现有简历、JD 和模型设置。历史任务不会恢复简历或密钥。</div></div>
+        <div class="privacy">简历与 JD 用于本次分析，不保存到浏览器存储。结果与脱敏进度最长保留 24 小时，历史仅当前浏览器会话可见。</div>
       </div>
 
       <div class="card hidden" id="card-run">
@@ -159,7 +168,7 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
 
     <section class="result-pane">
       <nav class="tabs" aria-label="结果视图">
-        <button type="button" class="on" id="tab-stream" data-tab="stream">推理过程</button>
+        <button type="button" class="on" id="tab-stream" data-tab="stream">分析进度</button>
         <button type="button" id="tab-report" data-tab="report">分析报告</button>
         <button type="button" id="tab-layout" data-tab="layout">简历排版</button>
         <button type="button" id="tab-history" data-tab="history">历史报告</button>
@@ -168,8 +177,8 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
       <section class="view on" id="view-stream">
         <div class="empty" id="stream-empty">
           <div class="empty-mark"><span></span><span></span><span></span></div>
-          <h2>Agent 就绪</h2>
-          <p>提供简历和目标 JD 后开始分析。<br>八个可观测阶段会在此推进，交付前完成真实性审查。</p>
+          <h2>从一份真实简历开始</h2>
+          <p>填写左侧简历与目标 JD，查看匹配差距与修改建议。<br>完成真实性审查后，可下载可编辑的 Word 简历。</p>
         </div>
         <div class="stream-cols hidden" id="stream-content">
           <div class="stream-main">
@@ -208,10 +217,17 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
       </section>
 
       <section class="view" id="view-report">
-        <div class="empty" id="report-empty"><div class="empty-mark"><span></span><span></span><span></span></div><h2>暂无报告</h2><p>工作流到达终态后，报告会在这里安全渲染。</p></div>
+        <div class="empty" id="report-empty"><div class="empty-mark"><span></span><span></span><span></span></div><h2>暂无报告</h2><p>分析完成后，在这里查看优势、差距和修改前后对比。</p></div>
         <div class="hidden" id="report-content">
-          <div class="report-head"><div class="score hidden" id="score"><b id="scoreValue">—</b><span>/100 MATCH</span></div><h2>简历优化报告</h2><span class="spacer"></span><button type="button" class="btn" id="downloadReportBtn">下载 Markdown</button></div>
+          <div class="report-head"><div class="score hidden" id="score"><b id="scoreValue">—</b><span>/100 MATCH</span></div><h2>简历优化报告</h2><span class="spacer"></span><button type="button" class="btn btn-primary" id="downloadWordBtn" disabled>下载 Word</button><button type="button" class="btn" id="downloadReportBtn">下载 Markdown</button></div>
           <div class="banner warn" id="reportWarning" style="margin:14px 18px 0"></div>
+          <div class="delivery-summary" id="delivery-summary">
+            <div class="summary-heading"><h3>岗位匹配与修改建议</h3><span id="summaryVerified" class="note"></span></div>
+            <p class="note">匹配度反映简历与当前 JD 的契合程度，不代表面试或录用概率。</p>
+            <p class="note hidden" id="summaryFallback">这份历史报告尚无结构化摘要，请阅读下方完整报告。已通过审查的简历仍可正常导出。</p>
+            <div class="summary-grid" id="summary-grid"><section><h4>已有优势</h4><ul id="summaryStrengths"></ul></section><section><h4>待补差距</h4><ul id="summaryGaps"></ul></section><section><h4>优先行动</h4><ol id="summaryActions"></ol></section></div>
+            <div class="changes-block" id="changes-block"><h4>修改前后对比</h4><div id="summaryChanges"></div></div>
+          </div>
           <article class="md" id="report-md"></article>
         </div>
       </section>
@@ -232,7 +248,9 @@ details.advanced summary{cursor:pointer;color:var(--sub);font-size:12px}
             <input type="file" id="photo-file" accept="image/*" class="hidden">
             <div class="note">照片只在本地浏览器处理，不上传服务器。</div>
             <h3>03 / 导出</h3>
-            <button type="button" class="btn btn-primary" id="printResumeBtn" style="width:100%">打印 / 存为 PDF</button>
+            <button type="button" class="btn btn-primary" id="downloadLayoutWordBtn" style="width:100%" disabled>下载可编辑 Word</button>
+            <div class="note">Word 使用标准单栏版式；当前模板与本地照片仅用于 PDF / HTML。</div>
+            <button type="button" class="btn" id="printResumeBtn" style="width:100%;margin-top:7px">打印 / 存为 PDF</button>
             <button type="button" class="btn" id="downloadResumeBtn" style="width:100%;margin-top:7px">下载 HTML</button>
             <div class="banner warn" id="layoutWarning"></div>
           </aside>
@@ -276,7 +294,7 @@ const STATE_LABEL = {
 const runState = {
   phase: PHASES.idle,
   runId:"", startedAt:0, status:"", stages:[], report:"",
-  safeToDeliver:false, unresolvedFixes:[], resumeStruct:null,
+  safeToDeliver:false, unresolvedFixes:[], resumeStruct:null, deliverySummary:null, startFailed:false,
   model:"", reasoning:"", mock:false, byok:false
 };
 let publicConfig = null;
@@ -291,6 +309,7 @@ let pollInFlight = false;
 let pollGeneration = 0;
 let navigationGeneration = 0;
 let historyRequestId = 0;
+let wordDownloading = false;
 
 function terminal(status){ return TERMINAL.has(String(status || "")); }
 
@@ -338,7 +357,29 @@ function setBanner(id, text, kind){
   element.className = "banner " + (kind || "info") + (text ? " show" : "");
 }
 
-function setError(text){ setBanner("errorBanner", text, "bad"); }
+function publicMessage(value){
+  return String(value || "").replace(/https?:\/\/[^\s]+/gi, "[服务地址]")
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/gi, "[服务地址]")
+    .replace(/\bsk-[a-z0-9_-]+/gi, "[密钥已隐藏]");
+}
+
+function setError(text){ setBanner("errorBanner", publicMessage(text), "bad"); }
+
+function serviceAvailable(){
+  return Boolean(publicConfig) && (!publicConfig.service || publicConfig.service.available !== false);
+}
+
+function renderServiceState(){
+  const service = publicConfig && publicConfig.service;
+  const unavailable = service && service.available === false;
+  const provider = service && service.provider_name ? publicMessage(service.provider_name) : "模型服务";
+  const message = service && service.message ? publicMessage(service.message) : "";
+  setBanner("serviceBanner", unavailable
+    ? (message || "模型服务维护中，请稍后再试。") + " 可使用离线演示查看流程。"
+    : service ? provider + " · " + (message || "可用") : "", unavailable ? "warn" : "info");
+  const mock = $("mockMode").checked;
+  setBanner("mockBanner", mock ? "离线演示已开启：结果为示例数据，不反映真实岗位匹配。" : "", "info");
+}
 
 function updateQuota(freeLeft, freePerDay){
   if(freeLeft == null || freePerDay == null){ return; }
@@ -375,7 +416,7 @@ function renderModelOptions(){
     meta.textContent = [option.tier_label, option.status_label].filter(Boolean).join(" · ");
     button.append(title, meta);
     button.addEventListener("click", function(){
-      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting){ return; }
+      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
       selectedModel = option.id;
       const preferred = publicConfig.default_reasoning && publicConfig.default_reasoning[selectedModel];
       renderModelOptions();
@@ -391,18 +432,24 @@ function renderReasoningOptions(preferred){
   const option = modelOption(selectedModel);
   const levels = option && Array.isArray(option.reasoning_levels)
     ? option.reasoning_levels : [];
-  if(!levels.includes(selectedReasoning)){
-    selectedReasoning = levels.includes(preferred)
-      ? preferred : (option && option.default_reasoning) || levels[0] || "";
+  if(levels.includes(preferred)){
+    selectedReasoning = preferred;
+  }else if(!levels.includes(selectedReasoning)){
+    selectedReasoning = option && levels.includes(option.default_reasoning)
+      ? option.default_reasoning : levels[0] || "";
   }
+  const configurable = levels.some(function(level){ return level !== ""; });
+  $("reasoning-control").classList.toggle("hidden", !configurable);
+  if(!configurable){ selectedReasoning = ""; return; }
+  const labels = {"":"自动",none:"自动",low:"轻量",medium:"标准",high:"深入",xhigh:"更深入",max:"最深入"};
   levels.forEach(function(level){
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.reasoning = level;
-    button.textContent = level === "high" ? "高" : level === "xhigh" ? "极高" : level;
+    button.textContent = labels[level] || "自定义深度";
     button.classList.toggle("on", level === selectedReasoning);
     button.addEventListener("click", function(){
-      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting){ return; }
+      if(runState.phase === PHASES.running || runState.phase === PHASES.submitting || runState.phase === PHASES.cancelling){ return; }
       selectedReasoning = level;
       renderReasoningOptions();
     });
@@ -421,6 +468,7 @@ async function loadConfig(){
   renderModelOptions();
   renderReasoningOptions(preferred);
   updateQuota(publicConfig.free_left, publicConfig.free_per_day);
+  renderRunState();
 }
 
 function setSourceMode(mode){
@@ -549,7 +597,7 @@ function renderMeta(){
     ["运行 ID", runState.runId || "—"],
     ["状态", humanStatus(runState.status) || "待命"],
     ["模型", runState.model || selectedModel || "—"],
-    ["推理", runState.reasoning || selectedReasoning || "—"]
+    ["模式", runState.mock ? "离线演示（Mock）" : "真实分析"]
   ];
   rows.forEach(function(row){
     const line = document.createElement("div");
@@ -568,23 +616,87 @@ function deliveryMessage(){
   if(runState.status === "completed" && runState.safeToDeliver && runState.unresolvedFixes.length === 0){ return ""; }
   const fixes = runState.unresolvedFixes.length
     ? " 待修复：" + runState.unresolvedFixes.join("；") : "";
-  return "本次结果不可作为完整简历交付。" + fixes;
+  return "本次结果尚未满足简历交付条件。" + fixes;
+}
+
+function renderSummaryList(id, values, emptyText){
+  const list = $(id);
+  list.textContent = "";
+  const items = Array.isArray(values) && values.length ? values : [emptyText];
+  items.forEach(function(value){
+    const item = document.createElement("li");
+    item.textContent = String(value == null ? "" : value);
+    list.appendChild(item);
+  });
+}
+
+function renderDeliverySummary(){
+  const summary = runState.deliverySummary;
+  const hasSummary = summary && typeof summary === "object" && !Array.isArray(summary);
+  $("summaryFallback").classList.toggle("hidden", Boolean(hasSummary));
+  $("summary-grid").classList.toggle("hidden", !hasSummary);
+  $("changes-block").classList.toggle("hidden", !hasSummary);
+  $("summaryVerified").textContent = runState.mock ? "示例数据 · 请勿用于投递"
+    : hasSummary ? (summary.verified === true && canExportResume() ? "已完成真实性审查 · 请核对后投递" : "修改建议待核对") : "";
+  const changes = $("summaryChanges");
+  changes.textContent = "";
+  if(!hasSummary){ return; }
+  renderSummaryList("summaryStrengths", summary.strengths, "暂未提供优势摘要，请查看完整报告。");
+  renderSummaryList("summaryGaps", summary.gaps, "暂未提供差距摘要，请查看完整报告。");
+  renderSummaryList("summaryActions", summary.priority_actions, "请先核对简历中的日期、技能和成果。");
+  const items = Array.isArray(summary.changes) ? summary.changes : [];
+  if(!items.length){
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "暂无逐项修改对比，请查看完整报告中的优化建议。";
+    changes.appendChild(empty);
+  }
+  items.forEach(function(change){
+    if(!change || typeof change !== "object"){ return; }
+    const card = document.createElement("article");
+    card.className = "change-card";
+    const title = document.createElement("h5");
+    title.textContent = String(change.section || "简历修改");
+    const grid = document.createElement("div");
+    grid.className = "change-grid";
+    [["原文", change.before], ["建议修改", change.after]].forEach(function(pair){
+      const column = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = pair[0];
+      const text = document.createElement("p");
+      text.textContent = String(pair[1] == null || pair[1] === "" ? "（未提供）" : pair[1]);
+      column.append(label, text);
+      grid.appendChild(column);
+    });
+    const reason = document.createElement("p");
+    reason.className = "change-reason";
+    reason.textContent = "修改依据：" + String(change.reason || "请结合原始经历与目标岗位核对。");
+    card.append(title, grid, reason);
+    changes.appendChild(card);
+  });
 }
 
 function renderReport(){
   const hasReport = Boolean(runState.report);
-  $("report-empty").classList.toggle("hidden", hasReport);
-  $("report-content").classList.toggle("hidden", !hasReport);
+  const hasResult = hasReport || Boolean(runState.deliverySummary);
+  $("report-empty").classList.toggle("hidden", hasResult);
+  $("report-content").classList.toggle("hidden", !hasResult);
   $("downloadReportBtn").disabled = !hasReport;
   if(hasReport){
     $("report-md").innerHTML = renderMarkdownSafe(runState.report);
-    const match = runState.report.match(/(?:匹配评分|匹配度|MATCH)[^\d]{0,12}(\d{1,3})(?:\s*\/\s*100)?/i);
-    $("score").classList.toggle("hidden", !match);
-    if(match){ $("scoreValue").textContent = match[1]; }
   }else{
     $("report-md").textContent = "";
-    $("score").classList.add("hidden");
   }
+  const summaryScore = runState.deliverySummary && runState.deliverySummary.match_score;
+  const validScore = typeof summaryScore === "number" && Number.isFinite(summaryScore) && summaryScore >= 0 && summaryScore <= 100;
+  const match = runState.report.match(/(?:匹配评分|匹配度|MATCH)[^\d]{0,12}(\d{1,3})(?:\s*\/\s*100)?/i);
+  const fallbackScore = match && Number(match[1]) <= 100 ? Number(match[1]) : null;
+  const score = validScore ? summaryScore : fallbackScore;
+  $("score").classList.toggle("hidden", score === null);
+  $("scoreValue").textContent = score === null ? "—" : String(score);
+  $("downloadWordBtn").disabled = !canExportResume() || !runState.runId || wordDownloading;
+  $("downloadWordBtn").textContent = wordDownloading ? "正在下载……" : "下载 Word";
+  renderDeliverySummary();
   setBanner("reportWarning", deliveryMessage(), "warn");
 }
 
@@ -595,8 +707,11 @@ function renderRunState(){
   $("card-pipe").classList.toggle("hidden", !hasRun);
   $("stream-empty").classList.toggle("hidden", hasRun);
   $("stream-content").classList.toggle("hidden", !hasRun);
-  $("startBtn").disabled = active;
-  $("demoBtn").disabled = active;
+  $("startBtn").disabled = active || !publicConfig || (!serviceAvailable() && !$("mockMode").checked);
+  $("retry-control").classList.toggle("hidden", !(terminal(runState.status) || runState.startFailed));
+  $("retryBtn").disabled = $("startBtn").disabled;
+  renderServiceState();
+  $("demoBtn").disabled = active || !publicConfig;
   $("cancelBtn").classList.toggle("hidden", !active || runState.phase === PHASES.submitting);
   $("cancelBtn").disabled = runState.phase === PHASES.cancelling;
   $("cancelBtn").textContent = runState.phase === PHASES.cancelling ? "正在取消……" : "取消本次运行";
@@ -630,8 +745,11 @@ function applyStatus(data){
   if(Object.prototype.hasOwnProperty.call(data, "optimized_resume_struct")){
     runState.resumeStruct = data.optimized_resume_struct || null;
   }
+  if(Object.prototype.hasOwnProperty.call(data, "delivery_summary")){
+    runState.deliverySummary = data.delivery_summary || null;
+  }
   if(data.model){ runState.model = data.model; }
-  if(data.reasoning){ runState.reasoning = data.reasoning; }
+  if(typeof data.reasoning === "string"){ runState.reasoning = data.reasoning; }
   if(typeof data.mock === "boolean"){ runState.mock = data.mock; }
   if(typeof data.byok === "boolean"){ runState.byok = data.byok; }
   if(terminal(runState.status)){
@@ -644,7 +762,7 @@ function applyStatus(data){
   renderRunState();
   if(terminal(runState.status)){
     loadHistory();
-    if(runState.report){ setTab("report"); }
+    if(runState.report || runState.deliverySummary){ setTab("report"); }
   }
 }
 
@@ -725,6 +843,8 @@ function resetRunForStart(){
   runState.safeToDeliver = false;
   runState.unresolvedFixes = [];
   runState.resumeStruct = null;
+  runState.deliverySummary = null;
+  runState.startFailed = false;
   runState.model = selectedModel;
   runState.reasoning = selectedReasoning;
   runState.mock = $("mockMode").checked;
@@ -739,7 +859,8 @@ function startErrorMessage(error){
     ip_concurrent:"当前 IP 已有一个任务在运行。",
     global_concurrent:"当前全站并发任务已满，请稍后重试。",
     quota_unavailable:"配额与会话服务暂不可用，请稍后重试。",
-    gateway_not_configured:"模型网关尚未配置，请联系管理员。"
+    gateway_not_configured:"本站模型服务尚未配置，请填写自有 API Key 或使用离线演示。",
+    service_unavailable:"模型服务正在维护，请稍后重试或使用离线演示。"
   };
   return messages[error.code] || error.message || "运行启动失败。";
 }
@@ -760,7 +881,9 @@ async function startRun(useDemo){
   if(sourceMode === "file" && !pickedFile){ setError("请选择简历文件。"); return; }
   if(sourceMode === "paste" && !resumeText){ setError("请粘贴简历文本。"); $("resume-text").focus(); return; }
   if(pickedFile && pickedFile.size > 4 * 1024 * 1024){ setError("简历文件超过 4 MB 上限。"); return; }
-  if(!selectedModel || !selectedReasoning){ setError("模型配置尚未加载完成。"); return; }
+  const option = modelOption(selectedModel);
+  if(!option || !Array.isArray(option.reasoning_levels) || (option.reasoning_levels.length && !option.reasoning_levels.includes(selectedReasoning))){ setError("模型配置尚未加载完成。"); return; }
+  if(!$("mockMode").checked && !serviceAvailable()){ setError("模型服务正在维护，可使用离线演示查看流程。"); return; }
 
   setError("");
   stopPolling();
@@ -772,12 +895,13 @@ async function startRun(useDemo){
   if(sourceMode === "file" && pickedFile){ fd.append("resume_file", pickedFile, pickedFile.name); }
   fd.append("jd_text", jdText);
   fd.append("model", selectedModel);
-  fd.append("reasoning", selectedReasoning);
+  if(selectedReasoning !== ""){ fd.append("reasoning", selectedReasoning); }
   fd.append("job_search", "0");
   const mock = $("mockMode").checked;
   fd.append("mock", mock ? "1" : "0");
   const apiKey = $("byok-key").value.trim();
   fd.append("api_key", mock ? "" : apiKey);
+  runState.byok = !mock && Boolean(apiKey);
   $("byok-key").value = "";
   const startGeneration = ++navigationGeneration;
   try{
@@ -789,7 +913,7 @@ async function startRun(useDemo){
     runState.phase = PHASES.running;
     runState.stages = Array.isArray(data.stages) ? data.stages : [];
     runState.model = data.model || selectedModel;
-    runState.reasoning = data.reasoning || selectedReasoning;
+    runState.reasoning = typeof data.reasoning === "string" ? data.reasoning : selectedReasoning;
     runState.mock = Boolean(data.mock);
     runState.byok = Boolean(data.byok);
     updateQuota(data.free_left, publicConfig && publicConfig.free_per_day);
@@ -805,6 +929,7 @@ async function startRun(useDemo){
     setError(startErrorMessage(error));
     runState.phase = PHASES.idle;
     runState.status = "";
+    runState.startFailed = true;
     runState.startedAt = 0;
     renderRunState();
     if(error.code === "free_quota_exhausted" || error.code === "site_quota_exhausted"){
@@ -891,8 +1016,12 @@ async function openRun(runId, summary){
   runState.safeToDeliver = false;
   runState.unresolvedFixes = [];
   runState.resumeStruct = null;
+  runState.deliverySummary = null;
+  runState.startFailed = false;
   runState.model = summary && summary.model ? summary.model : "";
-  runState.reasoning = summary && summary.reasoning ? summary.reasoning : "";
+  runState.reasoning = summary && typeof summary.reasoning === "string" ? summary.reasoning : "";
+  runState.mock = Boolean(summary && summary.mock);
+  runState.byok = Boolean(summary && summary.byok);
   setTab("stream");
   renderRunState();
   try{
@@ -927,7 +1056,7 @@ async function deleteRun(runId){
       stopPolling();
       Object.assign(runState, {
         phase:PHASES.idle,runId:"",startedAt:0,status:"",stages:[],report:"",
-        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,model:"",reasoning:""
+        safeToDeliver:false,unresolvedFixes:[],resumeStruct:null,deliverySummary:null,startFailed:false,model:"",reasoning:"",mock:false,byok:false
       });
       renderRunState();
     }
@@ -1026,6 +1155,8 @@ function renderResumeLayout(){
   const allowed = canExportResume();
   $("printResumeBtn").disabled = !allowed;
   $("downloadResumeBtn").disabled = !allowed;
+  $("downloadLayoutWordBtn").disabled = !allowed || !runState.runId || wordDownloading;
+  $("downloadLayoutWordBtn").textContent = wordDownloading ? "正在下载……" : "下载可编辑 Word";
   if(!hasStruct){
     $("resume-frame").removeAttribute("srcdoc");
     setBanner("layoutWarning", "", "warn");
@@ -1033,7 +1164,7 @@ function renderResumeLayout(){
   }
   const photo = $("photo-on").checked ? photoData : null;
   $("resume-frame").srcdoc = buildResumeHTML(runState.resumeStruct, layoutTemplate, photo);
-  const warning = allowed ? "" : "可预览当前结构，但本次结果未通过完整交付门，PDF/HTML 导出已禁用。";
+  const warning = allowed ? "" : "当前版本可预览，但尚未完成真实性审查或仍有待修复内容。Word / PDF / HTML 导出暂不可用，请先核对报告。";
   setBanner("layoutWarning", warning, "warn");
 }
 
@@ -1056,6 +1187,35 @@ function downloadResumeHTML(){
   anchor.download = safeName + "_" + layoutTemplate + "_简历.html";
   anchor.click();
   URL.revokeObjectURL(anchor.href);
+}
+
+async function downloadResumeWord(){
+  if(!canExportResume() || !runState.runId || wordDownloading){ return; }
+  const runId = runState.runId;
+  wordDownloading = true;
+  renderRunState();
+  try{
+    const response = await fetch("/api/runs/" + encodeURIComponent(runId) + "/resume.docx");
+    if(!response.ok){ throw new Error("Word 暂时无法下载，请刷新任务状态后重试。"); }
+    const blob = await response.blob();
+    if(runId !== runState.runId || !canExportResume()){ return; }
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = "优化简历.docx";
+    anchor.click();
+    setTimeout(function(){ URL.revokeObjectURL(anchor.href); }, 1000);
+  }catch(error){ setError(error.message || "Word 下载失败，请稍后重试。"); }
+  finally{ wordDownloading = false; renderRunState(); }
+}
+
+function retryRun(){
+  if(runState.byok && !$("mockMode").checked && !$("byok-key").value.trim()){
+    setError("上次使用的密钥已清空，请重新填写本次 API Key 后重试。");
+    $("advanced-settings").open = true;
+    $("byok-key").focus();
+    return;
+  }
+  startRun(false);
 }
 
 function downloadReport(){
@@ -1082,6 +1242,7 @@ function syncMockControl(){
   const enabled = $("mockMode").checked;
   $("byok-key").disabled = enabled;
   if(enabled){ $("byok-key").value = ""; }
+  renderRunState();
 }
 
 function bindEvents(){
@@ -1121,6 +1282,9 @@ function bindEvents(){
   $("startBtn").addEventListener("click", function(){ startRun(false); });
   $("demoBtn").addEventListener("click", function(){ startRun(true); });
   $("cancelBtn").addEventListener("click", cancelRun);
+  $("retryBtn").addEventListener("click", retryRun);
+  $("downloadWordBtn").addEventListener("click", downloadResumeWord);
+  $("downloadLayoutWordBtn").addEventListener("click", downloadResumeWord);
   $("downloadReportBtn").addEventListener("click", downloadReport);
   $("refreshHistoryBtn").addEventListener("click", loadHistory);
   $("closeDrawerBtn").addEventListener("click", closeTraceDrawer);
